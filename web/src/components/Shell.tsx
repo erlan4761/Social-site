@@ -1,0 +1,46 @@
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useSession } from '../session';
+
+export function Shell() {
+  const { user, logout } = useSession();
+  const navigate = useNavigate();
+
+  return (
+    <div className="shell">
+      <header className="sidebar">
+        <Link className="wordmark" to="/">
+          хроника
+        </Link>
+
+        <nav className="nav">
+          <NavLink to="/" end>
+            Лента
+          </NavLink>
+          {user && <NavLink to={`/u/${user.username}`}>Мой профиль</NavLink>}
+        </nav>
+
+        <div className="sidebar-foot">
+          {user && (
+            <p className="sidebar-me">
+              <strong>{user.displayName}</strong>@{user.username}
+            </p>
+          )}
+          <button
+            className="btn ghost"
+            type="button"
+            onClick={async () => {
+              await logout();
+              navigate('/login', { replace: true });
+            }}
+          >
+            Выйти
+          </button>
+        </div>
+      </header>
+
+      <main className="main">
+        <Outlet />
+      </main>
+    </div>
+  );
+}
