@@ -3,6 +3,7 @@ export type User = {
   username: string;
   displayName: string;
   bio: string;
+  avatarUrl: string | null;
   createdAt: string;
   postCount?: number;
   followerCount?: number;
@@ -10,7 +11,16 @@ export type User = {
   followedByMe?: boolean;
 };
 
-type Author = { id: number; username: string; displayName: string };
+type Author = { id: number; username: string; displayName: string; avatarUrl: string | null };
+
+export type MediaKind = 'image' | 'video' | 'audio';
+
+export type Media = {
+  url: string;
+  type: MediaKind;
+  mime: string;
+  name: string | null;
+};
 
 export type Post = {
   id: number;
@@ -19,6 +29,7 @@ export type Post = {
   likeCount: number;
   commentCount: number;
   likedByMe: boolean;
+  media: Media | null;
   author: Author;
 };
 
@@ -45,7 +56,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     res = await fetch(`/api${path}`, {
       credentials: 'same-origin',
-      headers: init.body ? { 'Content-Type': 'application/json' } : undefined,
+      // FormData ставит свой Content-Type с boundary — задать его руками нельзя.
+      headers: init.body && !(init.body instanceof FormData)
+        ? { 'Content-Type': 'application/json' }
+        : undefined,
       ...init,
     });
   } catch {
@@ -85,8 +99,16 @@ export const api = {
     return request<Page>(`/posts${qs ? `?${qs}` : ''}`);
   },
 
-  createPost: (text: string) =>
-    request<{ post: Post }>('/posts', { method: 'POST', body: body({ body: text }) }),
+  /** Text-only posts stay JSON; a file forces multipart. */
+  createPost: (text: string, media?: File | null) => {
+    if (!media) {
+      return request<{ post: Post }>('/posts', { method: 'POST', body: body({ body: text }) });
+    }
+    const form = new FormData();
+    form.set('body', text);
+    form.set('media', media);
+    return request<{ post: Post }>('/posts', { method: 'POST', body: form });
+  },
 
   deletePost: (id: number) => request<{ ok: true }>(`/posts/${id}`, { method: 'DELETE' }),
 
@@ -106,6 +128,14 @@ export const api = {
 
   deleteComment: (id: number) =>
     request<{ ok: true }>(`/comments/${id}`, { method: 'DELETE' }),
+
+  setAvatar: (file: File) => {
+    const form = new FormData();
+    form.set('avatar', file);
+    return request<{ user: User }>('/users/me/avatar', { method: 'PUT', body: form });
+  },
+
+  removeAvatar: () => request<{ user: User }>('/users/me/avatar', { method: 'DELETE' }),
 
   setFollow: (username: string, following: boolean) =>
     request<{ followedByMe: boolean; followerCount: number }>(

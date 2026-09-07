@@ -28,6 +28,34 @@ function Heart({ filled }: { filled: boolean }) {
   );
 }
 
+function PostMedia({ media }: { media: NonNullable<Post['media']> }) {
+  if (media.type === 'image') {
+    // object-fit: contain, не cover — в дневнике важно видеть кадр целиком,
+    // а не обрезанный до квадрата фрагмент.
+    return (
+      <figure className="post-media">
+        <img src={media.url} alt={media.name ?? ''} loading="lazy" />
+      </figure>
+    );
+  }
+
+  if (media.type === 'video') {
+    return (
+      <figure className="post-media">
+        {/* preload=metadata: лента не тянет гигабайты при прокрутке */}
+        <video src={media.url} controls preload="metadata" />
+      </figure>
+    );
+  }
+
+  return (
+    <figure className="post-media audio">
+      {media.name && <figcaption>{media.name}</figcaption>}
+      <audio src={media.url} controls preload="metadata" />
+    </figure>
+  );
+}
+
 export function PostRow({ post, fresh, canDelete, onDelete, onPatch }: Props) {
   const { user } = useSession();
   const [open, setOpen] = useState(false);
@@ -58,7 +86,7 @@ export function PostRow({ post, fresh, canDelete, onDelete, onPatch }: Props) {
   return (
     <article className={fresh ? 'rail-row fresh' : 'rail-row'}>
       <Link className="avatar-link" to={profile} aria-label={`Профиль ${author.displayName}`}>
-        <Monogram username={author.username} displayName={author.displayName} />
+        <Monogram username={author.username} displayName={author.displayName} avatarUrl={author.avatarUrl} />
       </Link>
 
       <div>
@@ -72,7 +100,9 @@ export function PostRow({ post, fresh, canDelete, onDelete, onPatch }: Props) {
           </time>
         </header>
 
-        <p className="post-body">{post.body}</p>
+        {post.body && <p className="post-body">{post.body}</p>}
+
+        {post.media && <PostMedia media={post.media} />}
 
         <div className="post-actions">
           <button

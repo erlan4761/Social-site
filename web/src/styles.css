@@ -559,3 +559,110 @@ a.btn { display: inline-block; text-decoration: none; }
   color: var(--ink);
   border-bottom-color: var(--accent);
 }
+
+/* ─ Медиа в посте ─────────────────────────────────────────────────────── */
+.post-media {
+  margin: 0.75rem 0 0;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.post-media img,
+.post-media video {
+  display: block;
+  width: 100%;
+  /* contain, не cover: в дневнике кадр важнее ровной сетки */
+  max-height: 28rem;
+  object-fit: contain;
+  background: var(--surface);
+}
+
+.post-media.audio {
+  padding: 0.75rem;
+  background: none;
+}
+
+.post-media.audio figcaption {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+  overflow-wrap: anywhere;
+}
+
+.post-media audio { display: block; width: 100%; }
+
+/* ─ Прикреплённый файл в composer ─────────────────────────────────────── */
+.attach-btn { margin-right: auto; }
+
+.attach-preview {
+  margin-top: 0.875rem;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 0.625rem;
+}
+
+.attach-preview img,
+.attach-preview video {
+  display: block;
+  width: 100%;
+  max-height: 14rem;
+  object-fit: contain;
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+.attach-preview audio { display: block; width: 100%; }
+
+.attach-info {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.attach-name { overflow-wrap: anywhere; }
+.attach-size { margin-left: auto; white-space: nowrap; }
+
+/* ─ Смена аватара ─────────────────────────────────────────────────────── */
+.avatar-editor { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
+
+.avatar-pick {
+  position: relative;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  display: block;
+}
+
+.avatar-pick:disabled { cursor: default; opacity: 0.6; }
+
+/* Подпись проявляется по наведению и по фокусу с клавиатуры. */
+.avatar-hint {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 0.1875rem 0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 0 0 999px 999px;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.avatar-pick:hover .avatar-hint,
+.avatar-pick:focus-visible .avatar-hint { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-hint { transition: none; }
+}
+
+.avatar-error { margin: 0; font-size: 0.8125rem; max-width: 9rem; }
+
+.monogram { object-fit: cover; }

@@ -16,13 +16,21 @@ function initials(displayName: string, username: string) {
 type Props = {
   username: string;
   displayName: string;
+  avatarUrl?: string | null;
   size?: 'sm' | 'md' | 'lg';
 };
 
-export function Monogram({ username, displayName, size = 'md' }: Props) {
+/** A photo when there is one, the tinted initials when there isn't. */
+export function Monogram({ username, displayName, avatarUrl, size = 'md' }: Props) {
+  const className = size === 'md' ? 'monogram' : `monogram ${size}`;
+
+  if (avatarUrl) {
+    return <img className={className} src={avatarUrl} alt="" aria-hidden="true" loading="lazy" />;
+  }
+
   return (
     <span
-      className={size === 'md' ? 'monogram' : `monogram ${size}`}
+      className={className}
       style={{ background: `var(--tint-${tintOf(username)})` }}
       aria-hidden="true"
     >

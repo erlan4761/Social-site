@@ -1,6 +1,7 @@
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { db, nowIso } from './db.js';
+import { publicUrl } from './media.js';
 
 const scryptAsync = promisify(scrypt);
 const KEY_LEN = 64;
@@ -49,7 +50,7 @@ export function loadUser(req, _res, next) {
   const token = req.cookies?.[SESSION_COOKIE];
   if (token) {
     const row = db.prepare(`
-      SELECT u.id, u.username, u.display_name, u.bio, u.created_at, s.expires_at
+      SELECT u.id, u.username, u.display_name, u.bio, u.avatar_path, u.created_at, s.expires_at
       FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token = ?
     `).get(token);
@@ -75,6 +76,7 @@ export function publicUser(row) {
     username: row.username,
     displayName: row.display_name,
     bio: row.bio ?? '',
+    avatarUrl: publicUrl('avatar', row.avatar_path),
     createdAt: row.created_at,
   };
 }

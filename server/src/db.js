@@ -69,4 +69,23 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_follows_followee ON follows(followee_id);
 `);
 
+/**
+ * Adds a column if an earlier version of the schema doesn't have it yet.
+ * SQLite has no `ADD COLUMN IF NOT EXISTS`, and CREATE TABLE IF NOT EXISTS
+ * above only helps a brand-new database — a database from before this code
+ * shipped needs its existing tables patched in place, without losing rows.
+ */
+function ensureColumn(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+ensureColumn('users', 'avatar_path', 'TEXT');
+ensureColumn('posts', 'media_path', 'TEXT');
+ensureColumn('posts', 'media_type', 'TEXT');
+ensureColumn('posts', 'media_mime', 'TEXT');
+ensureColumn('posts', 'media_name', 'TEXT');
+
 export const nowIso = () => new Date().toISOString();

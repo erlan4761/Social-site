@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useParams } from 'react-router-dom';
 import { api, ApiError, type User } from '../api';
@@ -65,7 +65,24 @@ export function Profile() {
   return (
     <>
       <div className="profile-head">
-        <Monogram username={profile.username} displayName={profile.displayName} size="lg" />
+        {isMe ? (
+          <AvatarEditor
+            profile={profile}
+            onChanged={(updated) => {
+              setProfile((p) => (p ? { ...p, avatarUrl: updated.avatarUrl } : p));
+              setUser(updated);
+              // Посты в ленте несут снимок автора на момент загрузки — без этого
+              // под новым фото в шапке остались бы старые инициалы.
+              for (const post of stream.posts) {
+                if (post.author.id === updated.id) {
+                  stream.patch(post.id, { author: { ...post.author, avatarUrl: updated.avatarUrl } });
+                }
+              }
+            }}
+          />
+        ) : (
+          <Monogram username={profile.username} displayName={profile.displayName} avatarUrl={profile.avatarUrl} size="lg" />
+        )}
 
         <div className="profile-body">
           {editing && isMe ? (
@@ -153,6 +170,84 @@ export function Profile() {
         </div>
       )}
     </>
+  );
+}
+
+const MAX_AVATAR = 5 * 1024 * 1024;
+
+/** Own avatar: click the photo to replace it, no form to save. */
+function AvatarEditor({ profile, onChanged }: { profile: User; onChanged: (user: User) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+
+  async function upload(file: File | null) {
+    if (!file) return;
+    setError(null);
+
+    if (!file.type.startsWith('image/')) {
+      setError('Аватар — только изображение');
+      return;
+    }
+    if (file.size > MAX_AVATAR) {
+      setError('Изображение больше 5 МБ');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const res = await api.setAvatar(file);
+      onChanged(res.user);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось загрузить');
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = '';
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.removeAvatar();
+      onChanged(res.user);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось убрать фото');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="avatar-editor">
+      <button
+        className="avatar-pick"
+        type="button"
+        onClick={() => input.current?.click()}
+        disabled={busy}
+        title="Сменить фото"
+      >
+        <Monogram username={profile.username} displayName={profile.displayName} avatarUrl={profile.avatarUrl} size="lg" />
+        <span className="avatar-hint">{busy ? '…' : 'Фото'}</span>
+      </button>
+
+      <input
+        ref={input}
+        className="sr-only"
+        type="file"
+        accept="image/jpeg,image/png,image/gif,image/webp"
+        onChange={(e) => void upload(e.target.files?.[0] ?? null)}
+      />
+
+      {profile.avatarUrl && (
+        <button className="post-delete" type="button" onClick={() => void remove()} disabled={busy}>
+          Убрать фото
+        </button>
+      )}
+
+      {error && <p className="error avatar-error">{error}</p>}
+    </div>
   );
 }
 

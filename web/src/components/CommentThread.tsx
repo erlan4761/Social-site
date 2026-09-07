@@ -80,7 +80,7 @@ export function CommentThread({ postId, postAuthorId, onCountChange }: Props) {
         comments.map((c) => (
           <article className="comment" key={c.id}>
             <Link className="avatar-link" to={`/u/${c.author.username}`} aria-label={`Профиль ${c.author.displayName}`}>
-              <Monogram username={c.author.username} displayName={c.author.displayName} size="sm" />
+              <Monogram username={c.author.username} displayName={c.author.displayName} avatarUrl={c.author.avatarUrl} size="sm" />
             </Link>
 
             <div>
@@ -107,7 +107,7 @@ export function CommentThread({ postId, postAuthorId, onCountChange }: Props) {
 
       {user && (
         <form className="comment-form" onSubmit={send}>
-          <Monogram username={user.username} displayName={user.displayName} size="sm" />
+          <Monogram username={user.username} displayName={user.displayName} avatarUrl={user.avatarUrl} size="sm" />
           <div>
             <label className="sr-only" htmlFor={`reply-${postId}`}>
               Ответить на пост

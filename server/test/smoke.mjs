@@ -15,7 +15,8 @@ function makeClient() {
     const res = await fetch(BASE + path, {
       ...init,
       headers: {
-        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        // FormData ставит свой Content-Type с boundary — перебивать нельзя.
+        ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
         ...(cookie ? { Cookie: cookie } : {}),
       },
     });
@@ -292,6 +293,87 @@ check('отписка выполнена', r.status === 200 && r.body.followedBy
 
 r = await a(`/users/${userB}/follow`, { method: 'DELETE' });
 check('повторная отписка не уводит в минус', r.body.followerCount === 0, JSON.stringify(r.body));
+
+console.log('\n— загрузка медиа —');
+
+// Минимально валидные заголовки форматов: проверяем распознавание по сигнатуре,
+// а не проигрываемость — декодировать содержимое сервер и не должен.
+const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+const MP4_HEAD = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.alloc(32)]);
+const MP3_HEAD = Buffer.concat([Buffer.from('ID3'), Buffer.alloc(32)]);
+const NOT_MEDIA = Buffer.from('<html><script>alert(1)</script></html>');
+
+const upload = (file, name, type, field = 'media', extra = {}) => {
+  const fd = new FormData();
+  fd.set(field, new Blob([file], { type }), name);
+  for (const [k, val] of Object.entries(extra)) fd.set(k, val);
+  return fd;
+};
+
+r = await a('/users/me/avatar', { method: 'PUT', body: upload(PNG_1PX, 'me.png', 'image/png', 'avatar') });
+check('аватар загружен', r.status === 200 && typeof r.body.user?.avatarUrl === 'string', JSON.stringify(r.body));
+const avatarUrl = r.body.user.avatarUrl;
+check('аватар лежит в /uploads/avatars/', avatarUrl?.startsWith('/uploads/avatars/'), avatarUrl);
+
+let raw = await fetch(BASE.replace('/api', '') + avatarUrl);
+check('аватар отдаётся по ссылке', raw.status === 200, `${raw.status}`);
+check('аватар отдан как image/png', raw.headers.get('content-type')?.includes('image/png'), raw.headers.get('content-type'));
+check('на аватаре стоит nosniff', raw.headers.get('x-content-type-options') === 'nosniff', raw.headers.get('x-content-type-options'));
+
+r = await anon('/users/me/avatar', { method: 'PUT', body: upload(PNG_1PX, 'me.png', 'image/png', 'avatar') });
+check('аноним не грузит аватар', r.status === 401, `${r.status}`);
+
+r = await a('/users/me/avatar', { method: 'PUT', body: upload(NOT_MEDIA, 'evil.png', 'image/png', 'avatar') });
+check('html под видом png отклонён', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
+
+r = await a('/users/me/avatar', { method: 'PUT', body: upload(MP3_HEAD, 'song.mp3', 'audio/mpeg', 'avatar') });
+check('аудио в аватар не пройдёт', r.status === 400, `${r.status}`);
+
+r = await anon(`/users/${userA}`);
+check('аватар виден в чужом профиле', typeof r.body.user?.avatarUrl === 'string', JSON.stringify(r.body.user?.avatarUrl));
+
+console.log('\n— медиа в постах —');
+r = await a('/posts', { method: 'POST', body: upload(PNG_1PX, 'photo.png', 'image/png', 'media', { body: 'С картинкой' }) });
+check('пост с картинкой создан', r.status === 201, JSON.stringify(r.body));
+check('тип медиа определён как image', r.body.post?.media?.type === 'image', JSON.stringify(r.body.post?.media));
+check('имя файла сохранено', r.body.post?.media?.name === 'photo.png', JSON.stringify(r.body.post?.media));
+const withImage = r.body.post.id;
+const mediaUrl = r.body.post.media.url;
+
+raw = await fetch(BASE.replace('/api', '') + mediaUrl);
+check('медиа отдаётся по ссылке', raw.status === 200, `${raw.status}`);
+
+r = await a('/posts', { method: 'POST', body: upload(MP4_HEAD, 'clip.mp4', 'video/mp4', 'media', { body: '' }) });
+check('пост из одного видео, без текста', r.status === 201 && r.body.post?.media?.type === 'video', `${r.status} ${JSON.stringify(r.body.post?.media)}`);
+check('пустой текст сохранён пустым', r.body.post?.body === '', JSON.stringify(r.body.post?.body));
+
+r = await a('/posts', { method: 'POST', body: upload(MP3_HEAD, 'track.mp3', 'audio/mpeg', 'media', { body: 'Трек' }) });
+check('пост с аудио создан', r.status === 201 && r.body.post?.media?.type === 'audio', `${r.status} ${JSON.stringify(r.body.post?.media)}`);
+
+r = await a('/posts', { method: 'POST', body: upload(NOT_MEDIA, 'evil.mp4', 'video/mp4', 'media', { body: 'взлом' }) });
+check('подделка формата в посте отклонена', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
+
+r = await a('/posts', { method: 'POST', body: JSON.stringify({ body: '' }) });
+check('пустой пост без медиа по-прежнему нельзя', r.status === 400, `${r.status}`);
+
+r = await anon('/posts');
+const seenImage = r.body.posts.find(p => p.id === withImage);
+check('медиа приходит в ленте', seenImage?.media?.url === mediaUrl, JSON.stringify(seenImage?.media));
+check('аватар автора приходит в ленте', typeof seenImage?.author?.avatarUrl === 'string', JSON.stringify(seenImage?.author));
+
+console.log('\n— уборка файлов —');
+r = await a(`/posts/${withImage}`, { method: 'DELETE' });
+check('пост с медиа удалён', r.status === 200, `${r.status}`);
+raw = await fetch(BASE.replace('/api', '') + mediaUrl);
+check('файл удалён с диска вместе с постом', raw.status === 404, `${raw.status}`);
+
+r = await a('/users/me/avatar', { method: 'DELETE' });
+check('аватар снят', r.status === 200 && r.body.user?.avatarUrl === null, JSON.stringify(r.body.user?.avatarUrl));
+raw = await fetch(BASE.replace('/api', '') + avatarUrl);
+check('файл аватара удалён с диска', raw.status === 404, `${raw.status}`);
 
 console.log('\n— выход —');
 r = await a('/auth/logout', { method: 'POST' });
