@@ -666,3 +666,156 @@ a.btn { display: inline-block; text-decoration: none; }
 .avatar-error { margin: 0; font-size: 0.8125rem; max-width: 9rem; }
 
 .monogram { object-fit: cover; }
+
+/* ─ Счётчик непрочитанного ────────────────────────────────────────────── */
+.badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.375rem;
+  margin-left: 0.5rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--paper);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─ Список диалогов ───────────────────────────────────────────────────── */
+.dialogs { list-style: none; margin: 0; padding: 0; }
+.dialogs li + li { border-top: 1px solid var(--rule); }
+
+.dialog {
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr) auto;
+  gap: var(--gap);
+  align-items: center;
+  padding: 0.875rem 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.dialog:hover .dialog-name { text-decoration: underline; text-underline-offset: 2px; }
+
+.dialog-body { min-width: 0; }
+
+.dialog-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.125rem;
+}
+
+.dialog-name { font-weight: 600; }
+.dialog-time { margin-left: auto; font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+
+.dialog-last {
+  margin: 0;
+  font-family: var(--read);
+  font-size: 0.9375rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dialog-last.unread { color: var(--ink); font-weight: 500; }
+.dialog-you { color: var(--muted); font-family: var(--ui); font-size: 0.8125rem; }
+
+/* ─ Переписка ─────────────────────────────────────────────────────────── */
+.thread-page { display: flex; flex-direction: column; }
+
+.thread-top {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.thread-who {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  text-decoration: none;
+  color: inherit;
+  min-width: 0;
+}
+
+.thread-who strong { display: block; font-size: 0.9375rem; }
+.thread-handle { font-size: 0.8125rem; color: var(--muted); }
+.thread-who:hover strong { text-decoration: underline; text-underline-offset: 2px; }
+
+.btn.small { font-size: 0.8125rem; padding: 0.3125rem 0.75rem; }
+
+.chat { display: flex; flex-direction: column; gap: 0.5rem; }
+.chat-more { align-self: center; margin-bottom: 0.5rem; }
+
+/* Пузыри, а не карточки: своё — справа с акцентной заливкой, чужое — слева. */
+.bubble {
+  max-width: 80%;
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 12px 12px 12px 4px;
+  padding: 0.5rem 0.75rem;
+}
+
+.bubble.mine {
+  align-self: flex-end;
+  background: var(--accent-soft);
+  border-color: transparent;
+  border-radius: 12px 12px 4px 12px;
+}
+
+.bubble p {
+  margin: 0;
+  font-family: var(--read);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble time {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.6875rem;
+  color: var(--muted);
+}
+
+.bubble.mine time { text-align: right; }
+
+.chat-form { margin-top: 1.25rem; }
+
+.chat-form textarea {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--read);
+  font-size: 1rem;
+  line-height: 1.6;
+  padding: 0.375rem 0 0.625rem;
+  resize: none;
+  field-sizing: content;
+}
+
+.chat-form textarea::placeholder { color: var(--muted); }
+.chat-form textarea:focus { outline: none; border-bottom-color: var(--accent); }
+
+.chat-form-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 46rem) {
+  .bubble { max-width: 88%; }
+}

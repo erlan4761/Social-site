@@ -3,7 +3,9 @@ import type { ReactNode } from 'react';
 import { Shell } from './components/Shell';
 import { Auth } from './pages/Auth';
 import { Feed } from './pages/Feed';
+import { Messages } from './pages/Messages';
 import { Profile } from './pages/Profile';
+import { Thread } from './pages/Thread';
 import { SessionProvider, useSession } from './session';
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -46,6 +48,8 @@ export function App() {
           >
             <Route index element={<Feed />} />
             <Route path="u/:username" element={<Profile />} />
+            <Route path="messages" element={<Messages />} />
+            <Route path="messages/:username" element={<Thread />} />
           </Route>
 
           <Route path="*" element={<NotFound />} />

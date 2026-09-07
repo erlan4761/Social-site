@@ -61,12 +61,24 @@ db.exec(`
     PRIMARY KEY (follower_id, followee_id)
   );
 
+  CREATE TABLE IF NOT EXISTS messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    to_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    read_at    TEXT
+  );
+
   CREATE INDEX IF NOT EXISTS idx_posts_created    ON posts(created_at DESC, id DESC);
   CREATE INDEX IF NOT EXISTS idx_posts_author     ON posts(author_id, id DESC);
   CREATE INDEX IF NOT EXISTS idx_sessions_user    ON sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_likes_post       ON likes(post_id);
   CREATE INDEX IF NOT EXISTS idx_comments_post    ON comments(post_id, id);
   CREATE INDEX IF NOT EXISTS idx_follows_followee ON follows(followee_id);
+  CREATE INDEX IF NOT EXISTS idx_messages_out     ON messages(from_id, to_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_messages_in      ON messages(to_id, from_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_messages_unread  ON messages(to_id, read_at);
 `);
 
 /**

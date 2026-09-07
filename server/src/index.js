@@ -12,6 +12,7 @@ import { router as authRoutes } from './routes/auth.js';
 import { router as userRoutes } from './routes/users.js';
 import { router as postRoutes } from './routes/posts.js';
 import { router as commentRoutes } from './routes/comments.js';
+import { router as messageRoutes } from './routes/messages.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -43,12 +44,17 @@ const relaxed = process.env.RELAX_RATE_LIMITS === '1';
 app.use('/api/auth/register', rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 10 }));
 app.use('/api/auth/login', rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 20 }));
 
+// Писать может кто угодно кому угодно, поэтому отправку приходится ограничивать:
+// иначе открытые ЛС — готовый канал для рассылки.
+app.post('/api/messages/*splat', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 30 }));
+
 if (relaxed) console.warn('⚠  RELAX_RATE_LIMITS=1 — защита от перебора ослаблена. Только для тестов.');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/comments', commentRoutes);
+app.use('/api/messages', messageRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Нет такого эндпоинта' }));
 

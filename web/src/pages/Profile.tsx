@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { api, ApiError, type User } from '../api';
 import { Monogram } from '../components/Monogram';
 import { PostRow } from '../components/PostRow';
@@ -121,14 +121,19 @@ export function Profile() {
                     Редактировать профиль
                   </button>
                 ) : (
-                  <button
-                    className={profile.followedByMe ? 'btn ghost' : 'btn'}
-                    type="button"
-                    onClick={() => void toggleFollow()}
-                    disabled={followBusy}
-                  >
-                    {profile.followedByMe ? 'Отписаться' : 'Подписаться'}
-                  </button>
+                  <>
+                    <button
+                      className={profile.followedByMe ? 'btn ghost' : 'btn'}
+                      type="button"
+                      onClick={() => void toggleFollow()}
+                      disabled={followBusy}
+                    >
+                      {profile.followedByMe ? 'Отписаться' : 'Подписаться'}
+                    </button>{' '}
+                    <Link className="btn ghost" to={`/messages/${profile.username}`}>
+                      Написать
+                    </Link>
+                  </>
                 )}
               </p>
             </>

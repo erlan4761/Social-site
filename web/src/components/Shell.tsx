@@ -2,7 +2,7 @@ import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useSession } from '../session';
 
 export function Shell() {
-  const { user, logout } = useSession();
+  const { user, unreadTotal, logout } = useSession();
   const navigate = useNavigate();
 
   return (
@@ -15,6 +15,10 @@ export function Shell() {
         <nav className="nav">
           <NavLink to="/" end>
             Лента
+          </NavLink>
+          <NavLink to="/messages">
+            Сообщения
+            {unreadTotal > 0 && <span className="badge">{unreadTotal}</span>}
           </NavLink>
           {user && <NavLink to={`/u/${user.username}`}>Мой профиль</NavLink>}
         </nav>

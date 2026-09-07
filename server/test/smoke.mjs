@@ -375,6 +375,74 @@ check('аватар снят', r.status === 200 && r.body.user?.avatarUrl === nu
 raw = await fetch(BASE.replace('/api', '') + avatarUrl);
 check('файл аватара удалён с диска', raw.status === 404, `${raw.status}`);
 
+console.log('\n— личные сообщения —');
+r = await anon(`/messages`);
+check('аноним не видит диалоги', r.status === 401, `${r.status}`);
+
+r = await a(`/messages/${userA}`, { method: 'POST', body: JSON.stringify({ body: 'сам себе' }) });
+check('нельзя написать себе', r.status === 400, `${r.status}`);
+
+r = await a(`/messages/net_takogo_${stamp}`, { method: 'POST', body: JSON.stringify({ body: 'привет' }) });
+check('письмо несуществующему = 404', r.status === 404, `${r.status}`);
+
+r = await a(`/messages/${userB}`, { method: 'POST', body: JSON.stringify({ body: 'Борис, привет. Это первое сообщение.' }) });
+check('сообщение отправлено', r.status === 201, JSON.stringify(r.body));
+const msg1 = r.body.message.id;
+
+r = await a(`/messages/${userB}`, { method: 'POST', body: JSON.stringify({ body: '  ' }) });
+check('пустое сообщение отклонено', r.status === 400, `${r.status}`);
+
+r = await a(`/messages/${userB}`, { method: 'POST', body: JSON.stringify({ body: 'я'.repeat(1001) }) });
+check('сообщение >1000 символов отклонено', r.status === 400, `${r.status}`);
+
+r = await b(`/messages/${userA}`, { method: 'POST', body: JSON.stringify({ body: 'Привет, Алиса. Отвечаю.' }) });
+check('ответ отправлен', r.status === 201, `${r.status}`);
+
+r = await a(`/messages/${userB}`);
+check('переписка видна обоим участникам', r.body.messages?.length === 2, JSON.stringify(r.body.messages?.length));
+check('порядок — старые сверху', r.body.messages[0].id === msg1, JSON.stringify(r.body.messages.map(m => m.id)));
+check('в переписке есть собеседник', r.body.user?.username === userB, JSON.stringify(r.body.user));
+
+console.log('\n— приватность переписки —');
+// «c» (Карл) не участник диалога a↔b и не должен видеть ни одного сообщения.
+r = await c(`/messages/${userA}`);
+check('посторонний не видит чужую переписку', r.body.messages?.length === 0, JSON.stringify(r.body.messages));
+r = await c(`/messages/${userB}`);
+check('посторонний не видит её и со второй стороны', r.body.messages?.length === 0, JSON.stringify(r.body.messages));
+
+r = await c('/messages');
+check('у постороннего пустой список диалогов', r.body.conversations?.length === 0, JSON.stringify(r.body.conversations));
+
+console.log('\n— непрочитанное —');
+r = await b('/messages');
+check('диалог виден в списке', r.body.conversations?.length === 1, JSON.stringify(r.body.conversations?.length));
+check('собеседник в диалоге — отправитель', r.body.conversations[0]?.user?.username === userA, JSON.stringify(r.body.conversations[0]?.user));
+check('входящее посчитано непрочитанным', r.body.unreadTotal === 1, `${r.body.unreadTotal}`);
+check('последнее сообщение — самое свежее', r.body.conversations[0]?.lastMessage?.body === 'Привет, Алиса. Отвечаю.', JSON.stringify(r.body.conversations[0]?.lastMessage?.body));
+
+r = await b(`/messages/${userA}/read`, { method: 'PUT' });
+check('диалог отмечен прочитанным', r.status === 200 && r.body.unreadTotal === 0, JSON.stringify(r.body));
+
+r = await b('/messages');
+check('счётчик обнулился', r.body.unreadTotal === 0, `${r.body.unreadTotal}`);
+
+r = await c(`/messages/${userA}/read`, { method: 'PUT' });
+check('чужая пометка прочтения ничего не ломает', r.status === 200 && r.body.unreadTotal === 0, JSON.stringify(r.body));
+r = await a('/messages');
+check('она не тронула чужие сообщения', r.body.unreadTotal === 1, `${r.body.unreadTotal}`);
+
+console.log('\n— пагинация переписки —');
+for (let i = 1; i <= 32; i++) {
+  await a(`/messages/${userB}`, { method: 'POST', body: JSON.stringify({ body: `Сообщение ${i}` }) });
+}
+r = await a(`/messages/${userB}`);
+check('первая страница = 30 сообщений', r.body.messages?.length === 30, `${r.body.messages?.length}`);
+check('есть nextCursor', typeof r.body.nextCursor === 'number', `${r.body.nextCursor}`);
+const firstPageIds = r.body.messages.map(m => m.id);
+
+r = await a(`/messages/${userB}?cursor=${r.body.nextCursor}`);
+check('вторая страница — более старые', r.body.messages.every(m => !firstPageIds.includes(m.id)), JSON.stringify(r.body.messages.map(m => m.id)));
+
 console.log('\n— выход —');
 r = await a('/auth/logout', { method: 'POST' });
 check('logout 200', r.status === 200);

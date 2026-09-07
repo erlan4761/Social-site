@@ -11,7 +11,7 @@ export type User = {
   followedByMe?: boolean;
 };
 
-type Author = { id: number; username: string; displayName: string; avatarUrl: string | null };
+export type Author = { id: number; username: string; displayName: string; avatarUrl: string | null };
 
 export type MediaKind = 'image' | 'video' | 'audio';
 
@@ -42,6 +42,21 @@ export type Comment = {
 };
 
 export type Page = { posts: Post[]; nextCursor: number | null };
+
+export type Message = {
+  id: number;
+  body: string;
+  createdAt: string;
+  fromId: number;
+  toId: number;
+  readAt: string | null;
+};
+
+export type Conversation = {
+  user: Author;
+  unread: number;
+  lastMessage: Message;
+};
 
 export class ApiError extends Error {
   status: number;
@@ -136,6 +151,27 @@ export const api = {
   },
 
   removeAvatar: () => request<{ user: User }>('/users/me/avatar', { method: 'DELETE' }),
+
+  conversations: () =>
+    request<{ conversations: Conversation[]; unreadTotal: number }>('/messages'),
+
+  thread: (username: string, cursor?: number | null) => {
+    const qs = cursor != null ? `?cursor=${cursor}` : '';
+    return request<{ user: Author; messages: Message[]; nextCursor: number | null }>(
+      `/messages/${encodeURIComponent(username)}${qs}`,
+    );
+  },
+
+  sendMessage: (username: string, text: string) =>
+    request<{ message: Message }>(`/messages/${encodeURIComponent(username)}`, {
+      method: 'POST',
+      body: body({ body: text }),
+    }),
+
+  markRead: (username: string) =>
+    request<{ ok: true; unreadTotal: number }>(`/messages/${encodeURIComponent(username)}/read`, {
+      method: 'PUT',
+    }),
 
   setFollow: (username: string, following: boolean) =>
     request<{ followedByMe: boolean; followerCount: number }>(
