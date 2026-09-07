@@ -56,18 +56,29 @@ function intParam(value) {
 router.get('/', (req, res) => {
   const author = req.query.author ? String(req.query.author).toLowerCase() : null;
   const cursor = intParam(req.query.cursor);
+  const onlyFollowing = req.query.feed === 'following';
+
+  if (onlyFollowing && !req.user) {
+    return res.status(401).json({ error: 'Войдите, чтобы смотреть подписки' });
+  }
 
   const rows = db.prepare(`
     SELECT ${POST_COLUMNS}
     FROM posts p JOIN users u ON u.id = p.author_id
     WHERE (:author IS NULL OR u.username = :author)
       AND (:cursor IS NULL OR p.id < :cursor)
+      AND (
+        :onlyFollowing = 0
+        OR p.author_id = :viewerId
+        OR p.author_id IN (SELECT followee_id FROM follows WHERE follower_id = :viewerId)
+      )
     ORDER BY p.id DESC
     LIMIT :limit
   `).all({
     author,
     cursor,
     viewerId: req.user?.id ?? null,
+    onlyFollowing: onlyFollowing ? 1 : 0,
     limit: PAGE_SIZE + 1,
   });
 

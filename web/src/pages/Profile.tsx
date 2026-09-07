@@ -14,7 +14,9 @@ export function Profile() {
   const [profile, setProfile] = useState<User | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const stream = usePostStream(username);
+  const [followError, setFollowError] = useState<string | null>(null);
+  const [followBusy, setFollowBusy] = useState(false);
+  const stream = usePostStream({ author: username });
 
   useEffect(() => {
     let cancelled = false;
@@ -37,6 +39,28 @@ export function Profile() {
 
   const isMe = me?.id === profile.id;
   const count = profile.postCount ?? 0;
+  const followers = profile.followerCount ?? 0;
+  const following = profile.followingCount ?? 0;
+
+  async function toggleFollow() {
+    if (!profile || followBusy) return;
+    const next = !profile.followedByMe;
+
+    setFollowBusy(true);
+    setFollowError(null);
+    // Optimistic: the button answers the click, then the server confirms.
+    setProfile((p) => (p ? { ...p, followedByMe: next, followerCount: (p.followerCount ?? 0) + (next ? 1 : -1) } : p));
+
+    try {
+      const res = await api.setFollow(profile.username, next);
+      setProfile((p) => (p ? { ...p, followedByMe: res.followedByMe, followerCount: res.followerCount } : p));
+    } catch (err) {
+      setProfile((p) => (p ? { ...p, followedByMe: !next, followerCount: followers } : p));
+      setFollowError(err instanceof ApiError ? err.message : 'Не удалось изменить подписку');
+    } finally {
+      setFollowBusy(false);
+    }
+  }
 
   return (
     <>
@@ -63,15 +87,33 @@ export function Profile() {
                 <span>
                   {count} {plural(count, 'пост', 'поста', 'постов')}
                 </span>
+                <span>
+                  {followers} {plural(followers, 'подписчик', 'подписчика', 'подписчиков')}
+                </span>
+                <span>
+                  {following} {plural(following, 'подписка', 'подписки', 'подписок')}
+                </span>
                 <span>с {joinedOn(profile.createdAt)}</span>
               </p>
-              {isMe && (
-                <p style={{ marginTop: '0.875rem' }}>
+
+              {followError && <p className="error">{followError}</p>}
+
+              <p style={{ marginTop: '0.875rem' }}>
+                {isMe ? (
                   <button className="btn ghost" type="button" onClick={() => setEditing(true)}>
                     Редактировать профиль
                   </button>
-                </p>
-              )}
+                ) : (
+                  <button
+                    className={profile.followedByMe ? 'btn ghost' : 'btn'}
+                    type="button"
+                    onClick={() => void toggleFollow()}
+                    disabled={followBusy}
+                  >
+                    {profile.followedByMe ? 'Отписаться' : 'Подписаться'}
+                  </button>
+                )}
+              </p>
             </>
           )}
         </div>

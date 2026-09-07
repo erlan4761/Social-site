@@ -1,15 +1,38 @@
+import { useState } from 'react';
 import { Composer } from '../components/Composer';
 import { PostRow } from '../components/PostRow';
 import { useSession } from '../session';
 import { usePostStream } from '../usePostStream';
 
+type Tab = 'all' | 'following';
+
 export function Feed() {
   const { user } = useSession();
-  const stream = usePostStream();
+  const [tab, setTab] = useState<Tab>('all');
+  const stream = usePostStream(tab === 'following' ? { feed: 'following' } : {});
 
   return (
     <>
-      <h1 className="page-title">Общая лента</h1>
+      <div className="feed-tabs" role="tablist" aria-label="Лента">
+        <button
+          className="feed-tab"
+          type="button"
+          role="tab"
+          aria-selected={tab === 'all'}
+          onClick={() => setTab('all')}
+        >
+          Все
+        </button>
+        <button
+          className="feed-tab"
+          type="button"
+          role="tab"
+          aria-selected={tab === 'following'}
+          onClick={() => setTab('following')}
+        >
+          Подписки
+        </button>
+      </div>
 
       <div className="rail">
         <Composer onPublished={stream.prepend} />
@@ -20,8 +43,17 @@ export function Feed() {
           <p className="empty">Загружаю…</p>
         ) : stream.posts.length === 0 ? (
           <p className="empty">
-            <strong>Здесь пока пусто.</strong>
-            Напишите первый пост — он откроет хронику.
+            {tab === 'following' ? (
+              <>
+                <strong>В подписках пока пусто.</strong>
+                Загляните во «Все» и найдите тех, за кем интересно следить.
+              </>
+            ) : (
+              <>
+                <strong>Здесь пока пусто.</strong>
+                Напишите первый пост — он откроет хронику.
+              </>
+            )}
           </p>
         ) : (
           stream.posts.map((post) => (

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, type Post } from './api';
 
-/** Loads a paginated stream of posts — the whole feed, or one author's. */
-export function usePostStream(author?: string) {
+type StreamSource = { author?: string; feed?: 'following' };
+
+/** Loads a paginated stream of posts — the whole feed, one author's, or the viewer's subscriptions. */
+export function usePostStream({ author, feed }: StreamSource = {}) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -16,7 +18,7 @@ export function usePostStream(author?: string) {
     setError(null);
 
     api
-      .posts({ author })
+      .posts({ author, feed })
       .then((page) => {
         if (cancelled) return;
         setPosts(page.posts);
@@ -32,13 +34,13 @@ export function usePostStream(author?: string) {
     return () => {
       cancelled = true;
     };
-  }, [author]);
+  }, [author, feed]);
 
   const loadMore = useCallback(async () => {
     if (cursor == null || loadingMore) return;
     setLoadingMore(true);
     try {
-      const page = await api.posts({ author, cursor });
+      const page = await api.posts({ author, feed, cursor });
       setPosts((prev) => [...prev, ...page.posts]);
       setCursor(page.nextCursor);
     } catch (err) {
@@ -46,7 +48,7 @@ export function usePostStream(author?: string) {
     } finally {
       setLoadingMore(false);
     }
-  }, [author, cursor, loadingMore]);
+  }, [author, feed, cursor, loadingMore]);
 
   const prepend = useCallback((post: Post) => {
     setPosts((prev) => [post, ...prev]);

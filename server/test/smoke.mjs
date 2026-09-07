@@ -239,6 +239,60 @@ check('пост с лайками и комментами удалён', r.statu
 r = await b(`/comments/${orphan}`, { method: 'DELETE' });
 check('комментарии ушли вместе с постом', r.status === 404, `${r.status}`);
 
+console.log('\n— подписки —');
+r = await anon(`/users/${userB}/follow`, { method: 'PUT' });
+check('аноним не может подписаться', r.status === 401, `${r.status}`);
+
+r = await a(`/users/${userA}/follow`, { method: 'PUT' });
+check('нельзя подписаться на себя', r.status === 400, `${r.status}`);
+
+r = await a(`/users/net_takogo_${stamp}/follow`, { method: 'PUT' });
+check('подписка на несуществующего = 404', r.status === 404, `${r.status}`);
+
+r = await a(`/users/${userB}/follow`, { method: 'PUT' });
+check('подписка оформлена', r.status === 200 && r.body.followedByMe === true && r.body.followerCount === 1, JSON.stringify(r.body));
+
+r = await a(`/users/${userB}/follow`, { method: 'PUT' });
+check('повторная подписка не удваивает счёт', r.body.followerCount === 1, JSON.stringify(r.body));
+
+r = await a(`/users/${userB}`);
+check('подписка видна в профиле', r.body.user?.followedByMe === true, JSON.stringify(r.body.user));
+
+r = await anon(`/users/${userB}`);
+check('аноним не помечен подписанным', r.body.user?.followedByMe === false, JSON.stringify(r.body.user));
+
+r = await b(`/users/${userA}`);
+check('счётчик подписок автора виден', r.body.user?.followingCount === 1, JSON.stringify(r.body.user));
+
+console.log('\n— своя лента —');
+const userC = `carl_${stamp}`;
+const c = makeClient();
+await c('/auth/register', { method: 'POST', body: JSON.stringify({ username: userC, displayName: 'Карл', password: 'parol12345' }) });
+r = await c('/posts', { method: 'POST', body: JSON.stringify({ body: 'Пост постороннего, на которого никто не подписан' }) });
+const outsiderPost = r.body.post.id;
+
+// Свежий пост a: без него его старые посты может вытеснить с первой
+// страницы серия из 24 постов b, созданная в блоке пагинации выше.
+r = await a('/posts', { method: 'POST', body: JSON.stringify({ body: 'Свежий пост в проверке своей ленты' }) });
+const freshOwnPost = r.body.post.id;
+
+r = await anon('/posts?feed=following');
+check('лента подписок требует входа', r.status === 401, `${r.status}`);
+
+r = await a('/posts?feed=following');
+check('в ленте подписок нет постороннего', !r.body.posts.some(p => p.id === outsiderPost), JSON.stringify(r.body.posts.map(p => p.id)));
+check('в ленте подписок есть подписка (b)', r.body.posts.some(p => p.author.username === userB), JSON.stringify(r.body.posts.map(p => p.author.username)));
+check('в ленте подписок видны свои посты', r.body.posts.some(p => p.id === freshOwnPost), JSON.stringify(r.body.posts.map(p => p.id)));
+
+r = await a('/posts');
+check('в общей ленте посторонний виден', r.body.posts.some(p => p.id === outsiderPost));
+
+r = await a(`/users/${userB}/follow`, { method: 'DELETE' });
+check('отписка выполнена', r.status === 200 && r.body.followedByMe === false && r.body.followerCount === 0, JSON.stringify(r.body));
+
+r = await a(`/users/${userB}/follow`, { method: 'DELETE' });
+check('повторная отписка не уводит в минус', r.body.followerCount === 0, JSON.stringify(r.body));
+
 console.log('\n— выход —');
 r = await a('/auth/logout', { method: 'POST' });
 check('logout 200', r.status === 200);

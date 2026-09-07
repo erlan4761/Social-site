@@ -5,6 +5,9 @@ export type User = {
   bio: string;
   createdAt: string;
   postCount?: number;
+  followerCount?: number;
+  followingCount?: number;
+  followedByMe?: boolean;
 };
 
 type Author = { id: number; username: string; displayName: string };
@@ -73,10 +76,11 @@ export const api = {
   updateProfile: (input: { displayName: string; bio: string }) =>
     request<{ user: User }>('/users/me', { method: 'PATCH', body: body(input) }),
 
-  posts: (opts: { author?: string; cursor?: number | null } = {}) => {
+  posts: (opts: { author?: string; cursor?: number | null; feed?: 'following' } = {}) => {
     const params = new URLSearchParams();
     if (opts.author) params.set('author', opts.author);
     if (opts.cursor != null) params.set('cursor', String(opts.cursor));
+    if (opts.feed) params.set('feed', opts.feed);
     const qs = params.toString();
     return request<Page>(`/posts${qs ? `?${qs}` : ''}`);
   },
@@ -102,4 +106,10 @@ export const api = {
 
   deleteComment: (id: number) =>
     request<{ ok: true }>(`/comments/${id}`, { method: 'DELETE' }),
+
+  setFollow: (username: string, following: boolean) =>
+    request<{ followedByMe: boolean; followerCount: number }>(
+      `/users/${encodeURIComponent(username)}/follow`,
+      { method: following ? 'PUT' : 'DELETE' },
+    ),
 };

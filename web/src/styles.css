@@ -385,7 +385,14 @@ a { color: inherit; }
 .profile-name { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
 .profile-handle { color: var(--muted); font-size: 0.9375rem; margin: 0.125rem 0 0.75rem; }
 .profile-bio { font-family: var(--read); line-height: 1.6; margin: 0 0 0.75rem; overflow-wrap: anywhere; }
-.profile-meta { font-size: 0.8125rem; color: var(--muted); display: flex; gap: 1.25rem; }
+.profile-meta {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 0.375rem;
+  column-gap: 1.25rem;
+}
 
 .profile-body { min-width: 0; flex: 1; }
 
@@ -523,4 +530,32 @@ a.btn { display: inline-block; text-decoration: none; }
   height: 28px;
   font-size: 0.6875rem;
   box-shadow: none;
+}
+
+/* ─ Вкладки ленты ─────────────────────────────────────────────────────── */
+.feed-tabs {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 1.75rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.feed-tab {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--muted);
+  padding: 0 0 0.75rem;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.feed-tab:hover { color: var(--ink); }
+
+.feed-tab[aria-selected="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
 }

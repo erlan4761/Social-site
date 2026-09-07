@@ -54,11 +54,19 @@ db.exec(`
     created_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS follows (
+    follower_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    followee_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (follower_id, followee_id)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_posts_created    ON posts(created_at DESC, id DESC);
   CREATE INDEX IF NOT EXISTS idx_posts_author     ON posts(author_id, id DESC);
   CREATE INDEX IF NOT EXISTS idx_sessions_user    ON sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_likes_post       ON likes(post_id);
   CREATE INDEX IF NOT EXISTS idx_comments_post    ON comments(post_id, id);
+  CREATE INDEX IF NOT EXISTS idx_follows_followee ON follows(followee_id);
 `);
 
 export const nowIso = () => new Date().toISOString();
