@@ -16,13 +16,13 @@ function initials(displayName: string, username: string) {
 type Props = {
   username: string;
   displayName: string;
-  size?: 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg';
 };
 
 export function Monogram({ username, displayName, size = 'md' }: Props) {
   return (
     <span
-      className={size === 'lg' ? 'monogram lg' : 'monogram'}
+      className={size === 'md' ? 'monogram' : `monogram ${size}`}
       style={{ background: `var(--tint-${tintOf(username)})` }}
       aria-hidden="true"
     >

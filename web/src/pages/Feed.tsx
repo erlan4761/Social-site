@@ -31,6 +31,7 @@ export function Feed() {
               fresh={post.id === stream.freshId}
               canDelete={post.author.id === user?.id}
               onDelete={stream.remove}
+              onPatch={stream.patch}
             />
           ))
         )}

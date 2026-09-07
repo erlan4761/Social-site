@@ -93,6 +93,7 @@ export function Profile() {
               key={post.id}
               post={post}
               canDelete={isMe}
+              onPatch={stream.patch}
               onDelete={async (id) => {
                 if (!(await stream.remove(id))) return;
                 setProfile((p) => (p ? { ...p, postCount: Math.max(0, (p.postCount ?? 1) - 1) } : p));

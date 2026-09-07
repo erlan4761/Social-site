@@ -53,6 +53,11 @@ export function usePostStream(author?: string) {
     setFreshId(post.id);
   }, []);
 
+  /** Update one post in place — like state, comment count. */
+  const patch = useCallback((id: number, changes: Partial<Post>) => {
+    setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, ...changes } : p)));
+  }, []);
+
   /** Optimistic delete. Returns whether the server actually accepted it. */
   const remove = useCallback(async (id: number) => {
     const snapshot = posts;
@@ -67,5 +72,9 @@ export function usePostStream(author?: string) {
     }
   }, [posts]);
 
-  return { posts, loading, loadingMore, error, hasMore: cursor != null, loadMore, prepend, remove, freshId };
+  return {
+    posts, loading, loadingMore, error,
+    hasMore: cursor != null,
+    loadMore, prepend, patch, remove, freshId,
+  };
 }

@@ -7,11 +7,24 @@ export type User = {
   postCount?: number;
 };
 
+type Author = { id: number; username: string; displayName: string };
+
 export type Post = {
   id: number;
   body: string;
   createdAt: string;
-  author: { id: number; username: string; displayName: string };
+  likeCount: number;
+  commentCount: number;
+  likedByMe: boolean;
+  author: Author;
+};
+
+export type Comment = {
+  id: number;
+  postId: number;
+  body: string;
+  createdAt: string;
+  author: Author;
 };
 
 export type Page = { posts: Post[]; nextCursor: number | null };
@@ -72,4 +85,21 @@ export const api = {
     request<{ post: Post }>('/posts', { method: 'POST', body: body({ body: text }) }),
 
   deletePost: (id: number) => request<{ ok: true }>(`/posts/${id}`, { method: 'DELETE' }),
+
+  setLike: (id: number, liked: boolean) =>
+    request<{ likeCount: number; likedByMe: boolean }>(`/posts/${id}/like`, {
+      method: liked ? 'PUT' : 'DELETE',
+    }),
+
+  comments: (postId: number) =>
+    request<{ comments: Comment[] }>(`/posts/${postId}/comments`),
+
+  addComment: (postId: number, text: string) =>
+    request<{ comment: Comment }>(`/posts/${postId}/comments`, {
+      method: 'POST',
+      body: body({ body: text }),
+    }),
+
+  deleteComment: (id: number) =>
+    request<{ ok: true }>(`/comments/${id}`, { method: 'DELETE' }),
 };

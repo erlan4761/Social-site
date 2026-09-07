@@ -1,4 +1,6 @@
-// Прогоняет API целиком по живому серверу. Запускать при поднятом `npm run dev`.
+// Прогоняет API целиком по живому серверу.
+// Сервер нужно поднять с RELAX_RATE_LIMITS=1, иначе лимит регистраций
+// (10 в час на IP) остановит прогон на середине.
 const BASE = (process.env.API_URL ?? 'http://localhost:3001') + '/api';
 
 let pass = 0, fail = 0;
@@ -140,6 +142,102 @@ r = await anon(`/posts?author=${userB}&cursor=${r.body.nextCursor}`);
 check('вторая страница = 5 постов', r.body.posts.length === 5, `${r.body.posts.length}`);
 check('страницы не пересекаются', r.body.posts.every(p => !firstIds.includes(p.id)));
 check('дальше страниц нет', r.body.nextCursor === null, `${r.body.nextCursor}`);
+
+console.log('\n— лайки —');
+r = await a('/posts', { method: 'POST', body: JSON.stringify({ body: 'Пост под лайки и комментарии' }) });
+const hot = r.body.post.id;
+check('новый пост без лайков', r.body.post.likeCount === 0 && r.body.post.likedByMe === false, JSON.stringify(r.body.post));
+check('новый пост без комментариев', r.body.post.commentCount === 0, JSON.stringify(r.body.post));
+
+r = await anon(`/posts/${hot}/like`, { method: 'PUT' });
+check('аноним не может лайкать', r.status === 401, `${r.status}`);
+
+r = await b(`/posts/${hot}/like`, { method: 'PUT' });
+check('лайк поставлен', r.status === 200 && r.body.likeCount === 1 && r.body.likedByMe === true, JSON.stringify(r.body));
+
+r = await b(`/posts/${hot}/like`, { method: 'PUT' });
+check('повторный лайк не удваивает счёт', r.body.likeCount === 1, JSON.stringify(r.body));
+
+r = await a(`/posts/${hot}/like`, { method: 'PUT' });
+check('лайк второго пользователя считается', r.body.likeCount === 2, JSON.stringify(r.body));
+
+r = await anon('/posts');
+let seen = r.body.posts.find(p => p.id === hot);
+check('лента отдаёт счётчик лайков', seen?.likeCount === 2, JSON.stringify(seen));
+check('аноним не помечен как лайкнувший', seen?.likedByMe === false, JSON.stringify(seen));
+
+r = await b('/posts');
+seen = r.body.posts.find(p => p.id === hot);
+check('свой лайк виден в ленте', seen?.likedByMe === true, JSON.stringify(seen));
+
+r = await b(`/posts/${hot}/like`, { method: 'DELETE' });
+check('лайк снят', r.body.likeCount === 1 && r.body.likedByMe === false, JSON.stringify(r.body));
+
+r = await b(`/posts/${hot}/like`, { method: 'DELETE' });
+check('повторное снятие не уводит в минус', r.body.likeCount === 1, JSON.stringify(r.body));
+
+r = await b(`/posts/999999/like`, { method: 'PUT' });
+check('лайк несуществующего поста = 404', r.status === 404, `${r.status}`);
+
+console.log('\n— комментарии —');
+r = await anon(`/posts/${hot}/comments`, { method: 'POST', body: JSON.stringify({ body: 'аноним' }) });
+check('аноним не комментирует', r.status === 401, `${r.status}`);
+
+r = await b(`/posts/${hot}/comments`, { method: 'POST', body: JSON.stringify({ body: 'Первый коммент' }) });
+check('комментарий создан', r.status === 201, JSON.stringify(r.body));
+check('автор комментария проставлен', r.body.comment?.author?.username === userB, JSON.stringify(r.body));
+const cB = r.body.comment.id;
+
+r = await a(`/posts/${hot}/comments`, { method: 'POST', body: JSON.stringify({ body: 'Ответ автора поста' }) });
+const cA = r.body.comment.id;
+check('второй комментарий создан', r.status === 201);
+
+r = await b(`/posts/${hot}/comments`, { method: 'POST', body: JSON.stringify({ body: 'я'.repeat(301) }) });
+check('комментарий >300 символов отклонён', r.status === 400, `${r.status}`);
+
+r = await b(`/posts/${hot}/comments`, { method: 'POST', body: JSON.stringify({ body: '  ' }) });
+check('пустой комментарий отклонён', r.status === 400, `${r.status}`);
+
+r = await anon(`/posts/${hot}/comments`);
+check('тред читается без входа', r.status === 200 && r.body.comments.length === 2, JSON.stringify(r.body));
+check('порядок — старые сверху', r.body.comments[0].id < r.body.comments[1].id);
+
+r = await anon('/posts');
+seen = r.body.posts.find(p => p.id === hot);
+check('лента отдаёт счётчик комментариев', seen?.commentCount === 2, JSON.stringify(seen));
+
+r = await anon(`/posts/999999/comments`);
+check('комментарии несуществующего поста = 404', r.status === 404, `${r.status}`);
+
+console.log('\n— права на комментарии —');
+r = await anon(`/comments/${cB}`, { method: 'DELETE' });
+check('аноним не удаляет комментарии', r.status === 401, `${r.status}`);
+
+// «a» — автор поста, «cB» — комментарий пользователя «b» под этим постом.
+r = await a(`/comments/${cB}`, { method: 'DELETE' });
+check('автор поста модерирует чужой коммент', r.status === 200, `${r.status} ${JSON.stringify(r.body)}`);
+
+// «cA» — комментарий пользователя «a» под постом пользователя «a».
+r = await b(`/comments/${cA}`, { method: 'DELETE' });
+check('чужой коммент под чужим постом удалить нельзя', r.status === 403, `${r.status} ${JSON.stringify(r.body)}`);
+
+r = await a(`/comments/${cA}`, { method: 'DELETE' });
+check('свой комментарий удаляется', r.status === 200, `${r.status}`);
+
+r = await a(`/comments/${cA}`, { method: 'DELETE' });
+check('повторное удаление коммента = 404', r.status === 404, `${r.status}`);
+
+r = await anon(`/posts/${hot}/comments`);
+check('тред опустел', r.body.comments.length === 0, JSON.stringify(r.body));
+
+console.log('\n— каскадное удаление —');
+r = await b(`/posts/${hot}/comments`, { method: 'POST', body: JSON.stringify({ body: 'Останусь сиротой?' }) });
+const orphan = r.body.comment.id;
+await b(`/posts/${hot}/like`, { method: 'PUT' });
+r = await a(`/posts/${hot}`, { method: 'DELETE' });
+check('пост с лайками и комментами удалён', r.status === 200, `${r.status}`);
+r = await b(`/comments/${orphan}`, { method: 'DELETE' });
+check('комментарии ушли вместе с постом', r.status === 404, `${r.status}`);
 
 console.log('\n— выход —');
 r = await a('/auth/logout', { method: 'POST' });
