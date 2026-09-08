@@ -10,8 +10,8 @@ export default defineConfig(({ mode }) => ({
     port: 5173,
     // Same-origin in dev, so the session cookie just works.
     proxy: {
-      '/api': 'http://localhost:3001',
-      '/uploads': 'http://localhost:3001',
+      '/api': process.env.API_PROXY_TARGET ?? 'http://localhost:3001',
+      '/uploads': process.env.API_PROXY_TARGET ?? 'http://localhost:3001',
     },
   },
 }));
