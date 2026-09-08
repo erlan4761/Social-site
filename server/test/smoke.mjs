@@ -265,6 +265,31 @@ check('аноним не помечен подписанным', r.body.user?.fo
 r = await b(`/users/${userA}`);
 check('счётчик подписок автора виден', r.body.user?.followingCount === 1, JSON.stringify(r.body.user));
 
+console.log('\n— поиск людей —');
+r = await anon('/users/search');
+check('поиск без запроса = пустой список, не все пользователи', r.status === 200 && Array.isArray(r.body.users) && r.body.users.length === 0, JSON.stringify(r.body));
+
+r = await anon(`/users/search?q=${userB.slice(0, 5)}`);
+check('поиск по части логина находит', r.body.users?.some(u => u.username === userB), JSON.stringify(r.body.users?.map(u => u.username)));
+
+r = await anon('/users/search?q=Борис');
+check('поиск по отображаемому имени', r.body.users?.some(u => u.username === userB), JSON.stringify(r.body.users?.map(u => u.username)));
+
+r = await anon('/users/search?q=бОрИс');
+check('поиск не зависит от регистра', r.body.users?.some(u => u.username === userB), JSON.stringify(r.body.users?.map(u => u.username)));
+
+r = await anon(`/users/search?q=${userB}`);
+check('точное совпадение логина — первым в списке', r.body.users?.[0]?.username === userB, JSON.stringify(r.body.users?.map(u => u.username)));
+
+r = await anon('/users/search?q=%');
+check('спецсимвол LIKE не ломает поиск', r.status === 200 && Array.isArray(r.body.users), `${r.status} ${JSON.stringify(r.body)}`);
+
+r = await anon(`/users/search?q=net_takogo_${stamp}_net`);
+check('поиск без совпадений — пустой список, не ошибка', r.status === 200 && r.body.users?.length === 0, JSON.stringify(r.body));
+
+r = await anon(`/users/search?q=${userB}`);
+check('в результатах нет пароля', !JSON.stringify(r.body).toLowerCase().includes('scrypt'), JSON.stringify(r.body));
+
 console.log('\n— своя лента —');
 const userC = `carl_${stamp}`;
 const c = makeClient();

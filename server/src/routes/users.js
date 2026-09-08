@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { db, nowIso } from '../db.js';
 import { requireAuth, publicUser } from '../auth.js';
-import { deleteUpload, storeUpload } from '../media.js';
+import { deleteUpload, publicUrl, storeUpload } from '../media.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -54,6 +54,46 @@ router.delete('/me/avatar', requireAuth, (req, res) => {
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   res.json({ user: publicUser(user) });
+});
+
+// Перед /:username — иначе Express принял бы "search" за чьё-то имя пользователя.
+//
+// Фильтрация идёт в JS, а не в SQL: SQLite LIKE регистронезависим только для
+// ASCII, "Борис" не совпадёт с "борис" через LIKE — нужна юникодная
+// нормализация, а её у SQLite из коробки нет. String.toLowerCase() в JS
+// с кириллицей справляется сама, и таблица пользователей достаточно мала,
+// чтобы прогонять её целиком в памяти на каждый запрос.
+router.get('/search', (req, res) => {
+  const raw = String(req.query.q ?? '').trim().slice(0, 40);
+  if (!raw) return res.json({ users: [] });
+
+  const q = raw.toLowerCase();
+  const rows = db.prepare('SELECT id, username, display_name, avatar_path FROM users').all();
+
+  const scored = rows
+    .map((row) => {
+      const username = row.username.toLowerCase();
+      const displayName = row.display_name.toLowerCase();
+      let rank;
+      if (username === q) rank = 0;
+      else if (username.startsWith(q)) rank = 1;
+      else if (displayName.startsWith(q)) rank = 2;
+      else if (username.includes(q) || displayName.includes(q)) rank = 3;
+      else rank = null;
+      return rank === null ? null : { row, rank };
+    })
+    .filter((x) => x !== null)
+    .sort((a, b) => a.rank - b.rank || a.row.username.localeCompare(b.row.username))
+    .slice(0, 20);
+
+  res.json({
+    users: scored.map(({ row }) => ({
+      id: row.id,
+      username: row.username,
+      displayName: row.display_name,
+      avatarUrl: publicUrl('avatar', row.avatar_path),
+    })),
+  });
 });
 
 router.get('/:username', (req, res) => {

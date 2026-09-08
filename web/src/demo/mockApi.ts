@@ -334,6 +334,28 @@ export const mockApi = {
     return tick({ user: publicUser(u) });
   },
 
+  searchUsers: (q: string) => {
+    const query = q.trim().toLowerCase();
+    if (!query) return tick({ users: [] });
+
+    const scored = users
+      .map((u) => {
+        const username = u.username.toLowerCase();
+        const displayName = u.displayName.toLowerCase();
+        let rank: number | null = null;
+        if (username === query) rank = 0;
+        else if (username.startsWith(query)) rank = 1;
+        else if (displayName.startsWith(query)) rank = 2;
+        else if (username.includes(query) || displayName.includes(query)) rank = 3;
+        return rank === null ? null : { u, rank };
+      })
+      .filter((x): x is { u: DbUser; rank: number } => x !== null)
+      .sort((a, b) => a.rank - b.rank || a.u.username.localeCompare(b.u.username))
+      .slice(0, 20);
+
+    return tick({ users: scored.map(({ u }) => author(u)) });
+  },
+
   setFollow: (username: string, following: boolean) => {
     const u = requireMe()!;
     const target = byName(username);

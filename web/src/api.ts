@@ -175,6 +175,9 @@ const realApi = {
       method: 'PUT',
     }),
 
+  searchUsers: (q: string) =>
+    request<{ users: Author[] }>(`/users/search?q=${encodeURIComponent(q)}`),
+
   setFollow: (username: string, following: boolean) =>
     request<{ followedByMe: boolean; followerCount: number }>(
       `/users/${encodeURIComponent(username)}/follow`,

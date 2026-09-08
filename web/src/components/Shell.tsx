@@ -1,4 +1,5 @@
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { SearchBox } from './SearchBox';
 import { useSession } from '../session';
 
 export function Shell() {
@@ -11,6 +12,10 @@ export function Shell() {
         <Link className="wordmark" to="/">
           хроника
         </Link>
+
+        <div className="search-slot">
+          <SearchBox />
+        </div>
 
         <nav className="nav">
           <NavLink to="/" end>
