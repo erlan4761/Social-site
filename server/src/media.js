@@ -1,12 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, unlinkSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import { dataDir } from './dataDir.js';
 import { bad } from './validate.js';
 
-const here = dirname(fileURLToPath(import.meta.url));
-export const uploadsDir = join(here, '..', 'data', 'uploads');
+export const uploadsDir = join(dataDir, 'uploads');
 
 const dirFor = { avatar: join(uploadsDir, 'avatars'), media: join(uploadsDir, 'media') };
 for (const dir of Object.values(dirFor)) mkdirSync(dir, { recursive: true });

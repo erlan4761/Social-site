@@ -1,11 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const here = dirname(fileURLToPath(import.meta.url));
-const dataDir = join(here, '..', 'data');
-mkdirSync(dataDir, { recursive: true });
+import { join } from 'node:path';
+import { dataDir } from './dataDir.js';
 
 // DB_PATH lets the smoke test run against a throwaway file instead of real data.
 const dbFile = process.env.DB_PATH ?? join(dataDir, 'app.db');

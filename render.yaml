@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: hronika
+    runtime: node
+    # Starter, а не free: на бесплатном тарифе диск не подключается, и база
+    # с перепиской обнулялась бы при каждом перезапуске.
+    plan: starter
+    region: frankfurt
+    branch: main
+
+    buildCommand: cd server && npm ci && cd ../web && npm ci && npm run build
+    startCommand: node server/src/index.js
+    healthCheckPath: /
+
+    # Постоянный диск. База и загруженные файлы лежат здесь, а не рядом с
+    # кодом — код перезаписывается при каждом деплое, диск переживает их все.
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+
+    envVars:
+      - key: NODE_VERSION
+        value: 24
+      - key: NODE_ENV
+        # Переключает куку сессии в secure — по HTTP она больше не уйдёт.
+        value: production
+      - key: DATA_DIR
+        value: /var/data
