@@ -819,3 +819,24 @@ a.btn { display: inline-block; text-decoration: none; }
 @media (max-width: 46rem) {
   .bubble { max-width: 88%; }
 }
+
+/* ─ Плашка витрины ────────────────────────────────────────────────────── */
+.demo-banner {
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--rule);
+  padding: 0.625rem 1.5rem;
+}
+
+.demo-banner p {
+  max-width: 58rem;
+  margin: 0 auto;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.demo-banner a { color: var(--accent); font-weight: 600; }
+
+@media (max-width: 46rem) {
+  .demo-banner { padding: 0.625rem 1.125rem; }
+}

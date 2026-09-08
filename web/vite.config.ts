@@ -1,7 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-export default defineConfig({
+// Витрина живёт в подкаталоге репозитория на GitHub Pages, поэтому в режиме
+// demo все пути собираются относительно /Social-site/.
+export default defineConfig(({ mode }) => ({
+  base: mode === 'demo' ? '/Social-site/' : '/',
   plugins: [react()],
   server: {
     port: 5173,
@@ -11,4 +14,4 @@ export default defineConfig({
       '/uploads': 'http://localhost:3001',
     },
   },
-});
+}));

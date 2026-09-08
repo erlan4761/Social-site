@@ -1,6 +1,7 @@
 import { BrowserRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { Shell } from './components/Shell';
+import { DemoBanner } from './demo/DemoBanner';
 import { Auth } from './pages/Auth';
 import { Feed } from './pages/Feed';
 import { Messages } from './pages/Messages';
@@ -34,7 +35,8 @@ function NotFound() {
 export function App() {
   return (
     <SessionProvider>
-      <BrowserRouter>
+      <BrowserRouter basename={import.meta.env.BASE_URL}>
+        <DemoBanner />
         <Routes>
           <Route path="/login" element={<Auth mode="login" />} />
           <Route path="/register" element={<Auth mode="register" />} />

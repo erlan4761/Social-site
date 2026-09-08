@@ -1,3 +1,5 @@
+import { mockApi } from './demo/mockApi';
+
 export type User = {
   id: number;
   username: string;
@@ -88,7 +90,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const body = (payload: unknown) => JSON.stringify(payload);
 
-export const api = {
+const realApi = {
   me: () => request<{ user: User | null }>('/auth/me'),
 
   register: (input: { username: string; displayName: string; password: string }) =>
@@ -179,3 +181,13 @@ export const api = {
       { method: following ? 'PUT' : 'DELETE' },
     ),
 };
+
+/**
+ * Витрина на GitHub Pages ходит в подставной бэкенд в браузере: Pages раздаёт
+ * только статику, настоящему серверу там взяться неоткуда. Флаг ставится
+ * сборкой (`vite build --mode demo`), в обычной сборке ветка мертва и код
+ * мока в бандл не попадает.
+ */
+export const api: typeof realApi = import.meta.env.VITE_DEMO === '1'
+  ? (mockApi as unknown as typeof realApi)
+  : realApi;
