@@ -43,6 +43,10 @@ const relaxed = process.env.RELAX_RATE_LIMITS === '1';
 
 app.use('/api/auth/register', rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 10 }));
 app.use('/api/auth/login', rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 20 }));
+// Без лимита форма «забыли пароль» — готовый инструмент завалить письмами
+// чужой ящик или перебором нащупать, какие email вообще зарегистрированы.
+app.use('/api/auth/forgot-password', rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 5 }));
+app.use('/api/auth/reset-password', rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 20 }));
 
 // Писать может кто угодно кому угодно, поэтому отправку приходится ограничивать:
 // иначе открытые ЛС — готовый канал для рассылки.

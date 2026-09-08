@@ -10,6 +10,7 @@ export function Auth({ mode }: { mode: 'login' | 'register' }) {
 
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -24,7 +25,7 @@ export function Auth({ mode }: { mode: 'login' | 'register' }) {
     setError(null);
     try {
       const res = isRegister
-        ? await api.register({ username, displayName: displayName || username, password })
+        ? await api.register({ username, displayName: displayName || username, email, password })
         : await api.login({ username, password });
       setUser(res.user);
       navigate('/', { replace: true });
@@ -73,6 +74,20 @@ export function Auth({ mode }: { mode: 'login' | 'register' }) {
             </label>
           )}
 
+          {isRegister && (
+            <label className="field">
+              <span>Email</span>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+                required
+              />
+            </label>
+          )}
+          {isRegister && <p className="hint">Понадобится, если забудете пароль</p>}
+
           <label className="field">
             <span>Пароль</span>
             <input
@@ -95,6 +110,12 @@ export function Auth({ mode }: { mode: 'login' | 'register' }) {
           <Link to={isRegister ? '/login' : '/register'}>
             {isRegister ? 'Войти' : 'Зарегистрироваться'}
           </Link>
+          {!isRegister && (
+            <>
+              {' · '}
+              <Link to="/forgot-password">Забыли пароль?</Link>
+            </>
+          )}
         </p>
       </div>
     </div>

@@ -4,8 +4,10 @@ import { Shell } from './components/Shell';
 import { DemoBanner } from './demo/DemoBanner';
 import { Auth } from './pages/Auth';
 import { Feed } from './pages/Feed';
+import { ForgotPassword } from './pages/ForgotPassword';
 import { Messages } from './pages/Messages';
 import { Profile } from './pages/Profile';
+import { ResetPassword } from './pages/ResetPassword';
 import { Thread } from './pages/Thread';
 import { SessionProvider, useSession } from './session';
 
@@ -40,6 +42,8 @@ export function App() {
         <Routes>
           <Route path="/login" element={<Auth mode="login" />} />
           <Route path="/register" element={<Auth mode="register" />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password/:token" element={<ResetPassword />} />
 
           <Route
             element={

@@ -93,13 +93,27 @@ const body = (payload: unknown) => JSON.stringify(payload);
 const realApi = {
   me: () => request<{ user: User | null }>('/auth/me'),
 
-  register: (input: { username: string; displayName: string; password: string }) =>
+  register: (input: { username: string; displayName: string; email: string; password: string }) =>
     request<{ user: User }>('/auth/register', { method: 'POST', body: body(input) }),
 
   login: (input: { username: string; password: string }) =>
     request<{ user: User }>('/auth/login', { method: 'POST', body: body(input) }),
 
   logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
+
+  // demoLink настоящий бэкенд никогда не возвращает — письмо реально уходит
+  // по почте. В демо на GitHub Pages слать некуда, поэтому мок кладёт ссылку
+  // прямо в ответ, чтобы её можно было показать кликабельной: переход внутри
+  // приложения не перезагружает страницу и не роняет память мока (а обычная
+  // навигация по вставленной в адресную строку ссылке — роняет).
+  forgotPassword: (email: string) =>
+    request<{ ok: true; message: string; demoLink?: string }>('/auth/forgot-password', { method: 'POST', body: body({ email }) }),
+
+  checkResetToken: (token: string) =>
+    request<{ valid: boolean }>(`/auth/reset-password/${encodeURIComponent(token)}`),
+
+  resetPassword: (token: string, password: string) =>
+    request<{ ok: true }>('/auth/reset-password', { method: 'POST', body: body({ token, password }) }),
 
   profile: (username: string) =>
     request<{ user: User }>(`/users/${encodeURIComponent(username)}`),

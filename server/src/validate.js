@@ -25,6 +25,16 @@ export function username(value) {
   return out;
 }
 
+// Практичная проверка формата, не полный RFC 5322 — нам важно отсечь опечатки
+// вроде "a@b" без домена, а не разобрать все теоретически валидные адреса.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+export function email(value) {
+  const out = str(value, 'email', { min: 3, max: 254 }).toLowerCase();
+  if (!EMAIL_RE.test(out)) throw bad('Некорректный email');
+  return out;
+}
+
 export function password(value) {
   if (typeof value !== 'string' || value.length < 8) {
     throw bad('Пароль должен быть не короче 8 символов');

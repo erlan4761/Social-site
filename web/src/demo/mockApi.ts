@@ -20,6 +20,7 @@ type DbUser = {
   bio: string;
   avatarUrl: string | null;
   createdAt: string;
+  email: string;
   password: string;
 };
 
@@ -40,6 +41,7 @@ let comments: DbComment[] = [];
 let likes: { userId: number; postId: number }[] = [];
 let follows: { followerId: number; followeeId: number }[] = [];
 let messages: DbMessage[] = [];
+let resets: { token: string; userId: number; expiresAt: number; usedAt: number | null }[] = [];
 let meId: number | null = null;
 let nextId = 1;
 
@@ -50,7 +52,7 @@ const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOSt
 const tick = <T>(value: T): Promise<T> =>
   new Promise((resolve) => setTimeout(() => resolve(value), 80));
 
-const fail = (status: number, message: string) => {
+const fail = (status: number, message: string): never => {
   throw new ApiError(status, message);
 };
 
@@ -73,12 +75,13 @@ function seed() {
   likes = [];
   follows = [];
   messages = [];
+  resets = [];
   nextId = 1;
 
   const make = (username: string, displayName: string, bio: string, avatar: string | null): DbUser => {
     const u: DbUser = {
       id: id(), username, displayName, bio, avatarUrl: avatar,
-      createdAt: ago(60 * 24 * 40), password: 'parol12345',
+      createdAt: ago(60 * 24 * 40), email: `${username}@example.test`, password: 'parol12345',
     };
     users.push(u);
     return u;
@@ -143,6 +146,7 @@ if (import.meta.env.VITE_DEMO === '1') seed();
 
 const byId = (userId: number) => users.find((u) => u.id === userId);
 const byName = (username: string) => users.find((u) => u.username === username.toLowerCase());
+const byEmail = (mail: string) => users.find((u) => u.email === mail.toLowerCase());
 
 const me = () => (meId != null ? byId(meId) ?? null : null);
 const requireMe = () => me() ?? fail(401, 'Требуется вход в аккаунт');
@@ -192,18 +196,21 @@ const PAGE = 20;
 export const mockApi = {
   me: () => tick({ user: me() ? publicUser(me()!) : null }),
 
-  register: (input: { username: string; displayName: string; password: string }) => {
+  register: (input: { username: string; displayName: string; email: string; password: string }) => {
     const username = input.username.trim().toLowerCase();
     if (!/^[a-z0-9_]{3,20}$/.test(username)) {
       fail(400, 'Имя пользователя: 3–20 символов, только латиница, цифры и _');
     }
+    const email = input.email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) fail(400, 'Некорректный email');
     if (input.password.length < 8) fail(400, 'Пароль должен быть не короче 8 символов');
     if (byName(username)) fail(409, 'Это имя пользователя уже занято');
+    if (users.some((u) => u.email === email)) fail(409, 'На этот email уже зарегистрирован аккаунт');
 
     const u: DbUser = {
       id: id(), username,
       displayName: input.displayName.trim() || username,
-      bio: '', avatarUrl: null, createdAt: new Date().toISOString(), password: input.password,
+      bio: '', avatarUrl: null, createdAt: new Date().toISOString(), email, password: input.password,
     };
     users.push(u);
     meId = u.id;
@@ -219,6 +226,48 @@ export const mockApi = {
 
   logout: () => {
     meId = null;
+    return tick({ ok: true as const });
+  },
+
+  forgotPassword: (rawEmail: string) => {
+    const mail = rawEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(mail)) fail(400, 'Некорректный email');
+
+    const user = byEmail(mail);
+    const message = 'Если такой email зарегистрирован, на него отправлена ссылка';
+
+    let demoLink: string | undefined;
+    if (user) {
+      resets = resets.filter((r) => !(r.userId === user.id && !r.usedAt));
+      const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      resets.push({ token, userId: user.id, expiresAt: Date.now() + 30 * 60_000, usedAt: null });
+      // Путь без BASE_URL — <Link to> сам добавляет basename роутера;
+      // задвоить префикс, вставив его дважды, было бы легко.
+      demoLink = `/reset-password/${token}`;
+      // А в консоли нужен уже полный адрес, который можно скопировать в
+      // строку браузера — как единственный канал у консоли сервера в проде.
+      console.log(`✉️  [демо] ссылка для сброса пароля: ${location.origin}${import.meta.env.BASE_URL}reset-password/${token}`);
+    }
+
+    return tick({ ok: true as const, message, demoLink });
+  },
+
+  checkResetToken: (token: string) => {
+    const r = resets.find((x) => x.token === token);
+    const valid = Boolean(r && !r.usedAt && r.expiresAt > Date.now());
+    return tick({ valid });
+  },
+
+  resetPassword: (token: string, password: string) => {
+    if (password.length < 8) fail(400, 'Пароль должен быть не короче 8 символов');
+    const r = resets.find((x) => x.token === token);
+    if (!r || r.usedAt || r.expiresAt <= Date.now()) {
+      fail(400, 'Ссылка недействительна или уже использована');
+    }
+    const user = byId(r!.userId)!;
+    user.password = password;
+    r!.usedAt = Date.now();
+    if (meId === user.id) meId = null; // как и на бэкенде — сброс гасит текущую сессию
     return tick({ ok: true as const });
   },
 

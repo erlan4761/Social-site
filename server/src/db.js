@@ -56,6 +56,14 @@ db.exec(`
     PRIMARY KEY (follower_id, followee_id)
   );
 
+  CREATE TABLE IF NOT EXISTS password_resets (
+    token      TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at    TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS messages (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     from_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -74,6 +82,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_out     ON messages(from_id, to_id, id DESC);
   CREATE INDEX IF NOT EXISTS idx_messages_in      ON messages(to_id, from_id, id DESC);
   CREATE INDEX IF NOT EXISTS idx_messages_unread  ON messages(to_id, read_at);
+  CREATE INDEX IF NOT EXISTS idx_resets_user       ON password_resets(user_id);
 `);
 
 /**
@@ -90,6 +99,11 @@ function ensureColumn(table, column, definition) {
 }
 
 ensureColumn('users', 'avatar_path', 'TEXT');
+ensureColumn('users', 'email', 'TEXT');
+// SQLite не считает несколько NULL равными друг другу, поэтому этот индекс
+// не мешает старым аккаунтам без почты (их могло быть сколько угодно до
+// миграции) — уникальность требуется только когда email реально задан.
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)');
 ensureColumn('posts', 'media_path', 'TEXT');
 ensureColumn('posts', 'media_type', 'TEXT');
 ensureColumn('posts', 'media_mime', 'TEXT');

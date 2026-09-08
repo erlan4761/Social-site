@@ -1,7 +1,31 @@
 // Прогоняет API целиком по живому серверу.
 // Сервер нужно поднять с RELAX_RATE_LIMITS=1, иначе лимит регистраций
 // (10 в час на IP) остановит прогон на середине.
+import { DatabaseSync } from 'node:sqlite';
+
 const BASE = (process.env.API_URL ?? 'http://localhost:3001') + '/api';
+
+// Письмо со ссылкой на сброс пароля в тестовом режиме просто печатается в
+// консоль сервера — без RESEND_API_KEY отправлять его некуда, и это
+// правильный режим по умолчанию, а не заглушка. Токен из ответа API не
+// вернуть: он же и был бы дырой, позволяющей узнать, есть ли такой email.
+// Поэтому здесь читаем его напрямую из той же БД, что видит сервер, в обход
+// HTTP — сервер и тест смотрят в один файл через DB_PATH.
+function lastResetToken(email) {
+  if (!process.env.DB_PATH) return null;
+  const db = new DatabaseSync(process.env.DB_PATH, { readOnly: true });
+  try {
+    const row = db.prepare(`
+      SELECT r.token FROM password_resets r
+      JOIN users u ON u.id = r.user_id
+      WHERE u.email = ?
+      ORDER BY r.created_at DESC LIMIT 1
+    `).get(email);
+    return row?.token ?? null;
+  } finally {
+    db.close();
+  }
+}
 
 let pass = 0, fail = 0;
 const check = (name, ok, detail = '') => {
@@ -39,7 +63,7 @@ const userA = `alice_${stamp}`;
 const userB = `bob_${stamp}`;
 
 console.log('\n— регистрация и сессия —');
-let r = await a('/auth/register', { method: 'POST', body: JSON.stringify({ username: userA, displayName: 'Алиса Иванова', password: 'parol12345' }) });
+let r = await a('/auth/register', { method: 'POST', body: JSON.stringify({ username: userA, displayName: 'Алиса Иванова', email: `${userA}@example.test`, password: 'parol12345' }) });
 check('register 201', r.status === 201, JSON.stringify(r.body));
 check('вернулся пользователь', r.body.user?.username === userA, JSON.stringify(r.body));
 check('хэш пароля не утёк', !JSON.stringify(r.body).includes('scrypt'));
@@ -51,17 +75,17 @@ r = await anon('/auth/me');
 check('me без куки = null', r.body.user === null, JSON.stringify(r.body));
 
 console.log('\n— валидация —');
-r = await b('/auth/register', { method: 'POST', body: JSON.stringify({ username: 'ЮзерКириллица', displayName: 'x', password: 'parol12345' }) });
+r = await b('/auth/register', { method: 'POST', body: JSON.stringify({ username: 'ЮзерКириллица', displayName: 'x', email: `kir_${stamp}@example.test`, password: 'parol12345' }) });
 check('кириллица в логине отклонена', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
 
-r = await b('/auth/register', { method: 'POST', body: JSON.stringify({ username: `zed_${stamp}`, displayName: 'z', password: 'korotk' }) });
+r = await b('/auth/register', { method: 'POST', body: JSON.stringify({ username: `zed_${stamp}`, displayName: 'z', email: `zed_${stamp}@example.test`, password: 'korotk' }) });
 check('короткий пароль отклонён', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
 
-r = await b('/auth/register', { method: 'POST', body: JSON.stringify({ username: userA.toUpperCase(), displayName: 'дубль', password: 'parol12345' }) });
+r = await b('/auth/register', { method: 'POST', body: JSON.stringify({ username: userA.toUpperCase(), displayName: 'дубль', email: `dup_${stamp}@example.test`, password: 'parol12345' }) });
 check('занятый логин (в другом регистре) отклонён', r.status === 409, `${r.status} ${JSON.stringify(r.body)}`);
 
 console.log('\n— вход —');
-r = await b('/auth/register', { method: 'POST', body: JSON.stringify({ username: userB, displayName: 'Борис', password: 'parol12345' }) });
+r = await b('/auth/register', { method: 'POST', body: JSON.stringify({ username: userB, displayName: 'Борис', email: `${userB}@example.test`, password: 'parol12345' }) });
 check('второй пользователь создан', r.status === 201, JSON.stringify(r.body));
 
 r = await anon('/auth/login', { method: 'POST', body: JSON.stringify({ username: userA, password: 'nepravilny' }) });
@@ -293,7 +317,7 @@ check('в результатах нет пароля', !JSON.stringify(r.body).t
 console.log('\n— своя лента —');
 const userC = `carl_${stamp}`;
 const c = makeClient();
-await c('/auth/register', { method: 'POST', body: JSON.stringify({ username: userC, displayName: 'Карл', password: 'parol12345' }) });
+await c('/auth/register', { method: 'POST', body: JSON.stringify({ username: userC, displayName: 'Карл', email: `${userC}@example.test`, password: 'parol12345' }) });
 r = await c('/posts', { method: 'POST', body: JSON.stringify({ body: 'Пост постороннего, на которого никто не подписан' }) });
 const outsiderPost = r.body.post.id;
 
@@ -467,6 +491,59 @@ const firstPageIds = r.body.messages.map(m => m.id);
 
 r = await a(`/messages/${userB}?cursor=${r.body.nextCursor}`);
 check('вторая страница — более старые', r.body.messages.every(m => !firstPageIds.includes(m.id)), JSON.stringify(r.body.messages.map(m => m.id)));
+
+console.log('\n— email при регистрации —');
+r = await anon('/auth/register', { method: 'POST', body: JSON.stringify({ username: `noemail_${stamp}`, displayName: 'x', password: 'parol12345' }) });
+check('регистрация без email отклонена', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
+
+r = await anon('/auth/register', { method: 'POST', body: JSON.stringify({ username: `bad_${stamp}`, displayName: 'x', email: 'не-похоже-на-почту', password: 'parol12345' }) });
+check('кривой email отклонён', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
+
+r = await anon('/auth/register', { method: 'POST', body: JSON.stringify({ username: `second_${stamp}`, displayName: 'x', email: `${userA}@example.test`, password: 'parol12345' }) });
+check('занятый email (другой логин) отклонён', r.status === 409, `${r.status} ${JSON.stringify(r.body)}`);
+
+console.log('\n— восстановление пароля —');
+r = await anon('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email: `net_takogo_${stamp}@example.test` }) });
+const unknownMsg = r.body.message;
+check('несуществующий email — тоже 200, без утечки', r.status === 200 && typeof unknownMsg === 'string', JSON.stringify(r.body));
+
+r = await anon('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email: `${userA}@example.test` }) });
+check('существующий email — тот же ответ', r.status === 200 && r.body.message === unknownMsg, JSON.stringify(r.body));
+
+r = await anon('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email: 'мусор' }) });
+check('битый email в forgot-password отклонён', r.status === 400, `${r.status}`);
+
+r = await anon('/auth/reset-password/net-takogo-tokena');
+check('несуществующий токен — valid:false', r.status === 200 && r.body.valid === false, JSON.stringify(r.body));
+
+const token = lastResetToken(`${userA}@example.test`);
+if (!token) {
+  check('токен сброса прочитан из БД (нужен DB_PATH)', false, 'DB_PATH не задан — часть проверок восстановления пропущена');
+} else {
+  r = await anon(`/auth/reset-password/${token}`);
+  check('свежий токен — valid:true', r.status === 200 && r.body.valid === true, JSON.stringify(r.body));
+
+  r = await anon('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password: 'korotk' }) });
+  check('слишком короткий новый пароль отклонён', r.status === 400, `${r.status}`);
+
+  r = await anon('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password: 'novyparol123' }) });
+  check('пароль сброшен', r.status === 200, `${r.status} ${JSON.stringify(r.body)}`);
+
+  r = await anon('/auth/login', { method: 'POST', body: JSON.stringify({ username: userA, password: 'novyparol123' }) });
+  check('вход по новому паролю работает', r.status === 200, `${r.status}`);
+
+  r = await anon('/auth/login', { method: 'POST', body: JSON.stringify({ username: userA, password: 'parol12345' }) });
+  check('старый пароль больше не подходит', r.status === 401, `${r.status}`);
+
+  r = await a('/auth/me');
+  check('старая сессия отозвана после сброса пароля', r.body.user === null, JSON.stringify(r.body));
+
+  r = await anon('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password: 'eshhaparol123' }) });
+  check('повторное использование токена отклонено', r.status === 400, `${r.status}`);
+
+  r = await anon(`/auth/reset-password/${token}`);
+  check('использованный токен — valid:false', r.body.valid === false, JSON.stringify(r.body));
+}
 
 console.log('\n— выход —');
 r = await a('/auth/logout', { method: 'POST' });
