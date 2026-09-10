@@ -9,7 +9,9 @@
  * В обычную сборку этот файл не попадает: см. переключение в api.ts.
  */
 import type {
-  Author, Comment, Conversation, Media, Message, Page, Post, User,
+  Author, Badges, BlockedUser, Chat, ChatMessage, ChatSummary, Comment, Conversation,
+  Media, Message, Notification as NotificationItem, NotificationKind, Page, Post,
+  ReportReason, ReportTargetType, User,
 } from '../api';
 import { ApiError } from '../api';
 
@@ -35,6 +37,37 @@ type DbPost = {
 type DbComment = { id: number; postId: number; authorId: number; body: string; createdAt: string };
 type DbMessage = { id: number; fromId: number; toId: number; body: string; createdAt: string; readAt: string | null };
 
+type DbNotification = {
+  id: number;
+  /** Получатель события. */
+  userId: number;
+  /** Тот, чьё действие его вызвало. */
+  actorId: number;
+  kind: NotificationKind;
+  postId: number | null;
+  commentId: number | null;
+  chatId: number | null;
+  createdAt: string;
+  readAt: string | null;
+};
+
+type DbBlock = { blockerId: number; blockedId: number; createdAt: string };
+
+type DbReport = {
+  reporterId: number;
+  targetType: ReportTargetType;
+  targetId: number;
+  reason: ReportReason;
+  note: string;
+  createdAt: string;
+};
+
+type DbChat = { id: number; title: string; ownerId: number; createdAt: string };
+/** `lastReadId` — ватерлиния прочитанного, как в схеме сервера: в группе
+ *  получателей много, и отметка на каждом сообщении стоила бы таблицы N×M. */
+type DbChatMember = { chatId: number; userId: number; joinedAt: string; lastReadId: number };
+type DbChatMessage = { id: number; chatId: number; authorId: number; body: string; createdAt: string };
+
 let users: DbUser[] = [];
 let posts: DbPost[] = [];
 let comments: DbComment[] = [];
@@ -42,6 +75,15 @@ let likes: { userId: number; postId: number }[] = [];
 let follows: { followerId: number; followeeId: number }[] = [];
 let messages: DbMessage[] = [];
 let resets: { token: string; userId: number; expiresAt: number; usedAt: number | null }[] = [];
+// Ниже — таблицы трёх поздних фич. Имена совпадают с именами методов витрины
+// (`notifications`, `chats`, `chatMessages`): свойства объекта не перекрывают
+// модульные переменные, так что внутри методов это по-прежнему таблицы.
+let notifications: DbNotification[] = [];
+let blocks: DbBlock[] = [];
+let reports: DbReport[] = [];
+let chats: DbChat[] = [];
+let chatMembers: DbChatMember[] = [];
+let chatMessages: DbChatMessage[] = [];
 let meId: number | null = null;
 let nextId = 1;
 
@@ -76,6 +118,12 @@ function seed() {
   follows = [];
   messages = [];
   resets = [];
+  notifications = [];
+  blocks = [];
+  reports = [];
+  chats = [];
+  chatMembers = [];
+  chatMessages = [];
   nextId = 1;
 
   const make = (username: string, displayName: string, bio: string, avatar: string | null): DbUser => {
@@ -106,17 +154,23 @@ function seed() {
     mime: 'image/svg+xml',
     name: 'zakat.png',
   });
-  post(demo, 'Поднял свою соцсеть с нуля: профили, лента, лайки, комментарии, подписки, медиа и личные сообщения. Внутри — Express и SQLite без единой нативной зависимости.', 200);
+  const p4 = post(demo, 'Поднял свою соцсеть с нуля: профили, лента, лайки, комментарии, подписки, медиа и личные сообщения. Внутри — Express и SQLite без единой нативной зависимости.', 200);
 
   likes.push({ userId: demo.id, postId: p1.id }, { userId: oleg.id, postId: p1.id }, { userId: nina.id, postId: p1.id });
   likes.push({ userId: marina.id, postId: p2.id });
   likes.push({ userId: demo.id, postId: p3.id }, { userId: marina.id, postId: p3.id });
+  likes.push({ userId: marina.id, postId: p4.id });
 
-  comments.push(
-    { id: id(), postId: p1.id, authorId: oleg.id, body: 'А какое издание? Мне попадалось только женское.', createdAt: ago(10) },
-    { id: id(), postId: p1.id, authorId: marina.id, body: 'Мужское. Разница в одном абзаце, но он переворачивает финал.', createdAt: ago(8) },
-    { id: id(), postId: p3.id, authorId: marina.id, body: 'Плёнка? Цвет совсем не цифровой.', createdAt: ago(100) },
-  );
+  const answer = (post: DbPost, from: DbUser, body: string, minutes: number): DbComment => {
+    const c: DbComment = { id: id(), postId: post.id, authorId: from.id, body, createdAt: ago(minutes) };
+    comments.push(c);
+    return c;
+  };
+
+  answer(p1, oleg, 'А какое издание? Мне попадалось только женское.', 10);
+  answer(p1, marina, 'Мужское. Разница в одном абзаце, но он переворачивает финал.', 8);
+  answer(p3, marina, 'Плёнка? Цвет совсем не цифровой.', 100);
+  const c4 = answer(p4, oleg, 'Сколько ушло на первую версию? И почему без ORM — принципиально или просто не понадобилась?', 39);
 
   follows.push(
     { followerId: demo.id, followeeId: marina.id },
@@ -137,6 +191,55 @@ function seed() {
   dm(oleg, demo, 'Привет! Нашёл тот станок с фотографии — расскажу при встрече.', 30, false);
   dm(oleg, demo, 'И ещё: у тебя тот аккорд из поста — это Am7?', 25, false);
 
+  // Групповой чат: владелец — тот, кем входят в витрину, иначе в панели
+  // участников не видно ни переименования, ни удаления.
+  const room: DbChat = { id: id(), title: 'Плёнка и проявка', ownerId: demo.id, createdAt: ago(75) };
+  chats.push(room);
+
+  const join = (u: DbUser, minutes: number) => {
+    chatMembers.push({ chatId: room.id, userId: u.id, joinedAt: ago(minutes), lastReadId: 0 });
+  };
+  join(demo, 75);
+  join(nina, 75);
+  join(marina, 74);
+
+  const say = (from: DbUser, body: string, minutes: number): DbChatMessage => {
+    const m: DbChatMessage = { id: id(), chatId: room.id, authorId: from.id, body, createdAt: ago(minutes) };
+    chatMessages.push(m);
+    return m;
+  };
+
+  say(nina, 'Проявляем в субботу у меня? Бачок на две плёнки есть, проявителя хватит на четыре.', 70);
+  const mine = say(demo, 'Давайте. Принесу вторую плёнку и таймер, а то в прошлый раз считали вслух.', 65);
+  const last = say(marina, 'Я приду с камерой деда — она пролежала на антресолях лет десять, надо проверить затвор.', 59);
+
+  // Ватерлиния: у нас прочитано всё до своей реплики — реплика Марины остаётся
+  // непрочитанной и даёт единицу в счётчике. У остальных прочитано всё, но по
+  // фактическому id, а не «бесконечности»: иначе новые сообщения не были бы
+  // непрочитанными и для них, если войти в витрину под их именем.
+  for (const m of chatMembers) m.lastReadId = m.userId === demo.id ? mine.id : last.id;
+
+  const event = (
+    actor: DbUser,
+    kind: NotificationKind,
+    minutes: number,
+    read: boolean,
+    refs: { postId?: number; commentId?: number; chatId?: number } = {},
+  ) => {
+    notifications.push({
+      id: id(), userId: demo.id, actorId: actor.id, kind,
+      postId: refs.postId ?? null, commentId: refs.commentId ?? null, chatId: refs.chatId ?? null,
+      createdAt: ago(minutes), readAt: read ? ago(minutes - 1) : null,
+    });
+  };
+
+  // Четыре вида событий и три непрочитанных — ровно то состояние, которое
+  // описывают счётчики в сайдбаре витрины: 2 письма, 1 чат, 3 события.
+  event(marina, 'like', 190, true, { postId: p4.id });
+  event(marina, 'chat_message', 59, false, { chatId: room.id });
+  event(oleg, 'comment', 39, false, { postId: p4.id, commentId: c4.id });
+  event(oleg, 'message', 25, false);
+
   meId = demo.id;
 }
 
@@ -155,6 +258,22 @@ const author = (u: DbUser): Author => ({
   id: u.id, username: u.username, displayName: u.displayName, avatarUrl: u.avatarUrl,
 });
 
+/**
+ * Блокировка симметрична: достаточно одной стороны, чтобы двое перестали
+ * видеть контент друг друга и потеряли возможность писать. Одно правило вместо
+ * десяти частных — ровно как на сервере.
+ */
+const blockedPair = (aId: number, bId: number) =>
+  blocks.some((b) =>
+    (b.blockerId === aId && b.blockedId === bId) || (b.blockerId === bId && b.blockedId === aId));
+
+/** Скрыт ли автор от того, кто сейчас смотрит. Для гостя — никогда. */
+const hidden = (authorId: number) => meId != null && blockedPair(meId, authorId);
+
+const visiblePosts = () => posts.filter((p) => !hidden(p.authorId));
+const visibleComments = (postId: number) =>
+  comments.filter((c) => c.postId === postId && !hidden(c.authorId));
+
 const publicUser = (u: DbUser): User => ({
   id: u.id,
   username: u.username,
@@ -162,7 +281,9 @@ const publicUser = (u: DbUser): User => ({
   bio: u.bio,
   avatarUrl: u.avatarUrl,
   createdAt: u.createdAt,
-  postCount: posts.filter((p) => p.authorId === u.id).length,
+  // Счётчик записей учитывает блокировку: «12 записей» над пустой лентой
+  // выглядели бы поломкой сайта, а не следствием собственного решения.
+  postCount: visiblePosts().filter((p) => p.authorId === u.id).length,
   followerCount: follows.filter((f) => f.followeeId === u.id).length,
   followingCount: follows.filter((f) => f.followerId === u.id).length,
   followedByMe: follows.some((f) => f.followerId === meId && f.followeeId === u.id),
@@ -173,7 +294,10 @@ const toPost = (p: DbPost): Post => ({
   body: p.body,
   createdAt: p.createdAt,
   likeCount: likes.filter((l) => l.postId === p.id).length,
-  commentCount: comments.filter((c) => c.postId === p.id).length,
+  // Комментарии фильтруются блокировкой, значит и счётчик под записью — тоже,
+  // иначе он разошёлся бы с длиной видимой ветки. Лайки не фильтруем: это
+  // обезличенное число.
+  commentCount: visibleComments(p.id).length,
   likedByMe: likes.some((l) => l.postId === p.id && l.userId === meId),
   media: p.media,
   author: author(byId(p.authorId)!),
@@ -191,7 +315,172 @@ const toMessage = (m: DbMessage): Message => ({
   id: m.id, body: m.body, createdAt: m.createdAt, fromId: m.fromId, toId: m.toId, readAt: m.readAt,
 });
 
+// ─ Уведомления ──────────────────────────────────────────────────────────────
+
+type NotifyInput = {
+  userId: number;
+  actorId: number;
+  kind: NotificationKind;
+  postId?: number;
+  commentId?: number;
+  chatId?: number;
+};
+
+/**
+ * Единственная точка создания события — как `notify()` на сервере. Все правила
+ * живут здесь, а не размазаны по методам: себе не уведомляем, заблокированной
+ * паре не уведомляем, лайк и подписка идемпотентны, сообщения схлопываются.
+ */
+function notify(input: NotifyInput) {
+  const { userId, actorId, kind } = input;
+  const post = input.postId ?? null;
+  const comment = input.commentId ?? null;
+  const chat = input.chatId ?? null;
+
+  if (userId === actorId) return;
+  if (blockedPair(userId, actorId)) return;
+
+  const sameObject = (n: DbNotification) =>
+    n.userId === userId && n.actorId === actorId && n.kind === kind
+    && n.postId === post && n.commentId === comment && n.chatId === chat;
+
+  // Лайк и подписка: включение-выключение не должно быть способом дёргать
+  // человека бесконечно.
+  if ((kind === 'like' || kind === 'follow') && notifications.some(sameObject)) return;
+
+  // Сообщения схлопываются: на диалог или чат приходится не больше одного
+  // непрочитанного события, иначе лента станет дублем переписки.
+  if (kind === 'message' || kind === 'chat_message') {
+    notifications = notifications.filter(
+      (n) => n.readAt !== null
+        || !(n.userId === userId && n.actorId === actorId && n.kind === kind && n.chatId === chat),
+    );
+  }
+
+  notifications.push({
+    id: id(), userId, actorId, kind,
+    postId: post, commentId: comment, chatId: chat,
+    createdAt: new Date().toISOString(), readAt: null,
+  });
+}
+
+/** Снятие лайка и отписка убирают только **непрочитанное** событие о себе. */
+function dropNotification(input: NotifyInput) {
+  const post = input.postId ?? null;
+  const chat = input.chatId ?? null;
+  notifications = notifications.filter(
+    (n) => n.readAt !== null
+      || !(n.userId === input.userId && n.actorId === input.actorId && n.kind === input.kind
+        && n.postId === post && n.chatId === chat),
+  );
+}
+
+/** Гасит события получателя; необязательные фильтры сужают выборку. */
+function markNotificationsRead(filter: {
+  userId: number; kind?: NotificationKind; actorId?: number; chatId?: number;
+}) {
+  const now = new Date().toISOString();
+  for (const n of notifications) {
+    if (n.readAt || n.userId !== filter.userId) continue;
+    if (filter.kind && n.kind !== filter.kind) continue;
+    if (filter.actorId != null && n.actorId !== filter.actorId) continue;
+    if (filter.chatId != null && n.chatId !== filter.chatId) continue;
+    n.readAt = now;
+  }
+}
+
+const unreadNotifications = (userId: number) =>
+  notifications.filter((n) => n.userId === userId && !n.readAt).length;
+
+/** Первая строка предмета, обрезанная до 80 символов — как на сервере. */
+function excerpt(text: string) {
+  const trimmed = text.trim();
+  const line = trimmed.split('\n')[0].trim();
+  if (line.length > 80) return `${line.slice(0, 80)}…`;
+  return line.length < trimmed.length ? `${line}…` : line;
+}
+
+const toNotification = (n: DbNotification): NotificationItem => {
+  const post = n.postId != null ? posts.find((p) => p.id === n.postId) : undefined;
+  const comment = n.commentId != null ? comments.find((c) => c.id === n.commentId) : undefined;
+  const room = n.chatId != null ? chats.find((c) => c.id === n.chatId) : undefined;
+
+  return {
+    id: n.id,
+    kind: n.kind,
+    createdAt: n.createdAt,
+    readAt: n.readAt,
+    actor: author(byId(n.actorId)!),
+    post: post ? { id: post.id, excerpt: excerpt(post.body) } : null,
+    comment: comment ? { id: comment.id, excerpt: excerpt(comment.body) } : null,
+    chat: room ? { id: room.id, title: room.title } : null,
+  };
+};
+
+// ─ Групповые чаты ───────────────────────────────────────────────────────────
+
+const membersOf = (chatId: number) =>
+  chatMembers
+    .filter((m) => m.chatId === chatId)
+    .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt) || a.userId - b.userId);
+
+const memberRow = (chatId: number, userId: number) =>
+  chatMembers.find((m) => m.chatId === chatId && m.userId === userId);
+
+/** Сообщения чата, видимые смотрящему: реплики заблокированных не выдаются,
+ *  но состав участников остаётся полным. Порядок — старые сверху. */
+const visibleChatMessages = (chatId: number) =>
+  chatMessages
+    .filter((m) => m.chatId === chatId && !hidden(m.authorId))
+    .sort((a, b) => a.id - b.id);
+
+const toChatMessage = (m: DbChatMessage): ChatMessage => ({
+  id: m.id, chatId: m.chatId, body: m.body, createdAt: m.createdAt, author: author(byId(m.authorId)!),
+});
+
+const toChat = (c: DbChat): Chat => {
+  const members = membersOf(c.id).map((m) => author(byId(m.userId)!));
+  return {
+    id: c.id,
+    title: c.title,
+    ownerId: c.ownerId,
+    createdAt: c.createdAt,
+    members,
+    memberCount: members.length,
+    iAmOwner: c.ownerId === meId,
+  };
+};
+
+const chatUnread = (chatId: number, userId: number) => {
+  const seen = memberRow(chatId, userId)?.lastReadId ?? 0;
+  return visibleChatMessages(chatId).filter((m) => m.id > seen && m.authorId !== userId).length;
+};
+
+/**
+ * Доступ к чату. Посторонний получает **404, а не 403**: существование чужого
+ * чата не должно подтверждаться тем, кого в нём нет.
+ */
+function requireChat(chatId: number) {
+  const u = requireMe()!;
+  const chat = chats.find((c) => c.id === chatId);
+  if (!chat || !memberRow(chatId, u.id)) fail(404, 'Чат не найден');
+  return { u, chat: chat! };
+}
+
+const TITLE_MAX = 60;
+const MEMBERS_MAX = 20;
+
+function checkTitle(raw: unknown) {
+  const title = typeof raw === 'string' ? raw.trim() : '';
+  if (!title) fail(400, '«название чата»: минимум 1 символов');
+  if (title.length > TITLE_MAX) fail(400, `«название чата»: максимум ${TITLE_MAX} символов`);
+  return title;
+}
+
 const PAGE = 20;
+/** Страница переписки — и в личных сообщениях, и в чатах. */
+const CHAT_PAGE = 30;
+const BODY_MAX = 1000;
 
 export const mockApi = {
   me: () => tick({ user: me() ? publicUser(me()!) : null }),
@@ -274,7 +563,16 @@ export const mockApi = {
   profile: (username: string) => {
     const u = byName(username);
     if (!u) fail(404, 'Пользователь не найден');
-    return tick({ user: publicUser(u!) });
+    const target = u!;
+    // Профиль отдаётся всегда, но с флагами: записей у заблокированного будет
+    // ноль, подписаться нельзя, написать нельзя.
+    return tick({
+      user: {
+        ...publicUser(target),
+        blockedByMe: blocks.some((b) => b.blockerId === meId && b.blockedId === target.id),
+        blocksMe: blocks.some((b) => b.blockerId === target.id && b.blockedId === meId),
+      },
+    });
   },
 
   updateProfile: (input: { displayName: string; bio: string }) => {
@@ -287,7 +585,8 @@ export const mockApi = {
   },
 
   posts: (opts: { author?: string; cursor?: number | null; feed?: 'following' } = {}) => {
-    let list = [...posts].sort((a, b) => b.id - a.id);
+    // Блокировка — главный фильтр ленты: и общей, и «по подпискам», и профильной.
+    let list = visiblePosts().sort((a, b) => b.id - a.id);
 
     if (opts.author) {
       const u = byName(opts.author);
@@ -338,6 +637,8 @@ export const mockApi = {
     posts = posts.filter((x) => x.id !== postId);
     comments = comments.filter((c) => c.postId !== postId);
     likes = likes.filter((l) => l.postId !== postId);
+    // События о записи ведут туда, где больше ничего нет — каскад, как в схеме.
+    notifications = notifications.filter((n) => n.postId !== postId);
     return tick({ ok: true as const });
   },
 
@@ -345,19 +646,36 @@ export const mockApi = {
     const u = requireMe()!;
     likes = likes.filter((l) => !(l.postId === postId && l.userId === u.id));
     if (liked) likes.push({ userId: u.id, postId });
+
+    const p = posts.find((x) => x.id === postId);
+    if (p) {
+      const event = { userId: p.authorId, actorId: u.id, kind: 'like' as const, postId };
+      if (liked) notify(event);
+      else dropNotification(event);
+    }
+
     return tick({ likeCount: likes.filter((l) => l.postId === postId).length, likedByMe: liked });
   },
 
-  comments: (postId: number) =>
-    tick({ comments: comments.filter((c) => c.postId === postId).sort((a, b) => a.id - b.id).map(toComment) }),
+  comments: (postId: number) => {
+    // Ветка под скрытой записью была бы дверью к ней самой.
+    const p = posts.find((x) => x.id === postId);
+    if (p && hidden(p.authorId)) fail(404, 'Пост не найден');
+    return tick({ comments: visibleComments(postId).sort((a, b) => a.id - b.id).map(toComment) });
+  },
 
   addComment: (postId: number, text: string) => {
     const u = requireMe()!;
     const body = text.trim();
     if (!body) fail(400, '«текст комментария»: минимум 1 символов');
     if (body.length > 300) fail(400, '«текст комментария»: максимум 300 символов');
+
+    const p = posts.find((x) => x.id === postId);
+    if (p && hidden(p.authorId)) fail(403, 'Комментировать этот пост нельзя');
+
     const c: DbComment = { id: id(), postId, authorId: u.id, body, createdAt: new Date().toISOString() };
     comments.push(c);
+    if (p) notify({ userId: p.authorId, actorId: u.id, kind: 'comment', postId, commentId: c.id });
     return tick({ comment: toComment(c) });
   },
 
@@ -368,6 +686,7 @@ export const mockApi = {
     const post = posts.find((p) => p.id === c!.postId);
     if (c!.authorId !== u.id && post?.authorId !== u.id) fail(403, 'Можно удалять только свои комментарии');
     comments = comments.filter((x) => x.id !== commentId);
+    notifications = notifications.filter((n) => n.commentId !== commentId);
     return tick({ ok: true as const });
   },
 
@@ -387,7 +706,9 @@ export const mockApi = {
     const query = q.trim().toLowerCase();
     if (!query) return tick({ users: [] });
 
+    // Обе стороны блокировки выпадают из выдачи друг у друга.
     const scored = users
+      .filter((u) => !hidden(u.id))
       .map((u) => {
         const username = u.username.toLowerCase();
         const displayName = u.displayName.toLowerCase();
@@ -410,9 +731,14 @@ export const mockApi = {
     const target = byName(username);
     if (!target) fail(404, 'Пользователь не найден');
     if (target!.id === u.id) fail(400, 'Нельзя подписаться на себя');
+    if (blockedPair(u.id, target!.id)) fail(400, 'Действие с этим пользователем недоступно');
 
     follows = follows.filter((f) => !(f.followerId === u.id && f.followeeId === target!.id));
     if (following) follows.push({ followerId: u.id, followeeId: target!.id });
+
+    const event = { userId: target!.id, actorId: u.id, kind: 'follow' as const };
+    if (following) notify(event);
+    else dropNotification(event);
 
     return tick({
       followedByMe: following,
@@ -433,6 +759,9 @@ export const mockApi = {
           user: author(byId(otherId)!),
           unread: messages.filter((m) => m.toId === u.id && m.fromId === otherId && !m.readAt).length,
           lastMessage: toMessage(last),
+          // История не удаляется и диалог из списка не исчезает — меняется
+          // только возможность отвечать.
+          blocked: blockedPair(u.id, otherId),
         };
       })
       .sort((a, b) => b.lastMessage.id - a.lastMessage.id);
@@ -455,11 +784,12 @@ export const mockApi = {
 
     if (cursor != null) list = list.filter((m) => m.id < cursor);
 
-    const page = list.slice(0, 30);
+    const page = list.slice(0, CHAT_PAGE);
     return tick({
       user: author(other!),
       messages: page.map(toMessage).reverse(),
-      nextCursor: list.length > 30 ? page.at(-1)!.id : null,
+      nextCursor: list.length > CHAT_PAGE ? page.at(-1)!.id : null,
+      blocked: blockedPair(u.id, other!.id),
     });
   },
 
@@ -468,15 +798,19 @@ export const mockApi = {
     const other = byName(username);
     if (!other) fail(404, 'Пользователь не найден');
     if (other!.id === u.id) fail(400, 'Нельзя написать самому себе');
+    // Текст одинаков в обе стороны намеренно: по формулировке нельзя понять,
+    // кто кого заблокировал.
+    if (blockedPair(u.id, other!.id)) fail(403, 'Переписка с этим пользователем недоступна');
     const body = text.trim();
     if (!body) fail(400, '«сообщение»: минимум 1 символов');
-    if (body.length > 1000) fail(400, '«сообщение»: максимум 1000 символов');
+    if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
 
     const m: DbMessage = {
       id: id(), fromId: u.id, toId: other!.id, body,
       createdAt: new Date().toISOString(), readAt: null,
     };
     messages.push(m);
+    notify({ userId: other!.id, actorId: u.id, kind: 'message' });
     return tick({ message: toMessage(m) });
   },
 
@@ -487,9 +821,327 @@ export const mockApi = {
     for (const m of messages) {
       if (m.toId === u.id && m.fromId === other!.id && !m.readAt) m.readAt = new Date().toISOString();
     }
+    // Прочитанный диалог гасит и событие о нём: иначе лента событий жила бы
+    // отдельной жизнью от переписки.
+    markNotificationsRead({ userId: u.id, kind: 'message', actorId: other!.id });
     return tick({
       ok: true as const,
       unreadTotal: messages.filter((m) => m.toId === u.id && !m.readAt).length,
     });
+  },
+
+  // ─ Уведомления и счётчики ─────────────────────────────────────────────
+
+  notifications: (cursor?: number | null) => {
+    const u = requireMe()!;
+    let list = notifications.filter((n) => n.userId === u.id).sort((a, b) => b.id - a.id);
+    if (cursor != null) list = list.filter((n) => n.id < cursor);
+
+    const page = list.slice(0, PAGE);
+    return tick({
+      notifications: page.map(toNotification),
+      nextCursor: list.length > PAGE ? page.at(-1)!.id : null,
+      // Общее число непрочитанных, а не число непрочитанных на странице.
+      unread: unreadNotifications(u.id),
+    });
+  },
+
+  readAllNotifications: () => {
+    const u = requireMe()!;
+    markNotificationsRead({ userId: u.id });
+    return tick({ ok: true as const, unread: 0 });
+  },
+
+  readNotification: (notificationId: number) => {
+    const u = requireMe()!;
+    const n = notifications.find((x) => x.id === notificationId && x.userId === u.id);
+    // Чужое и несуществующее — одинаково 404: посторонний не должен узнавать,
+    // что такое событие вообще есть.
+    if (!n) fail(404, 'Событие не найдено');
+    if (!n!.readAt) n!.readAt = new Date().toISOString();
+    return tick({ ok: true as const, unread: unreadNotifications(u.id) });
+  },
+
+  badges: (): Promise<Badges> => {
+    const u = requireMe()!;
+    return tick({
+      messages: messages.filter((m) => m.toId === u.id && !m.readAt).length,
+      chats: chatMembers
+        .filter((m) => m.userId === u.id)
+        .reduce((sum, m) => sum + chatUnread(m.chatId, u.id), 0),
+      notifications: unreadNotifications(u.id),
+    });
+  },
+
+  post: (postId: number) => {
+    const p = posts.find((x) => x.id === postId);
+    // Мусорный id, удалённая запись и запись заблокированного — одно и то же
+    // «не найдено»: страница /p/<что угодно> показывает обычное пустое место.
+    if (!p || hidden(p.authorId)) fail(404, 'Пост не найден');
+    return tick({ post: toPost(p!) });
+  },
+
+  // ─ Блокировки и жалобы ────────────────────────────────────────────────
+
+  setBlock: (username: string, blocked: boolean) => {
+    const u = requireMe()!;
+    const target = byName(username);
+    if (!target) fail(404, 'Пользователь не найден');
+    if (target!.id === u.id) fail(400, 'Нельзя заблокировать себя');
+    const other = target!;
+
+    blocks = blocks.filter((b) => !(b.blockerId === u.id && b.blockedId === other.id));
+
+    if (blocked) {
+      blocks.push({ blockerId: u.id, blockedId: other.id, createdAt: new Date().toISOString() });
+      // Иначе заблокированный остался бы в подписчиках, а его лайки — в
+      // счётчике событий. Непрочитанные события чистятся в обе стороны:
+      // те, что от него, — шум, а те, что о нём, вели бы на скрытую запись.
+      follows = follows.filter(
+        (f) => !((f.followerId === u.id && f.followeeId === other.id)
+          || (f.followerId === other.id && f.followeeId === u.id)),
+      );
+      notifications = notifications.filter(
+        (n) => n.readAt !== null
+          || !((n.userId === u.id && n.actorId === other.id) || (n.userId === other.id && n.actorId === u.id)),
+      );
+    }
+
+    // Снятие ничего не восстанавливает: подписки и погашенные события назад
+    // не возвращаются, зато контент виден сразу.
+    return tick({ blockedByMe: blocked });
+  },
+
+  blockedUsers: () => {
+    const u = requireMe()!;
+    // Только те, кого заблокировал я: свежие сверху. Те, кто заблокировал
+    // меня, сюда не попадают — это чужое решение, не моё.
+    const list: BlockedUser[] = blocks
+      .filter((b) => b.blockerId === u.id)
+      .slice()
+      .reverse()
+      .map((b) => author(byId(b.blockedId)!));
+    return tick({ users: list });
+  },
+
+  report: (input: {
+    targetType: ReportTargetType;
+    targetId: number;
+    reason: ReportReason;
+    note?: string;
+  }) => {
+    const u = requireMe()!;
+
+    const types: ReportTargetType[] = ['post', 'comment', 'user'];
+    if (!types.includes(input.targetType)) fail(400, 'Неизвестный тип объекта жалобы');
+
+    const targetId = Number(input.targetId);
+    if (!Number.isSafeInteger(targetId) || targetId <= 0) fail(400, 'Некорректный id объекта');
+
+    const reasons: ReportReason[] = ['spam', 'abuse', 'adult', 'other'];
+    if (!reasons.includes(input.reason)) fail(400, 'Причина: spam, abuse, adult или other');
+
+    const note = (input.note ?? '').trim();
+    if (note.length > 300) fail(400, '«комментарий»: максимум 300 символов');
+
+    if (input.targetType === 'post' && !posts.some((p) => p.id === targetId)) fail(404, 'Пост не найден');
+    if (input.targetType === 'comment' && !comments.some((c) => c.id === targetId)) fail(404, 'Комментарий не найден');
+    if (input.targetType === 'user') {
+      if (!byId(targetId)) fail(404, 'Пользователь не найден');
+      if (targetId === u.id) fail(400, 'Нельзя пожаловаться на себя');
+    }
+
+    const already = reports.some(
+      (r) => r.reporterId === u.id && r.targetType === input.targetType && r.targetId === targetId,
+    );
+
+    if (!already) {
+      reports.push({
+        reporterId: u.id, targetType: input.targetType, targetId,
+        reason: input.reason, note, createdAt: new Date().toISOString(),
+      });
+      // Панели модератора в проекте нет, и жалоба честно уходит в лог — на
+      // сервере в консоль процесса, здесь в консоль вкладки. Повтор не
+      // печатается: это второй клик, а не второй сигнал.
+      console.warn(
+        `⚑ Жалоба: @${u.username} → ${input.targetType} #${targetId}, причина «${input.reason}»`
+        + (note ? `, комментарий: ${note}` : ''),
+      );
+    }
+
+    return tick({ ok: true as const, alreadyReported: already });
+  },
+
+  // ─ Групповые чаты ─────────────────────────────────────────────────────
+
+  chats: () => {
+    const u = requireMe()!;
+
+    const list: ChatSummary[] = chatMembers
+      .filter((m) => m.userId === u.id)
+      .map((m) => chats.find((c) => c.id === m.chatId))
+      .filter((c): c is DbChat => Boolean(c))
+      .map((c) => {
+        // Последнее сообщение — последнее **видимое**: реплика заблокированного
+        // не показывается даже в превью.
+        const last = visibleChatMessages(c.id).at(-1) ?? null;
+        return {
+          ...toChat(c),
+          unread: chatUnread(c.id, u.id),
+          lastMessage: last ? toChatMessage(last) : null,
+        };
+      })
+      // Чат без сообщений встаёт по своему созданию, иначе только что
+      // собранный чат уезжал бы в самый низ списка.
+      .sort((a, b) => (b.lastMessage?.createdAt ?? b.createdAt).localeCompare(a.lastMessage?.createdAt ?? a.createdAt));
+
+    return tick({ chats: list, unreadTotal: list.reduce((sum, c) => sum + c.unread, 0) });
+  },
+
+  createChat: (input: { title: string; members: string[] }) => {
+    const u = requireMe()!;
+    const title = checkTitle(input.title);
+    if (!Array.isArray(input.members)) fail(400, 'Список участников должен быть массивом имён');
+
+    // Участники приходят именами, а не id: id из тела запроса в проекте
+    // принципиально не принимают. Своё имя и повторы схлопываются молча.
+    const names = [...new Set(input.members.map((n) => (typeof n === 'string' ? n.trim().toLowerCase() : '')))]
+      .filter((n) => n && n !== u.username);
+
+    const invited: DbUser[] = [];
+    for (const name of names) {
+      const found = byName(name);
+      if (!found) fail(400, `Пользователь «${name}» не найден`);
+      if (blockedPair(u.id, found!.id)) fail(400, `Добавить «${name}» в чат нельзя`);
+      invited.push(found!);
+    }
+
+    if (invited.length === 0) fail(400, 'В чате должно быть не меньше двух участников');
+    if (invited.length + 1 > MEMBERS_MAX) fail(400, `В чате не больше ${MEMBERS_MAX} участников`);
+
+    const now = new Date().toISOString();
+    const chat: DbChat = { id: id(), title, ownerId: u.id, createdAt: now };
+    chats.push(chat);
+    chatMembers.push({ chatId: chat.id, userId: u.id, joinedAt: now, lastReadId: 0 });
+
+    for (const person of invited) {
+      chatMembers.push({ chatId: chat.id, userId: person.id, joinedAt: now, lastReadId: 0 });
+      notify({ userId: person.id, actorId: u.id, kind: 'chat_invite', chatId: chat.id });
+    }
+
+    return tick({ chat: toChat(chat) });
+  },
+
+  chat: (chatId: number) => {
+    const { chat } = requireChat(chatId);
+    return tick({ chat: toChat(chat) });
+  },
+
+  renameChat: (chatId: number, title: string) => {
+    const { u, chat } = requireChat(chatId);
+    if (chat.ownerId !== u.id) fail(403, 'Переименовать чат может только владелец');
+    chat.title = checkTitle(title);
+    return tick({ chat: toChat(chat) });
+  },
+
+  deleteChat: (chatId: number) => {
+    const { u, chat } = requireChat(chatId);
+    if (chat.ownerId !== u.id) fail(403, 'Удалить чат может только владелец');
+    chats = chats.filter((c) => c.id !== chat.id);
+    chatMembers = chatMembers.filter((m) => m.chatId !== chat.id);
+    chatMessages = chatMessages.filter((m) => m.chatId !== chat.id);
+    notifications = notifications.filter((n) => n.chatId !== chat.id);
+    return tick({ ok: true as const });
+  },
+
+  chatMessages: (chatId: number, cursor?: number | null) => {
+    const { chat } = requireChat(chatId);
+
+    let list = visibleChatMessages(chat.id);
+    if (cursor != null) list = list.filter((m) => m.id < cursor);
+
+    // Старые сверху: страница — последние 30 по id, курсор — id самого
+    // старого элемента страницы, то есть точка для подгрузки вверх.
+    const page = list.slice(-CHAT_PAGE);
+    return tick({
+      chat: toChat(chat),
+      messages: page.map(toChatMessage),
+      nextCursor: list.length > CHAT_PAGE ? page[0].id : null,
+    });
+  },
+
+  sendChatMessage: (chatId: number, text: string) => {
+    const { u, chat } = requireChat(chatId);
+    const body = text.trim();
+    if (!body) fail(400, '«сообщение»: минимум 1 символов');
+    if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
+
+    const m: DbChatMessage = {
+      id: id(), chatId: chat.id, authorId: u.id, body, createdAt: new Date().toISOString(),
+    };
+    chatMessages.push(m);
+
+    for (const member of membersOf(chat.id)) {
+      notify({ userId: member.userId, actorId: u.id, kind: 'chat_message', chatId: chat.id });
+    }
+
+    return tick({ message: toChatMessage(m) });
+  },
+
+  markChatRead: (chatId: number) => {
+    const { u, chat } = requireChat(chatId);
+    const row = memberRow(chat.id, u.id)!;
+    // Ватерлиния встаёт на максимальный id чата, включая скрытые реплики:
+    // иначе они всплывали бы как непрочитанные после снятия блокировки.
+    const top = chatMessages.filter((m) => m.chatId === chat.id).reduce((max, m) => Math.max(max, m.id), 0);
+    row.lastReadId = Math.max(row.lastReadId, top);
+    markNotificationsRead({ userId: u.id, kind: 'chat_message', chatId: chat.id });
+    return tick({ ok: true as const, unread: 0 });
+  },
+
+  addChatMember: (chatId: number, username: string) => {
+    // Звать людей может любой участник — удалять их может только владелец.
+    const { u, chat } = requireChat(chatId);
+    const name = username.trim().toLowerCase();
+    const person = byName(name);
+    if (!person) fail(400, `Пользователь «${name}» не найден`);
+    if (memberRow(chat.id, person!.id)) fail(400, 'Этот человек уже в чате');
+    if (blockedPair(u.id, person!.id)) fail(400, `Добавить «${name}» в чат нельзя`);
+    if (membersOf(chat.id).length >= MEMBERS_MAX) fail(400, `В чате не больше ${MEMBERS_MAX} участников`);
+
+    chatMembers.push({
+      chatId: chat.id, userId: person!.id, joinedAt: new Date().toISOString(), lastReadId: 0,
+    });
+    notify({ userId: person!.id, actorId: u.id, kind: 'chat_invite', chatId: chat.id });
+
+    return tick({ chat: toChat(chat) });
+  },
+
+  removeChatMember: (chatId: number, username: string) => {
+    const { u, chat } = requireChat(chatId);
+    const person = byName(username);
+    const row = person ? memberRow(chat.id, person.id) : undefined;
+    // Текст отличает этот 404 от «чата нет»: здесь скрывать уже нечего.
+    if (!person || !row) fail(404, 'Участник не найден');
+
+    const leaving = person!.id === u.id;
+    if (!leaving && chat.ownerId !== u.id) fail(403, 'Удалять участников может только владелец');
+
+    chatMembers = chatMembers.filter((m) => !(m.chatId === chat.id && m.userId === person!.id));
+    // Ушедшему события об этом чате больше некуда вести.
+    notifications = notifications.filter((n) => !(n.userId === person!.id && n.chatId === chat.id));
+
+    const rest = membersOf(chat.id);
+    if (rest.length === 0) {
+      chats = chats.filter((c) => c.id !== chat.id);
+      chatMessages = chatMessages.filter((m) => m.chatId !== chat.id);
+      notifications = notifications.filter((n) => n.chatId !== chat.id);
+    } else if (chat.ownerId === person!.id) {
+      // Чат без владельца невозможно ни переименовать, ни распустить —
+      // владение переходит участнику с самым ранним joined_at.
+      chat.ownerId = rest[0].userId;
+    }
+
+    return leaving ? tick({ ok: true as const, left: true }) : tick({ ok: true as const });
   },
 };
