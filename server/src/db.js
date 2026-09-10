@@ -73,6 +73,68 @@ db.exec(`
     read_at    TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS blocks (
+    blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (blocker_id, blocked_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS reports (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL,
+    target_id   INTEGER NOT NULL,
+    reason      TEXT NOT NULL,
+    note        TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    -- Повторная жалоба того же человека на тот же объект — это не второй
+    -- сигнал, а второй клик: уникальность делает жалобу идемпотентной
+    -- на уровне схемы, а не на уровне доброй воли роутера.
+    UNIQUE (reporter_id, target_type, target_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS chats (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    title      TEXT NOT NULL,
+    owner_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS chat_members (
+    chat_id      INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    joined_at    TEXT NOT NULL,
+    -- Ватерлиния вместо read_at на каждое сообщение: в групповом чате
+    -- получателей N, и честная отметка прочтения стоила бы таблицы N × M.
+    -- Непрочитанные = COUNT(*) WHERE chat_id = ? AND id > last_read_id.
+    last_read_id INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chat_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS chat_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id    INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    author_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  -- Объявлена после chats: внешний ключ на неё разрешается при вставке,
+  -- но держать таблицу ниже той, на которую она ссылается, — единственный
+  -- порядок, который читается сверху вниз без обратных ссылок.
+  CREATE TABLE IF NOT EXISTS notifications (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    actor_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    post_id    INTEGER REFERENCES posts(id)    ON DELETE CASCADE,
+    comment_id INTEGER REFERENCES comments(id) ON DELETE CASCADE,
+    chat_id    INTEGER REFERENCES chats(id)    ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    read_at    TEXT
+  );
+
   CREATE INDEX IF NOT EXISTS idx_posts_created    ON posts(created_at DESC, id DESC);
   CREATE INDEX IF NOT EXISTS idx_posts_author     ON posts(author_id, id DESC);
   CREATE INDEX IF NOT EXISTS idx_sessions_user    ON sessions(user_id);
@@ -83,6 +145,12 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_in      ON messages(to_id, from_id, id DESC);
   CREATE INDEX IF NOT EXISTS idx_messages_unread  ON messages(to_id, read_at);
   CREATE INDEX IF NOT EXISTS idx_resets_user       ON password_resets(user_id);
+  CREATE INDEX IF NOT EXISTS idx_notif_user        ON notifications(user_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_notif_unread      ON notifications(user_id, read_at);
+  CREATE INDEX IF NOT EXISTS idx_blocks_blocked    ON blocks(blocked_id);
+  CREATE INDEX IF NOT EXISTS idx_reports_target    ON reports(target_type, target_id);
+  CREATE INDEX IF NOT EXISTS idx_chat_msgs         ON chat_messages(chat_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_chat_members_u    ON chat_members(user_id);
 `);
 
 /**
