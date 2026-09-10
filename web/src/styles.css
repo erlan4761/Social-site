@@ -417,8 +417,24 @@ a { color: inherit; }
 
   .sidebar .wordmark { font-size: 1.375rem; margin: 0 auto 0 0; }
 
-  /* Wordmark and «Выйти» share the top row; navigation drops to its own line. */
-  .nav { order: 3; width: 100%; flex-direction: row; gap: 0.25rem; }
+  /* Wordmark and «Выйти» share the top row; navigation drops to its own line.
+     Пунктов стало четыре — в 375 px они в одну строку уже не влезают,
+     поэтому строка переносится, а не прокручивается вбок. */
+  .nav { order: 3; width: 100%; flex-direction: row; flex-wrap: wrap; gap: 0.25rem; }
+  .nav .badge { margin-left: 0.375rem; }
+
+  .events-top,
+  .messages-top { align-items: flex-start; }
+  .event-link { gap: 0.625rem; }
+
+  /* «Ко всем», название чата и «Участники» в одну строку на 375 px не влезают:
+     строка переносится, а не прокручивается вбок. */
+  .thread-top { flex-wrap: wrap; gap: 0.75rem; }
+  .chat-title { font-size: 1rem; }
+
+  /* Окно жалобы на 375 px — почти во всю ширину, поля скромнее. */
+  .sheet { padding: 1.125rem; }
+  .notice { padding: 0.75rem; }
 
   .post-time { margin-left: 0; }
   .nav a { padding: 0.375rem 0.625rem; margin: 0; font-size: 0.9375rem; }
@@ -708,7 +724,9 @@ a.btn { display: inline-block; text-decoration: none; }
   margin-bottom: 0.125rem;
 }
 
-.dialog-name { font-weight: 600; }
+/* Имя ужимается первым: рядом с ним теперь может стоять пометка блокировки,
+   и на узком экране строка иначе вылезла бы за край. */
+.dialog-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dialog-time { margin-left: auto; font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
 
 .dialog-last {
@@ -917,3 +935,372 @@ a.btn { display: inline-block; text-decoration: none; }
 @media (max-width: 46rem) {
   .search-slot { order: 2; width: 100%; margin: 0; }
 }
+
+/* ─ События ───────────────────────────────────────────────────────────── */
+/* Шапка страницы: заголовок и действие над ним в одной строке.
+   Тем же правилом живёт шапка «Сообщений» с кнопкой «Новый чат» — приём один,
+   и второй копии объявлений он не заслуживает. */
+.events-top,
+.messages-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.events-top .page-title,
+.messages-top .page-title { margin-bottom: 0; }
+
+.events { list-style: none; margin: 0; padding: 0; }
+.events li + li { border-top: 1px solid var(--rule); }
+
+.event-link {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0.875rem 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.event-body { min-width: 0; }
+
+.event-line { margin: 0; font-size: 0.9375rem; color: var(--muted); }
+.event.unread .event-line { color: var(--ink); font-weight: 500; }
+.event-link:hover .event-line { text-decoration: underline; text-underline-offset: 2px; }
+
+/* Цитата предмета — читательским шрифтом, как и сам предмет разговора. */
+.event-quote {
+  margin: 0.1875rem 0 0;
+  font-family: var(--read);
+  font-size: 0.875rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-time { display: block; margin-top: 0.25rem; font-size: 0.75rem; color: var(--muted); }
+
+/* Спокойная точка вместо числа: непрочитанное отличимо, но не требует внимания. */
+.event-mark {
+  display: block;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-top: 0.4375rem;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.events-more { margin-top: 1.5rem; }
+
+/* ─ Отдельная запись ──────────────────────────────────────────────────── */
+/* Одна запись — не отрезок времени, вертикальная линия ленты здесь лишняя. */
+.rail.single::before { display: none; }
+
+/* ─ Блокировки и жалобы ───────────────────────────────────────────────── */
+/* Тихая кнопка опасного действия: обычно она мутная и не тянет на себя взгляд,
+   цвет предупреждения загорается только под курсором и в фокусе — тот же
+   приём, что у «Удалить» под записью. */
+.act-danger {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.act-danger:hover:not(:disabled),
+.act-danger:focus-visible { color: var(--danger); }
+.act-danger:disabled { cursor: default; opacity: 0.5; }
+
+/* Плашка состояния: линия слева — как у `.error`, только спокойнее. */
+.notice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.875rem 0 0;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--rule);
+  border-radius: 0 8px 8px 0;
+}
+
+.notice.danger { border-left-color: var(--danger); }
+
+.notice p {
+  margin: 0;
+  flex: 1 1 14rem;
+  min-width: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.notice p strong { color: var(--ink); font-weight: 600; }
+
+/* Действия под профилем: основные кнопки и тихие опасные в одной строке. */
+.profile-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin-top: 0.875rem;
+}
+
+.comment-actions { display: flex; flex-wrap: wrap; gap: 1rem; }
+
+/* Свой список блокировок: раскрывается на месте, отдельной страницы нет. */
+.blocked { margin-top: 1rem; }
+
+.blocked-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  max-width: var(--measure);
+}
+
+.blocked-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0;
+}
+
+.blocked-list li + li { border-top: 1px solid var(--rule); }
+
+.blocked-who { flex: 1; min-width: 0; text-decoration: none; color: inherit; }
+.blocked-who strong { display: block; font-size: 0.875rem; font-weight: 600; }
+.blocked-who:hover strong { text-decoration: underline; text-underline-offset: 2px; }
+.blocked-handle { font-size: 0.75rem; color: var(--muted); }
+
+/* Пометка в списке диалогов: одинаковая для обеих сторон блокировки. */
+.dialog-flag {
+  flex: none;
+  padding: 0 0.4375rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.chat-blocked { margin-top: 1.25rem; }
+
+/* ─ Окно жалобы ───────────────────────────────────────────────────────── */
+/* Нативный <dialog> в верхнем слое: ловушка фокуса, Esc и возврат фокуса на
+   кнопку достаются даром, своей реализации модального окна не нужно. */
+.sheet {
+  width: min(26rem, calc(100vw - 2rem));
+  padding: 1.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--ui);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+}
+
+.sheet::backdrop { background: rgba(0, 0, 0, 0.4); }
+
+.sheet[open] { animation: sheet-in 180ms ease-out; }
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet[open] { animation: none; }
+}
+
+.sheet-title { font-size: 1.125rem; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+
+.sheet-subject {
+  margin: 0.25rem 0 1.25rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.sheet-done {
+  margin: 0 0 1.25rem;
+  font-family: var(--read);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.sheet-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+/* Поле на фоне окна: `--surface` слился бы с самим окном, остался бы
+   один контур. */
+.sheet .field textarea { background: var(--paper); }
+
+.choices { border: 0; margin: 0 0 1.25rem; padding: 0; }
+
+.choices legend {
+  padding: 0;
+  margin-bottom: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.375rem 0;
+  cursor: pointer;
+}
+
+.choice input { margin: 0.1875rem 0 0; accent-color: var(--accent); }
+.choice strong { display: block; font-size: 0.9375rem; font-weight: 500; }
+.choice-hint { display: block; font-size: 0.8125rem; color: var(--muted); }
+.rail.single .rail-row { padding-bottom: 0; }
+
+/* ─ Групповые чаты ────────────────────────────────────────────────────── */
+/* Поиск человека для чата: рамка и выпадающий список достаются от общего
+   поиска людей, своя здесь только подпись поля. */
+.member-search { margin-bottom: 1.125rem; }
+
+.member-search-label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--muted);
+  margin-bottom: 0.375rem;
+}
+
+/* Внутри окна `--surface` совпал бы с фоном самого окна и список слился бы
+   с ним — тот же приём, что у поля жалобы. */
+.sheet .search-results { background: var(--paper); }
+
+/* Выбранные люди — чипы: список читается с одного взгляда, и снять человека
+   можно там же, где он появился. */
+.chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  max-width: 100%;
+  padding: 0.1875rem 0.1875rem 0.1875rem 0.25rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--paper);
+}
+
+.chip-name {
+  font-size: 0.8125rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-off {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chip-off:hover { color: var(--ink); }
+
+.chips-hint { margin: 0 0 1.125rem; }
+
+/* Шапка группового чата: название вместо собеседника, состав вместо @логина. */
+.chat-who {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-who-text { min-width: 0; }
+
+.chat-title {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.chat-members-toggle { flex: none; }
+
+/* Панель участников: раскрывается на месте, как список заблокированных
+   в своём профиле. Отдельная страница ради шести строк не нужна. */
+.members {
+  padding: 0.25rem 0 1.25rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.members-list { list-style: none; margin: 0 0 1rem; padding: 0; }
+
+.members-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  padding: 0.5rem 0;
+}
+
+.members-list li + li { border-top: 1px solid var(--rule); }
+
+.members-who { display: flex; align-items: center; gap: 0.625rem; }
+
+.members-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+}
+
+.rename-form .field { margin-bottom: 0.75rem; max-width: 22rem; }
+
+/* Подпись автора над чужой репликой: в личной переписке собеседник один,
+   здесь — нет. Над своей подписи нет: и так понятно. */
+.bubble-author {
+  display: block;
+  margin-bottom: 0.1875rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.bubble-author:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
