@@ -3,9 +3,12 @@ import type { ReactNode } from 'react';
 import { Shell } from './components/Shell';
 import { DemoBanner } from './demo/DemoBanner';
 import { Auth } from './pages/Auth';
+import { ChatThread } from './pages/ChatThread';
 import { Feed } from './pages/Feed';
 import { ForgotPassword } from './pages/ForgotPassword';
 import { Messages } from './pages/Messages';
+import { Notifications } from './pages/Notifications';
+import { PostPage } from './pages/PostPage';
 import { Profile } from './pages/Profile';
 import { ResetPassword } from './pages/ResetPassword';
 import { Thread } from './pages/Thread';
@@ -54,7 +57,15 @@ export function App() {
           >
             <Route index element={<Feed />} />
             <Route path="u/:username" element={<Profile />} />
+            <Route path="p/:id" element={<PostPage />} />
+            <Route path="notifications" element={<Notifications />} />
             <Route path="messages" element={<Messages />} />
+            {/* Групповой чат объявлен раньше личной переписки: путь у него
+                длиннее (`messages/c/:id` против `messages/:username`), и
+                порядок закрепляет это намерение в коде. Человек с логином
+                «c» ничего не ломает — его диалог живёт на `/messages/c`,
+                это по-прежнему два сегмента, а не три. */}
+            <Route path="messages/c/:id" element={<ChatThread />} />
             <Route path="messages/:username" element={<Thread />} />
           </Route>
 
