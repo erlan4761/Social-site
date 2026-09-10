@@ -13,6 +13,9 @@ import { router as userRoutes } from './routes/users.js';
 import { router as postRoutes } from './routes/posts.js';
 import { router as commentRoutes } from './routes/comments.js';
 import { router as messageRoutes } from './routes/messages.js';
+import { router as chatRoutes } from './routes/chats.js';
+import { router as notificationRoutes, badgesRouter } from './routes/notifications.js';
+import { router as reportRoutes } from './routes/reports.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -52,6 +55,25 @@ app.use('/api/auth/reset-password', rateLimit({ windowMs: 15 * 60_000, max: rela
 // иначе открытые ЛС — готовый канал для рассылки.
 app.post('/api/messages/*splat', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 30 }));
 
+// Создание чата — отдельный, куда более редкий жест, чем сообщение в нём:
+// десяток новых чатов в час покрывает любое живое использование, а без этого
+// лимита один запрос порождал бы уведомления сразу двадцати людям.
+app.post('/api/chats', rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 10 }));
+// Всё остальное, что пишет в чат (сообщения, добавление участников), — по той
+// же мерке, что и ЛС.
+app.post('/api/chats/*splat', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 30 }));
+
+// Жалоба — сигнал, а не действие: десятка в час хватит любому живому человеку,
+// а поток одинаковых жалоб от одного адреса только зашумит лог.
+app.use('/api/reports', rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 10 }));
+
+// Один счётчик на блокировку и разблокировку: осмысленных сценариев, где
+// человек щёлкает этой парой чаще тридцати раз в час, нет, а перебор имён
+// через ответы 404/400 такой лимит закрывает.
+const blockLimit = rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 30 });
+app.put('/api/users/:username/block', blockLimit);
+app.delete('/api/users/:username/block', blockLimit);
+
 if (relaxed) console.warn('⚠  RELAX_RATE_LIMITS=1 — защита от перебора ослаблена. Только для тестов.');
 
 app.use('/api/auth', authRoutes);
@@ -59,6 +81,10 @@ app.use('/api/users', userRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/chats', chatRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/badges', badgesRouter);
+app.use('/api/reports', reportRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Нет такого эндпоинта' }));
 
