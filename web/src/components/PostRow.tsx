@@ -5,11 +5,14 @@ import { useSession } from '../session';
 import { fullDate, plural, timeAgo } from '../time';
 import { CommentThread } from './CommentThread';
 import { Monogram } from './Monogram';
+import { ReportDialog } from './ReportDialog';
 
 type Props = {
   post: Post;
   fresh?: boolean;
   canDelete: boolean;
+  /** Страница отдельного поста открывает ветку сразу: за ней туда и приходят. */
+  openThread?: boolean;
   onDelete: (id: number) => void;
   onPatch: (id: number, changes: Partial<Post>) => void;
 };
@@ -56,12 +59,15 @@ function PostMedia({ media }: { media: NonNullable<Post['media']> }) {
   );
 }
 
-export function PostRow({ post, fresh, canDelete, onDelete, onPatch }: Props) {
+export function PostRow({ post, fresh, canDelete, openThread = false, onDelete, onPatch }: Props) {
   const { user } = useSession();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(openThread);
   const [likeError, setLikeError] = useState<string | null>(null);
+  const [reporting, setReporting] = useState(false);
   const { author } = post;
   const profile = `/u/${author.username}`;
+  // На свою запись жаловаться некому: сервер такую жалобу и не примет.
+  const canReport = Boolean(user) && user?.id !== author.id;
 
   async function toggleLike() {
     if (!user) return;
@@ -131,7 +137,22 @@ export function PostRow({ post, fresh, canDelete, onDelete, onPatch }: Props) {
               Удалить
             </button>
           )}
+
+          {canReport && (
+            <button className="act-danger" type="button" onClick={() => setReporting(true)}>
+              Пожаловаться
+            </button>
+          )}
         </div>
+
+        {reporting && (
+          <ReportDialog
+            targetType="post"
+            targetId={post.id}
+            subject={`Запись @${author.username}`}
+            onClose={() => setReporting(false)}
+          />
+        )}
 
         {likeError && <p className="error">{likeError}</p>}
 
