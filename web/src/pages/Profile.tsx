@@ -1,22 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, ApiError, type User } from '../api';
+import { api, ApiError, type BlockedUser, type User } from '../api';
 import { Monogram } from '../components/Monogram';
 import { PostRow } from '../components/PostRow';
+import { ReportDialog } from '../components/ReportDialog';
 import { useSession } from '../session';
 import { joinedOn, plural } from '../time';
 import { usePostStream } from '../usePostStream';
 
 export function Profile() {
   const { username = '' } = useParams();
-  const { user: me, setUser } = useSession();
+  const { user: me, setUser, refreshBadges } = useSession();
   const [profile, setProfile] = useState<User | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [followError, setFollowError] = useState<string | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
-  const stream = usePostStream({ author: username });
+  const [blockBusy, setBlockBusy] = useState(false);
+  const [blockError, setBlockError] = useState<string | null>(null);
+  const [reporting, setReporting] = useState(false);
+  // Блокировка меняет выдачу сервера, а адрес страницы остаётся прежним —
+  // ленту профиля приходится просить заново.
+  const [reloadKey, setReloadKey] = useState(0);
+  const stream = usePostStream({ author: username, reloadKey });
 
   useEffect(() => {
     let cancelled = false;
@@ -59,6 +66,40 @@ export function Profile() {
       setFollowError(err instanceof ApiError ? err.message : 'Не удалось изменить подписку');
     } finally {
       setFollowBusy(false);
+    }
+  }
+
+  /**
+   * Блокировка необратима по последствиям: сервер в той же операции снимает
+   * взаимные подписки и гасит непрочитанные события — «отменить» их нечем.
+   * Поэтому спрашиваем подтверждение, а на снятие блокировки — не спрашиваем.
+   */
+  async function setBlock(next: boolean) {
+    if (!profile || blockBusy) return;
+
+    if (next) {
+      const ok = window.confirm(
+        `Заблокировать @${profile.username}?\n\n` +
+          'Взаимные подписки будут сняты — обратно они не вернутся. ' +
+          'Его записи и ответы скроются, переписка станет недоступна обеим сторонам.',
+      );
+      if (!ok) return;
+    }
+
+    setBlockBusy(true);
+    setBlockError(null);
+    try {
+      await api.setBlock(profile.username, next);
+      // Одним действием меняются подписки, счётчики записей и флаги —
+      // проще перечитать профиль целиком, чем угадывать новое состояние.
+      const res = await api.profile(profile.username);
+      setProfile(res.user);
+      setReloadKey((k) => k + 1);
+      refreshBadges();
+    } catch (err) {
+      setBlockError(err instanceof ApiError ? err.message : 'Не удалось изменить блокировку');
+    } finally {
+      setBlockBusy(false);
     }
   }
 
@@ -114,28 +155,82 @@ export function Profile() {
               </p>
 
               {followError && <p className="error">{followError}</p>}
+              {blockError && <p className="error">{blockError}</p>}
 
-              <p style={{ marginTop: '0.875rem' }}>
+              {profile.blockedByMe && (
+                <div className="notice danger">
+                  <p>
+                    Вы заблокировали @{profile.username}. Он не может вам писать, а его записи скрыты.
+                  </p>
+                  <button
+                    className="btn ghost small"
+                    type="button"
+                    onClick={() => void setBlock(false)}
+                    disabled={blockBusy}
+                  >
+                    {blockBusy ? 'Снимаю…' : 'Разблокировать'}
+                  </button>
+                </div>
+              )}
+
+              {/* Про чужое решение — ни слова о причинах и о том, кто его принял. */}
+              {profile.blocksMe && !profile.blockedByMe && (
+                <div className="notice">
+                  <p>Профиль сейчас недоступен: записи скрыты, написать нельзя.</p>
+                </div>
+              )}
+
+              <div className="profile-actions">
                 {isMe ? (
                   <button className="btn ghost" type="button" onClick={() => setEditing(true)}>
                     Редактировать профиль
                   </button>
                 ) : (
                   <>
-                    <button
-                      className={profile.followedByMe ? 'btn ghost' : 'btn'}
-                      type="button"
-                      onClick={() => void toggleFollow()}
-                      disabled={followBusy}
-                    >
-                      {profile.followedByMe ? 'Отписаться' : 'Подписаться'}
-                    </button>{' '}
-                    <Link className="btn ghost" to={`/messages/${profile.username}`}>
-                      Написать
-                    </Link>
+                    {!profile.blockedByMe && !profile.blocksMe && (
+                      <>
+                        <button
+                          className={profile.followedByMe ? 'btn ghost' : 'btn'}
+                          type="button"
+                          onClick={() => void toggleFollow()}
+                          disabled={followBusy}
+                        >
+                          {profile.followedByMe ? 'Отписаться' : 'Подписаться'}
+                        </button>
+                        <Link className="btn ghost" to={`/messages/${profile.username}`}>
+                          Написать
+                        </Link>
+                      </>
+                    )}
+
+                    <button className="act-danger" type="button" onClick={() => setReporting(true)}>
+                      Пожаловаться
+                    </button>
+
+                    {!profile.blockedByMe && (
+                      <button
+                        className="act-danger"
+                        type="button"
+                        onClick={() => void setBlock(true)}
+                        disabled={blockBusy}
+                      >
+                        Заблокировать
+                      </button>
+                    )}
                   </>
                 )}
-              </p>
+              </div>
+
+              {isMe && <BlockedPanel />}
+
+              {reporting && (
+                <ReportDialog
+                  targetType="user"
+                  targetId={profile.id}
+                  subject={`Профиль @${profile.username}`}
+                  onClose={() => setReporting(false)}
+                />
+              )}
             </>
           )}
         </div>
@@ -147,10 +242,19 @@ export function Profile() {
         {stream.loading ? (
           <p className="empty">Загружаю…</p>
         ) : stream.posts.length === 0 ? (
-          <p className="empty">
-            <strong>{isMe ? 'Вы ещё ничего не написали.' : 'Постов пока нет.'}</strong>
-            {isMe ? 'Первая запись появится здесь.' : 'Загляните позже.'}
-          </p>
+          // Пустая лента у заблокированного — не «постов нет», а «их не видно»:
+          // подменять причину значит врать человеку о его же действии.
+          profile.blockedByMe || profile.blocksMe ? (
+            <p className="empty">
+              <strong>Записи скрыты.</strong>
+              Они появятся снова, если блокировка будет снята.
+            </p>
+          ) : (
+            <p className="empty">
+              <strong>{isMe ? 'Вы ещё ничего не написали.' : 'Постов пока нет.'}</strong>
+              {isMe ? 'Первая запись появится здесь.' : 'Загляните позже.'}
+            </p>
+          )
         ) : (
           stream.posts.map((post) => (
             <PostRow
@@ -175,6 +279,93 @@ export function Profile() {
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Список заблокированных на своём профиле.
+ *
+ * Отдельной страницы намеренно нет: раздел раскрывается на месте, и попасть в
+ * него можно за один клик — ровно то, чего просила задача, без пятого маршрута.
+ * Пока никого не заблокировано, раздела не видно: строка «Заблокированные — 0»
+ * ничего не сообщает, а место занимает.
+ */
+function BlockedPanel() {
+  const [users, setUsers] = useState<BlockedUser[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .blockedUsers()
+      .then((res) => !cancelled && setUsers(res.users))
+      // Молча: не открывшийся список блокировок — не повод показывать ошибку
+      // поверх собственного профиля.
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function unblock(username: string) {
+    setBusy(username);
+    setError(null);
+    try {
+      await api.setBlock(username, false);
+      setUsers((prev) => prev?.filter((u) => u.username !== username) ?? null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось снять блокировку');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (!users || users.length === 0) return null;
+
+  return (
+    <div className="blocked">
+      <button
+        className={open ? 'act open' : 'act'}
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        Заблокированные — {users.length}
+      </button>
+
+      {open && (
+        <>
+          {error && <p className="error">{error}</p>}
+
+          <ul className="blocked-list">
+            {users.map((u) => (
+              <li key={u.id}>
+                <Monogram
+                  username={u.username}
+                  displayName={u.displayName}
+                  avatarUrl={u.avatarUrl}
+                  size="sm"
+                />
+                <Link className="blocked-who" to={`/u/${u.username}`}>
+                  <strong>{u.displayName}</strong>
+                  <span className="blocked-handle">@{u.username}</span>
+                </Link>
+                <button
+                  className="btn ghost small"
+                  type="button"
+                  onClick={() => void unblock(u.username)}
+                  disabled={busy === u.username}
+                >
+                  {busy === u.username ? 'Снимаю…' : 'Разблокировать'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
   );
 }
 

@@ -12,7 +12,7 @@ const POLL_MS = 5_000;
 
 export function Thread() {
   const { username = '' } = useParams();
-  const { user, setUnreadTotal } = useSession();
+  const { user, setUnreadTotal, refreshBadges } = useSession();
 
   const [other, setOther] = useState<Author | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -22,6 +22,8 @@ export function Thread() {
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  // Блокировка в любую сторону: история остаётся, форма ответа — нет.
+  const [blocked, setBlocked] = useState(false);
 
   const bottom = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -29,9 +31,14 @@ export function Thread() {
   const markRead = useCallback(() => {
     api
       .markRead(username)
-      .then((res) => setUnreadTotal(res.unreadTotal))
+      .then((res) => {
+        setUnreadTotal(res.unreadTotal);
+        // Прочтение диалога гасит и событие о нём — иначе «События» держали бы
+        // счётчик до следующего опроса, уже ничего не значащий.
+        refreshBadges();
+      })
       .catch(() => undefined);
-  }, [username, setUnreadTotal]);
+  }, [username, setUnreadTotal, refreshBadges]);
 
   // Первая загрузка: показать переписку и погасить непрочитанное.
   useEffect(() => {
@@ -47,6 +54,7 @@ export function Thread() {
         setOther(res.user);
         setMessages(res.messages);
         setCursor(res.nextCursor);
+        setBlocked(Boolean(res.blocked));
         markRead();
       })
       .catch((err) => {
@@ -70,6 +78,9 @@ export function Thread() {
         .thread(username)
         .then((res) => {
           if (cancelled) return;
+          // Собеседник мог заблокировать нас прямо сейчас — тем же опросом
+          // убираем форму, вместо того чтобы ловить 403 после отправки.
+          setBlocked(Boolean(res.blocked));
           setMessages((prev) => {
             const newest = prev.at(-1)?.id ?? 0;
             const fresh = res.messages.filter((m) => m.id > newest);
@@ -188,30 +199,41 @@ export function Thread() {
 
       {error && other && <p className="error">{error}</p>}
 
-      <form className="chat-form" onSubmit={send}>
-        <label className="sr-only" htmlFor="chat-input">
-          Сообщение
-        </label>
-        <textarea
-          id="chat-input"
-          rows={1}
-          value={text}
-          placeholder="Написать сообщение…"
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-              e.preventDefault();
-              void send();
-            }
-          }}
-        />
-        <div className="chat-form-foot">
-          {left <= 120 && <span className={left < 0 ? 'counter over' : 'counter'}>{left}</span>}
-          <button className="btn" type="submit" disabled={!text.trim() || left < 0 || sending}>
-            {sending ? 'Отправляю…' : 'Отправить'}
-          </button>
+      {/* Текст одинаков в обе стороны: по нему нельзя понять, кто кого
+          заблокировал — ровно как и в ответе сервера. */}
+      {blocked ? (
+        <div className="notice danger chat-blocked">
+          <p>
+            <strong>Переписка недоступна.</strong> Пока действует блокировка, написать сюда нельзя.
+            История переписки остаётся на месте.
+          </p>
         </div>
-      </form>
+      ) : (
+        <form className="chat-form" onSubmit={send}>
+          <label className="sr-only" htmlFor="chat-input">
+            Сообщение
+          </label>
+          <textarea
+            id="chat-input"
+            rows={1}
+            value={text}
+            placeholder="Написать сообщение…"
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                e.preventDefault();
+                void send();
+              }
+            }}
+          />
+          <div className="chat-form-foot">
+            {left <= 120 && <span className={left < 0 ? 'counter over' : 'counter'}>{left}</span>}
+            <button className="btn" type="submit" disabled={!text.trim() || left < 0 || sending}>
+              {sending ? 'Отправляю…' : 'Отправить'}
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { api, ApiError, type Comment } from '../api';
 import { useSession } from '../session';
 import { timeAgo, fullDate } from '../time';
 import { Monogram } from './Monogram';
+import { ReportDialog } from './ReportDialog';
 
 const LIMIT = 300;
 
@@ -21,6 +22,8 @@ export function CommentThread({ postId, postAuthorId, onCountChange }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  // Жалоба открыта не более чем на один ответ разом — храним id, а не флаг.
+  const [reporting, setReporting] = useState<Comment | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,6 +75,15 @@ export function CommentThread({ postId, postAuthorId, onCountChange }: Props) {
     <div className="thread">
       {error && <p className="error">{error}</p>}
 
+      {reporting && (
+        <ReportDialog
+          targetType="comment"
+          targetId={reporting.id}
+          subject={`Ответ @${reporting.author.username}`}
+          onClose={() => setReporting(null)}
+        />
+      )}
+
       {comments === null ? (
         <p className="thread-empty">Загружаю ответы…</p>
       ) : comments.length === 0 ? (
@@ -95,10 +107,20 @@ export function CommentThread({ postId, postAuthorId, onCountChange }: Props) {
 
               <p className="comment-body">{c.body}</p>
 
-              {user && (user.id === c.author.id || user.id === postAuthorId) && (
-                <button className="post-delete" type="button" onClick={() => void remove(c.id)}>
-                  Удалить
-                </button>
+              {user && (
+                <div className="comment-actions">
+                  {(user.id === c.author.id || user.id === postAuthorId) && (
+                    <button className="post-delete" type="button" onClick={() => void remove(c.id)}>
+                      Удалить
+                    </button>
+                  )}
+
+                  {user.id !== c.author.id && (
+                    <button className="act-danger" type="button" onClick={() => setReporting(c)}>
+                      Пожаловаться
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </article>
