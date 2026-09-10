@@ -2,7 +2,9 @@ import { Router } from 'express';
 import multer from 'multer';
 import { db, nowIso } from '../db.js';
 import { requireAuth } from '../auth.js';
+import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { deleteUpload, publicUrl, storeUpload } from '../media.js';
+import { dropNotification, notify } from '../notifications.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -48,11 +50,18 @@ const serializeComment = (row) => ({
 
 // Counts live in subqueries rather than denormalised columns: one source of
 // truth, and the per-post indexes keep it cheap at this scale.
+//
+// comment_count фильтруется блокировкой тем же условием, что и сам тред:
+// иначе под постом стояло бы «5 комментариев», а разворачивалось три — и
+// человек решил бы, что сайт сломан. like_count не фильтруется намеренно:
+// это обезличенное число, по нему нельзя понять, кто лайкнул, а честный
+// подсчёт стоил бы лишнего подзапроса на каждый пост ленты.
 const POST_COLUMNS = `
   p.id, p.body, p.created_at, p.author_id, p.media_path, p.media_type, p.media_mime, p.media_name,
   u.username, u.display_name, u.avatar_path AS author_avatar_path,
   (SELECT COUNT(*) FROM likes    l WHERE l.post_id = p.id) AS like_count,
-  (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) AS comment_count,
+  (SELECT COUNT(*) FROM comments c
+    WHERE c.post_id = p.id AND ${blockPairSql('c.author_id')}) AS comment_count,
   EXISTS(SELECT 1 FROM likes l2 WHERE l2.post_id = p.id AND l2.user_id = :viewerId) AS liked_by_me
 `;
 
@@ -80,6 +89,7 @@ router.get('/', (req, res) => {
     FROM posts p JOIN users u ON u.id = p.author_id
     WHERE (:author IS NULL OR u.username = :author)
       AND (:cursor IS NULL OR p.id < :cursor)
+      AND ${blockPairSql('p.author_id')}
       AND (
         :onlyFollowing = 0
         OR p.author_id = :viewerId
@@ -102,6 +112,33 @@ router.get('/', (req, res) => {
     posts: page.map(serialize),
     nextCursor: hasMore ? page.at(-1).id : null,
   });
+});
+
+/**
+ * Один пост — чтобы уведомление о лайке или комментарии вело на предмет
+ * разговора, а не «примерно в профиль».
+ *
+ * Путь `/:id` состоит из одного сегмента и не перехватывает `/:id/comments`:
+ * это разные маршруты, порядок объявления между ними роли не играет.
+ */
+router.get('/:id', (req, res) => {
+  const id = intParam(req.params.id);
+  // Ссылка с мусором вместо id — это не «плохой запрос», а несуществующий
+  // пост: страница /p/<что угодно> должна показать одно и то же «не найдено».
+  if (!id) return res.status(404).json({ error: 'Пост не найден' });
+
+  const viewerId = req.user?.id ?? null;
+  const row = db.prepare(`
+    SELECT ${POST_COLUMNS}
+    FROM posts p JOIN users u ON u.id = p.author_id
+    WHERE p.id = :id AND ${blockPairSql('p.author_id')}
+  `).get({ id, viewerId });
+
+  // Пост автора, с которым смотрящий в блокировке, тоже «не найден»:
+  // отдельный ответ выдал бы факт блокировки.
+  if (!row) return res.status(404).json({ error: 'Пост не найден' });
+
+  res.json({ post: serialize(row) });
 });
 
 router.post('/', requireAuth, mediaUpload.single('media'), async (req, res, next) => {
@@ -159,30 +196,46 @@ router.delete('/:id', requireAuth, (req, res) => {
 const likeCount = (postId) =>
   db.prepare('SELECT COUNT(*) AS c FROM likes WHERE post_id = ?').get(postId).c;
 
-router.put('/:id/like', requireAuth, (req, res) => {
-  const id = intParam(req.params.id);
-  if (!id) return res.status(400).json({ error: 'Некорректный id' });
+router.put('/:id/like', requireAuth, (req, res, next) => {
+  try {
+    const id = intParam(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Некорректный id' });
 
-  const exists = db.prepare('SELECT 1 FROM posts WHERE id = ?').get(id);
-  if (!exists) return res.status(404).json({ error: 'Пост не найден' });
+    const post = db.prepare('SELECT author_id FROM posts WHERE id = ?').get(id);
+    if (!post) return res.status(404).json({ error: 'Пост не найден' });
 
-  // Idempotent: liking twice is not an error, the row is simply already there.
-  db.prepare('INSERT OR IGNORE INTO likes (user_id, post_id, created_at) VALUES (?, ?, ?)')
-    .run(req.user.id, id, nowIso());
+    // Idempotent: liking twice is not an error, the row is simply already there.
+    db.prepare('INSERT OR IGNORE INTO likes (user_id, post_id, created_at) VALUES (?, ?, ?)')
+      .run(req.user.id, id, nowIso());
 
-  res.json({ likeCount: likeCount(id), likedByMe: true });
+    // Свой лайк, блокировка и повторное событие о том же посте отсеиваются
+    // внутри notify() — здесь проверять нечего.
+    notify({ userId: post.author_id, actorId: req.user.id, kind: 'like', postId: id });
+
+    res.json({ likeCount: likeCount(id), likedByMe: true });
+  } catch (err) {
+    next(err);
+  }
 });
 
-router.delete('/:id/like', requireAuth, (req, res) => {
-  const id = intParam(req.params.id);
-  if (!id) return res.status(400).json({ error: 'Некорректный id' });
+router.delete('/:id/like', requireAuth, (req, res, next) => {
+  try {
+    const id = intParam(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Некорректный id' });
 
-  const exists = db.prepare('SELECT 1 FROM posts WHERE id = ?').get(id);
-  if (!exists) return res.status(404).json({ error: 'Пост не найден' });
+    const post = db.prepare('SELECT author_id FROM posts WHERE id = ?').get(id);
+    if (!post) return res.status(404).json({ error: 'Пост не найден' });
 
-  db.prepare('DELETE FROM likes WHERE user_id = ? AND post_id = ?').run(req.user.id, id);
+    db.prepare('DELETE FROM likes WHERE user_id = ? AND post_id = ?').run(req.user.id, id);
 
-  res.json({ likeCount: likeCount(id), likedByMe: false });
+    // Снятый лайк уносит непрочитанное событие о себе: иначе включение и
+    // выключение лайка было бы способом дёргать человека бесконечно.
+    dropNotification({ userId: post.author_id, actorId: req.user.id, kind: 'like', postId: id });
+
+    res.json({ likeCount: likeCount(id), likedByMe: false });
+  } catch (err) {
+    next(err);
+  }
 });
 
 /* ─ Комментарии ────────────────────────────────────────────────────────── */
@@ -191,18 +244,27 @@ router.get('/:id/comments', (req, res) => {
   const id = intParam(req.params.id);
   if (!id) return res.status(400).json({ error: 'Некорректный id' });
 
-  const exists = db.prepare('SELECT 1 FROM posts WHERE id = ?').get(id);
+  const viewerId = req.user?.id ?? null;
+
+  // Пост автора, с которым смотрящий в блокировке, «не найден» — ровно как в
+  // GET /:id. Иначе тред остался бы дверью к скрытому посту.
+  const exists = db.prepare(`
+    SELECT 1 FROM posts p WHERE p.id = :id AND ${blockPairSql('p.author_id')}
+  `).get({ id, viewerId });
   if (!exists) return res.status(404).json({ error: 'Пост не найден' });
 
   // Oldest first — a comment thread reads as a conversation, not as a feed.
+  // Запрос переведён на именованные параметры целиком: blockPairSql() ждёт
+  // :viewerId, а смешивать именованные с позиционными — лишний повод
+  // ошибиться порядком.
   const rows = db.prepare(`
     SELECT c.id, c.post_id, c.body, c.created_at, c.author_id,
            u.username, u.display_name, u.avatar_path AS author_avatar_path
     FROM comments c JOIN users u ON u.id = c.author_id
-    WHERE c.post_id = ?
+    WHERE c.post_id = :id AND ${blockPairSql('c.author_id')}
     ORDER BY c.id ASC
-    LIMIT ?
-  `).all(id, COMMENT_CAP);
+    LIMIT :limit
+  `).all({ id, viewerId, limit: COMMENT_CAP });
 
   res.json({ comments: rows.map(serializeComment) });
 });
@@ -212,13 +274,30 @@ router.post('/:id/comments', requireAuth, (req, res, next) => {
     const id = intParam(req.params.id);
     if (!id) return res.status(400).json({ error: 'Некорректный id' });
 
-    const exists = db.prepare('SELECT 1 FROM posts WHERE id = ?').get(id);
-    if (!exists) return res.status(404).json({ error: 'Пост не найден' });
+    const post = db.prepare('SELECT author_id FROM posts WHERE id = ?').get(id);
+    if (!post) return res.status(404).json({ error: 'Пост не найден' });
+
+    // Читать чужой тред заблокированная пара всё равно не может (выше 404),
+    // но запись под чужим постом закрывается отдельно: id поста мог остаться
+    // у клиента с прошлой сессии.
+    if (isBlockedPair(req.user.id, post.author_id)) {
+      return res.status(403).json({ error: 'Комментировать этот пост нельзя' });
+    }
 
     const body = v.str(req.body?.body, 'текст комментария', { min: 1, max: 300 });
     const info = db.prepare(
       'INSERT INTO comments (post_id, author_id, body, created_at) VALUES (?, ?, ?, ?)',
     ).run(id, req.user.id, body, nowIso());
+
+    // Комментарии не схлопываются и не дедуплицируются: каждый — отдельная
+    // реплика, поэтому событие несёт и пост, и сам комментарий.
+    notify({
+      userId: post.author_id,
+      actorId: req.user.id,
+      kind: 'comment',
+      postId: id,
+      commentId: Number(info.lastInsertRowid),
+    });
 
     const row = db.prepare(`
       SELECT c.id, c.post_id, c.body, c.created_at, c.author_id,

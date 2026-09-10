@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { db, nowIso } from '../db.js';
 import { requireAuth } from '../auth.js';
+import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { publicUrl } from '../media.js';
+import { markNotificationsRead, notify } from '../notifications.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -30,6 +32,11 @@ const person = (row) => ({
   avatarUrl: publicUrl('avatar', row.avatar_path),
 });
 
+// Один и тот же текст в обе стороны. Если заблокированному ответить «вас
+// заблокировали», а блокирующему — «вы заблокировали», по формулировке можно
+// будет отличить блокировку от любой другой причины отказа.
+const BLOCKED_CHAT_MESSAGE = 'Переписка с этим пользователем недоступна';
+
 const unreadTotal = (userId) =>
   db.prepare('SELECT COUNT(*) AS c FROM messages WHERE to_id = ? AND read_at IS NULL').get(userId).c;
 
@@ -55,17 +62,22 @@ router.get('/', (req, res) => {
       u.id, u.username, u.display_name, u.avatar_path,
       m.id AS msg_id, m.body, m.created_at, m.from_id, m.to_id, m.read_at,
       (SELECT COUNT(*) FROM messages x
-       WHERE x.to_id = :me AND x.from_id = u.id AND x.read_at IS NULL) AS unread
+       WHERE x.to_id = :me AND x.from_id = u.id AND x.read_at IS NULL) AS unread,
+      NOT ${blockPairSql('u.id')} AS blocked
     FROM last
     JOIN mine m ON m.id = last.last_id
     JOIN users u ON u.id = last.other_id
     ORDER BY m.id DESC
-  `).all({ me });
+  `).all({ me, viewerId: me });
 
   res.json({
+    // История не удаляется и диалог не исчезает из списка: блокировка — это
+    // «дальше не пишем», а не «этого разговора не было». Флаг нужен клиенту,
+    // чтобы показать плашку вместо формы ответа.
     conversations: rows.map((row) => ({
       user: person(row),
       unread: row.unread,
+      blocked: Boolean(row.blocked),
       lastMessage: serialize({ ...row, id: row.msg_id }),
     })),
     unreadTotal: unreadTotal(me),
@@ -102,6 +114,7 @@ router.get('/:username', (req, res) => {
     user: person(other),
     messages: page.map(serialize).reverse(),
     nextCursor: hasMore ? page.at(-1).id : null,
+    blocked: isBlockedPair(req.user.id, other.id),
   });
 });
 
@@ -110,10 +123,18 @@ router.post('/:username', (req, res, next) => {
     const other = findUser(req.params.username);
     if (!other) return res.status(404).json({ error: 'Пользователь не найден' });
     if (other.id === req.user.id) return res.status(400).json({ error: 'Нельзя написать самому себе' });
+    if (isBlockedPair(req.user.id, other.id)) {
+      return res.status(403).json({ error: BLOCKED_CHAT_MESSAGE });
+    }
 
     const body = v.str(req.body?.body, 'сообщение', { min: 1, max: MAX_LEN });
     const info = db.prepare('INSERT INTO messages (from_id, to_id, body, created_at) VALUES (?, ?, ?, ?)')
       .run(req.user.id, other.id, body, nowIso());
+
+    // Одно событие на диалог: notify() убирает предыдущее непрочитанное
+    // уведомление от того же собеседника, иначе лента событий стала бы
+    // копией переписки.
+    notify({ userId: other.id, actorId: req.user.id, kind: 'message' });
 
     const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid);
     res.status(201).json({ message: serialize(row) });
@@ -129,6 +150,10 @@ router.put('/:username/read', (req, res) => {
 
   db.prepare('UPDATE messages SET read_at = ? WHERE to_id = ? AND from_id = ? AND read_at IS NULL')
     .run(nowIso(), req.user.id, other.id);
+
+  // Прочитанная переписка гасит и событие о ней: иначе счётчик событий висел
+  // бы после того, как диалог уже открыт и прочитан.
+  markNotificationsRead({ userId: req.user.id, kind: 'message', actorId: other.id });
 
   res.json({ ok: true, unreadTotal: unreadTotal(req.user.id) });
 });

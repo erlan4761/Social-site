@@ -2,7 +2,9 @@ import { Router } from 'express';
 import multer from 'multer';
 import { db, nowIso } from '../db.js';
 import { requireAuth, publicUser } from '../auth.js';
+import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { deleteUpload, publicUrl, storeUpload } from '../media.js';
+import { dropNotification, notify } from '../notifications.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -14,6 +16,17 @@ const avatarUpload = multer({
 
 const followerCount = (id) => db.prepare('SELECT COUNT(*) AS c FROM follows WHERE followee_id = ?').get(id).c;
 const followingCount = (id) => db.prepare('SELECT COUNT(*) AS c FROM follows WHERE follower_id = ?').get(id).c;
+
+const person = (row) => ({
+  id: row.id,
+  username: row.username,
+  displayName: row.display_name,
+  avatarUrl: publicUrl('avatar', row.avatar_path),
+});
+
+// Текст одинаков в обе стороны и не называет причину: заблокированный не
+// должен по формулировке понять, что его заблокировали именно здесь.
+const BLOCKED_PAIR_MESSAGE = 'Действие с этим пользователем недоступно';
 
 router.patch('/me', requireAuth, (req, res, next) => {
   try {
@@ -68,7 +81,15 @@ router.get('/search', (req, res) => {
   if (!raw) return res.json({ users: [] });
 
   const q = raw.toLowerCase();
-  const rows = db.prepare('SELECT id, username, display_name, avatar_path FROM users').all();
+
+  // Обе стороны блокировки выпадают из выдачи: заблокировавший не хочет
+  // видеть человека, а заблокированному незачем находить того, кому он всё
+  // равно не сможет ни написать, ни подписаться.
+  const rows = db.prepare(`
+    SELECT u.id, u.username, u.display_name, u.avatar_path
+    FROM users u
+    WHERE ${blockPairSql('u.id')}
+  `).all({ viewerId: req.user?.id ?? null });
 
   const scored = rows
     .map((row) => {
@@ -86,14 +107,19 @@ router.get('/search', (req, res) => {
     .sort((a, b) => a.rank - b.rank || a.row.username.localeCompare(b.row.username))
     .slice(0, 20);
 
-  res.json({
-    users: scored.map(({ row }) => ({
-      id: row.id,
-      username: row.username,
-      displayName: row.display_name,
-      avatarUrl: publicUrl('avatar', row.avatar_path),
-    })),
-  });
+  res.json({ users: scored.map(({ row }) => person(row)) });
+});
+
+// Тоже перед /:username — иначе Express принял бы "me" за чьё-то имя.
+router.get('/me/blocks', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT u.id, u.username, u.display_name, u.avatar_path
+    FROM blocks b JOIN users u ON u.id = b.blocked_id
+    WHERE b.blocker_id = ?
+    ORDER BY b.created_at DESC
+  `).all(req.user.id);
+
+  res.json({ users: rows.map(person) });
 });
 
 router.get('/:username', (req, res) => {
@@ -101,9 +127,25 @@ router.get('/:username', (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(uname);
   if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
 
-  const { count } = db.prepare('SELECT COUNT(*) AS count FROM posts WHERE author_id = ?').get(user.id);
+  const viewerId = req.user?.id ?? null;
+
+  // Профиль остаётся видимым — прячется только контент. Счётчик постов при
+  // этом обязан совпадать с лентой профиля, а она у заблокированной пары
+  // пуста: «12 записей» над пустым списком выглядели бы как поломка.
+  const { count } = db.prepare(`
+    SELECT COUNT(*) AS count FROM posts p
+    WHERE p.author_id = :authorId AND ${blockPairSql('p.author_id')}
+  `).get({ authorId: user.id, viewerId });
+
   const followedByMe = req.user
     ? Boolean(db.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?').get(req.user.id, user.id))
+    : false;
+
+  const blockedByMe = req.user
+    ? Boolean(db.prepare('SELECT 1 FROM blocks WHERE blocker_id = ? AND blocked_id = ?').get(req.user.id, user.id))
+    : false;
+  const blocksMe = req.user
+    ? Boolean(db.prepare('SELECT 1 FROM blocks WHERE blocker_id = ? AND blocked_id = ?').get(user.id, req.user.id))
     : false;
 
   res.json({
@@ -113,29 +155,121 @@ router.get('/:username', (req, res) => {
       followerCount: followerCount(user.id),
       followingCount: followingCount(user.id),
       followedByMe,
+      // Два отдельных флага, а не один: «я его заблокировал» — это кнопка
+      // «Разблокировать», «он меня заблокировал» — плашка без кнопки.
+      blockedByMe,
+      blocksMe,
     },
   });
 });
 
-router.put('/:username/follow', requireAuth, (req, res) => {
-  const uname = String(req.params.username).toLowerCase();
-  const target = db.prepare('SELECT id FROM users WHERE username = ?').get(uname);
-  if (!target) return res.status(404).json({ error: 'Пользователь не найден' });
-  if (target.id === req.user.id) return res.status(400).json({ error: 'Нельзя подписаться на себя' });
+router.put('/:username/follow', requireAuth, (req, res, next) => {
+  try {
+    const uname = String(req.params.username).toLowerCase();
+    const target = db.prepare('SELECT id FROM users WHERE username = ?').get(uname);
+    if (!target) return res.status(404).json({ error: 'Пользователь не найден' });
+    if (target.id === req.user.id) return res.status(400).json({ error: 'Нельзя подписаться на себя' });
 
-  // Idempotent: subscribing twice is not an error, the row is simply already there.
-  db.prepare('INSERT OR IGNORE INTO follows (follower_id, followee_id, created_at) VALUES (?, ?, ?)')
-    .run(req.user.id, target.id, nowIso());
+    // Блокировка симметрична: подписаться нельзя ни на того, кого вы
+    // заблокировали, ни на того, кто заблокировал вас.
+    if (isBlockedPair(req.user.id, target.id)) {
+      return res.status(400).json({ error: BLOCKED_PAIR_MESSAGE });
+    }
 
-  res.json({ followedByMe: true, followerCount: followerCount(target.id) });
+    // Idempotent: subscribing twice is not an error, the row is simply already there.
+    db.prepare('INSERT OR IGNORE INTO follows (follower_id, followee_id, created_at) VALUES (?, ?, ?)')
+      .run(req.user.id, target.id, nowIso());
+
+    // У подписки нет объекта: событие опознаётся парой «получатель + актор»,
+    // поэтому повторная подписка второго уведомления не создаёт.
+    notify({ userId: target.id, actorId: req.user.id, kind: 'follow' });
+
+    res.json({ followedByMe: true, followerCount: followerCount(target.id) });
+  } catch (err) {
+    next(err);
+  }
 });
 
-router.delete('/:username/follow', requireAuth, (req, res) => {
-  const uname = String(req.params.username).toLowerCase();
-  const target = db.prepare('SELECT id FROM users WHERE username = ?').get(uname);
-  if (!target) return res.status(404).json({ error: 'Пользователь не найден' });
+router.delete('/:username/follow', requireAuth, (req, res, next) => {
+  try {
+    const uname = String(req.params.username).toLowerCase();
+    const target = db.prepare('SELECT id FROM users WHERE username = ?').get(uname);
+    if (!target) return res.status(404).json({ error: 'Пользователь не найден' });
 
-  db.prepare('DELETE FROM follows WHERE follower_id = ? AND followee_id = ?').run(req.user.id, target.id);
+    db.prepare('DELETE FROM follows WHERE follower_id = ? AND followee_id = ?').run(req.user.id, target.id);
 
-  res.json({ followedByMe: false, followerCount: followerCount(target.id) });
+    dropNotification({ userId: target.id, actorId: req.user.id, kind: 'follow' });
+
+    res.json({ followedByMe: false, followerCount: followerCount(target.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ─ Блокировки ─────────────────────────────────────────────────────────── */
+
+/**
+ * Блокировка — не только строка в таблице: она обязана убрать следы прошлой
+ * связи. Иначе заблокированный остался бы у вас в подписчиках, а его старые
+ * лайки — в счётчике событий, и «заблокировал» ощущалось бы как «ничего не
+ * произошло». Все три действия идут одной транзакцией: половина блокировки
+ * хуже, чем её отсутствие.
+ */
+router.put('/:username/block', requireAuth, (req, res, next) => {
+  try {
+    const uname = String(req.params.username).toLowerCase();
+    const target = db.prepare('SELECT id FROM users WHERE username = ?').get(uname);
+    if (!target) return res.status(404).json({ error: 'Пользователь не найден' });
+    if (target.id === req.user.id) return res.status(400).json({ error: 'Нельзя заблокировать себя' });
+
+    const me = req.user.id;
+    db.exec('BEGIN');
+    try {
+      // Идемпотентно: повторная блокировка — не ошибка, строка просто уже есть.
+      db.prepare('INSERT OR IGNORE INTO blocks (blocker_id, blocked_id, created_at) VALUES (?, ?, ?)')
+        .run(me, target.id, nowIso());
+
+      db.prepare(`
+        DELETE FROM follows
+        WHERE (follower_id = :me AND followee_id = :other)
+           OR (follower_id = :other AND followee_id = :me)
+      `).run({ me, other: target.id });
+
+      // Непрочитанные события чистятся в обе стороны. Свои — потому что
+      // получать от заблокированного больше нечего; его — потому что события
+      // о вашем посте вели бы на пост, который для него теперь не существует
+      // (GET /api/posts/:id отвечает 404 заблокированной паре).
+      db.prepare(`
+        DELETE FROM notifications
+        WHERE read_at IS NULL
+          AND ((user_id = :me AND actor_id = :other) OR (user_id = :other AND actor_id = :me))
+      `).run({ me, other: target.id });
+
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+
+    res.json({ blockedByMe: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Разблокировка ничего не восстанавливает: снятые подписки и погашенные
+// события назад не возвращаются — вернуть их означало бы хранить «теневую»
+// копию связи, которую человек считал разорванной. Контент виден снова сразу.
+router.delete('/:username/block', requireAuth, (req, res, next) => {
+  try {
+    const uname = String(req.params.username).toLowerCase();
+    const target = db.prepare('SELECT id FROM users WHERE username = ?').get(uname);
+    if (!target) return res.status(404).json({ error: 'Пользователь не найден' });
+
+    db.prepare('DELETE FROM blocks WHERE blocker_id = ? AND blocked_id = ?').run(req.user.id, target.id);
+
+    res.json({ blockedByMe: false });
+  } catch (err) {
+    next(err);
+  }
 });
