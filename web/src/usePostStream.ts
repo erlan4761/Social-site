@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, type Post } from './api';
 
-type StreamSource = { author?: string; feed?: 'following' };
+type StreamSource = {
+  author?: string;
+  feed?: 'following';
+  /** Смена числа перезагружает ленту тем же запросом. Нужна там, где выдача
+   *  меняется не от нашей навигации, а от действия: после блокировки автора
+   *  сервер отдаёт уже другой список, а адрес страницы прежний. */
+  reloadKey?: number;
+};
 
 /** Loads a paginated stream of posts — the whole feed, one author's, or the viewer's subscriptions. */
-export function usePostStream({ author, feed }: StreamSource = {}) {
+export function usePostStream({ author, feed, reloadKey }: StreamSource = {}) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,7 +41,7 @@ export function usePostStream({ author, feed }: StreamSource = {}) {
     return () => {
       cancelled = true;
     };
-  }, [author, feed]);
+  }, [author, feed, reloadKey]);
 
   const loadMore = useCallback(async () => {
     if (cursor == null || loadingMore) return;

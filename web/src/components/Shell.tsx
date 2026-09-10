@@ -3,7 +3,7 @@ import { SearchBox } from './SearchBox';
 import { useSession } from '../session';
 
 export function Shell() {
-  const { user, unreadTotal, logout } = useSession();
+  const { user, unreadTotal, notifUnread, logout } = useSession();
   const navigate = useNavigate();
 
   return (
@@ -23,7 +23,21 @@ export function Shell() {
           </NavLink>
           <NavLink to="/messages">
             Сообщения
-            {unreadTotal > 0 && <span className="badge">{unreadTotal}</span>}
+            {unreadTotal > 0 && (
+              <span className="badge">
+                {unreadTotal}
+                <span className="sr-only"> непрочитанных</span>
+              </span>
+            )}
+          </NavLink>
+          <NavLink to="/notifications">
+            События
+            {notifUnread > 0 && (
+              <span className="badge">
+                {notifUnread}
+                <span className="sr-only"> новых</span>
+              </span>
+            )}
           </NavLink>
           {user && <NavLink to={`/u/${user.username}`}>Мой профиль</NavLink>}
         </nav>

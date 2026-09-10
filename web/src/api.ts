@@ -11,6 +11,9 @@ export type User = {
   followerCount?: number;
   followingCount?: number;
   followedByMe?: boolean;
+  /** Приходят только из `GET /users/:username` для чужого профиля. */
+  blockedByMe?: boolean;
+  blocksMe?: boolean;
 };
 
 export type Author = { id: number; username: string; displayName: string; avatarUrl: string | null };
@@ -58,6 +61,63 @@ export type Conversation = {
   user: Author;
   unread: number;
   lastMessage: Message;
+  /** Пара в блокировке: история видна, форма ответа заменяется плашкой. */
+  blocked?: boolean;
+};
+
+export type NotificationKind =
+  | 'like'
+  | 'comment'
+  | 'follow'
+  | 'message'
+  | 'chat_message'
+  | 'chat_invite';
+
+/** Обрезанный сервером кусок текста поста или комментария — 80 символов. */
+export type NotificationRef = { id: number; excerpt: string };
+
+export type Notification = {
+  id: number;
+  kind: NotificationKind;
+  createdAt: string;
+  /** null — событие ещё не прочитано. */
+  readAt: string | null;
+  actor: Author;
+  post: NotificationRef | null;
+  comment: NotificationRef | null;
+  chat: { id: number; title: string } | null;
+};
+
+/** Три счётчика одним запросом — иначе оболочка опрашивала бы три эндпоинта. */
+export type Badges = { messages: number; chats: number; notifications: number };
+
+/** Список заблокированных — те же поля, что у автора поста. */
+export type BlockedUser = Author;
+
+export type ReportTargetType = 'post' | 'comment' | 'user';
+export type ReportReason = 'spam' | 'abuse' | 'adult' | 'other';
+
+export type Chat = {
+  id: number;
+  title: string;
+  ownerId: number;
+  createdAt: string;
+  members: Author[];
+  memberCount: number;
+  iAmOwner: boolean;
+};
+
+export type ChatMessage = {
+  id: number;
+  chatId: number;
+  body: string;
+  createdAt: string;
+  author: Author;
+};
+
+export type ChatSummary = Chat & {
+  unread: number;
+  lastMessage: ChatMessage | null;
 };
 
 export class ApiError extends Error {
@@ -171,9 +231,11 @@ const realApi = {
   conversations: () =>
     request<{ conversations: Conversation[]; unreadTotal: number }>('/messages'),
 
+  // blocked приходит в корне ответа: история переписки остаётся видимой,
+  // но форма ответа заменяется плашкой.
   thread: (username: string, cursor?: number | null) => {
     const qs = cursor != null ? `?cursor=${cursor}` : '';
-    return request<{ user: Author; messages: Message[]; nextCursor: number | null }>(
+    return request<{ user: Author; messages: Message[]; nextCursor: number | null; blocked?: boolean }>(
       `/messages/${encodeURIComponent(username)}${qs}`,
     );
   },
@@ -196,6 +258,91 @@ const realApi = {
     request<{ followedByMe: boolean; followerCount: number }>(
       `/users/${encodeURIComponent(username)}/follow`,
       { method: following ? 'PUT' : 'DELETE' },
+    ),
+
+  // ─ Уведомления ────────────────────────────────────────────────────────
+
+  notifications: (cursor?: number | null) => {
+    const qs = cursor != null ? `?cursor=${cursor}` : '';
+    return request<{ notifications: Notification[]; nextCursor: number | null; unread: number }>(
+      `/notifications${qs}`,
+    );
+  },
+
+  /** Гасит все события разом — кнопка «Отметить все прочитанными». */
+  readAllNotifications: () =>
+    request<{ ok: true; unread: number }>('/notifications/read', { method: 'PUT' }),
+
+  /** Гасит одно событие. Чужое и несуществующее — одинаково 404. */
+  readNotification: (id: number) =>
+    request<{ ok: true; unread: number }>(`/notifications/${id}/read`, { method: 'PUT' }),
+
+  /** Три счётчика одним запросом. Требует входа: анониму отвечает 401. */
+  badges: () => request<Badges>('/badges'),
+
+  /** Один пост — уведомление о лайке или ответе должно вести на предмет разговора. */
+  post: (id: number) => request<{ post: Post }>(`/posts/${id}`),
+
+  // ─ Блокировки и жалобы ────────────────────────────────────────────────
+
+  setBlock: (username: string, blocked: boolean) =>
+    request<{ blockedByMe: boolean }>(`/users/${encodeURIComponent(username)}/block`, {
+      method: blocked ? 'PUT' : 'DELETE',
+    }),
+
+  blockedUsers: () => request<{ users: BlockedUser[] }>('/users/me/blocks'),
+
+  /** Повторная жалоба на тот же объект не создаёт вторую — приходит alreadyReported. */
+  report: (input: {
+    targetType: ReportTargetType;
+    targetId: number;
+    reason: ReportReason;
+    note?: string;
+  }) =>
+    request<{ ok: true; alreadyReported: boolean }>('/reports', {
+      method: 'POST',
+      body: body(input),
+    }),
+
+  // ─ Групповые чаты ─────────────────────────────────────────────────────
+
+  chats: () => request<{ chats: ChatSummary[]; unreadTotal: number }>('/chats'),
+
+  /** members — имена пользователей, не id: сервер ищет собеседников по имени. */
+  createChat: (input: { title: string; members: string[] }) =>
+    request<{ chat: Chat }>('/chats', { method: 'POST', body: body(input) }),
+
+  chat: (id: number) => request<{ chat: Chat }>(`/chats/${id}`),
+
+  renameChat: (id: number, title: string) =>
+    request<{ chat: Chat }>(`/chats/${id}`, { method: 'PATCH', body: body({ title }) }),
+
+  deleteChat: (id: number) => request<{ ok: true }>(`/chats/${id}`, { method: 'DELETE' }),
+
+  chatMessages: (id: number, cursor?: number | null) => {
+    const qs = cursor != null ? `?cursor=${cursor}` : '';
+    return request<{ chat: Chat; messages: ChatMessage[]; nextCursor: number | null }>(
+      `/chats/${id}/messages${qs}`,
+    );
+  },
+
+  sendChatMessage: (id: number, text: string) =>
+    request<{ message: ChatMessage }>(`/chats/${id}/messages`, {
+      method: 'POST',
+      body: body({ body: text }),
+    }),
+
+  markChatRead: (id: number) =>
+    request<{ ok: true; unread: number }>(`/chats/${id}/read`, { method: 'PUT' }),
+
+  addChatMember: (id: number, username: string) =>
+    request<{ chat: Chat }>(`/chats/${id}/members`, { method: 'POST', body: body({ username }) }),
+
+  /** left: true — вы вышли сами, а не удалили кого-то другого. */
+  removeChatMember: (id: number, username: string) =>
+    request<{ ok: true; left?: boolean }>(
+      `/chats/${id}/members/${encodeURIComponent(username)}`,
+      { method: 'DELETE' },
     ),
 };
 
