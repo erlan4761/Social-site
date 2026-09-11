@@ -41,6 +41,18 @@ db.exec(`
     PRIMARY KEY (user_id, post_id)
   );
 
+  CREATE TABLE IF NOT EXISTS bookmarks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    post_id    INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    -- Суррогатный id здесь не для красоты: список закладок листается keyset-ом
+    -- по времени сохранения, а не по id записи. Сохранили старую запись — она
+    -- обязана оказаться сверху, иначе человек её больше не найдёт.
+    -- UNIQUE делает «сохранить» идемпотентным на уровне схемы, как и в reports.
+    UNIQUE (user_id, post_id)
+  );
+
   CREATE TABLE IF NOT EXISTS comments (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     post_id    INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
@@ -151,6 +163,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_reports_target    ON reports(target_type, target_id);
   CREATE INDEX IF NOT EXISTS idx_chat_msgs         ON chat_messages(chat_id, id DESC);
   CREATE INDEX IF NOT EXISTS idx_chat_members_u    ON chat_members(user_id);
+  CREATE INDEX IF NOT EXISTS idx_bookmarks_user     ON bookmarks(user_id, id DESC);
 `);
 
 /**
@@ -176,5 +189,54 @@ ensureColumn('posts', 'media_path', 'TEXT');
 ensureColumn('posts', 'media_type', 'TEXT');
 ensureColumn('posts', 'media_mime', 'TEXT');
 ensureColumn('posts', 'media_name', 'TEXT');
+
+/* ─ Полнотекстовый индекс записей ──────────────────────────────────────────
+ *
+ * Поиск людей в этом проекте пришлось писать на JS, потому что SQLite `LIKE`
+ * регистронезависим только для ASCII. С записями так не выйдет: их много и они
+ * длинные. FTS5 встроен в SQLite (никакой новой зависимости), а его токенизатор
+ * `unicode61` сворачивает регистр по юникоду — «БОРИС» находится по «борис».
+ *
+ * Но `ё` он не считает вариантом `е` ни при каком `remove_diacritics` (проверено
+ * на живом node:sqlite). Человек, набравший «пленка», не должен промахиваться
+ * мимо «плёнки», поэтому в индекс кладётся нормализованная копия текста: замена
+ * делается прямо в триггере, чтобы не существовало пути, которым сырой текст
+ * попал бы в индекс в обход JS. Тот же replace применяется к запросу в
+ * search.js — обе стороны сравнения нормализуются одинаково.
+ *
+ * Замена посимвольная 1:1, длина строки не меняется — смещения в индексе не
+ * съезжают. Расплата за нормализованную копию: сниппет сервером не отдаётся,
+ * иначе он показывал бы «пленка» там, где записано «плёнка».
+ */
+db.exec(`
+  CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(
+    body,
+    tokenize = 'unicode61 remove_diacritics 2'
+  );
+
+  CREATE TRIGGER IF NOT EXISTS posts_fts_ai AFTER INSERT ON posts BEGIN
+    INSERT INTO posts_fts(rowid, body)
+    VALUES (new.id, replace(replace(new.body, 'ё', 'е'), 'Ё', 'Е'));
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS posts_fts_ad AFTER DELETE ON posts BEGIN
+    DELETE FROM posts_fts WHERE rowid = old.id;
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS posts_fts_au AFTER UPDATE OF body ON posts BEGIN
+    UPDATE posts_fts SET body = replace(replace(new.body, 'ё', 'е'), 'Ё', 'Е')
+    WHERE rowid = new.id;
+  END;
+`);
+
+// Бэкофилл: на базе, которая жила до появления индекса, триггеры не сработают
+// задним числом, и поиск нашёл бы ровно ноль записей. Условие NOT EXISTS делает
+// вставку идемпотентной — повторный запуск сервера индекс не удваивает, а стоит
+// он одного скана по таблице записей.
+db.exec(`
+  INSERT INTO posts_fts(rowid, body)
+  SELECT p.id, replace(replace(p.body, 'ё', 'е'), 'Ё', 'Е') FROM posts p
+  WHERE NOT EXISTS (SELECT 1 FROM posts_fts f WHERE f.rowid = p.id)
+`);
 
 export const nowIso = () => new Date().toISOString();
