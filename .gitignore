@@ -7,3 +7,5 @@ server/data/*.db-wal
 server/data/*.db-shm
 server/data/uploads/
 .DS_Store
+.env.local
+*.log
