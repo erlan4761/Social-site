@@ -122,6 +122,48 @@ router.get('/me/blocks', requireAuth, (req, res) => {
   res.json({ users: rows.map(person) });
 });
 
+/**
+ * Архив записей по месяцам: только те месяцы, где смотрящему реально есть что
+ * открыть, новые сверху.
+ *
+ * Блокировка учитывается тем же фрагментом, что и лента с `postCount`: число в
+ * архиве обязано совпасть с тем, что откроется по клику. «В мае 3 записи» над
+ * пустым списком — это не мелкая неточность, а сломанный сайт с точки зрения
+ * человека.
+ *
+ * `total` считается сложением тех же самых чисел, а не отдельным COUNT(*):
+ * два запроса могли бы разойтись между собой, а сумма разойтись с слагаемыми
+ * не может.
+ *
+ * Месяц берётся срезом ISO-строки, то есть по UTC. Запись, сделанная 1 октября
+ * в 02:00 по Бишкеку, попадёт в сентябрь; чинить это правильно значит хранить
+ * смещение автора, а его в схеме нет. Названо в README прямо.
+ *
+ * Путь из двух сегментов, `/:username` его не перехватывает; с `/me/blocks`
+ * тоже не спорит — второй сегмент другой, а имени «me» не существует
+ * (логин от трёх символов).
+ */
+router.get('/:username/archive', (req, res) => {
+  const uname = String(req.params.username).toLowerCase();
+  const user = db.prepare('SELECT id FROM users WHERE username = ?').get(uname);
+  // Несуществующий автор — 404, как и его профиль: пустой архив означал бы
+  // «человек есть, записей нет», а это другое утверждение.
+  if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+
+  const months = db.prepare(`
+    SELECT substr(p.created_at, 1, 7) AS month, COUNT(*) AS count
+    FROM posts p
+    WHERE p.author_id = :authorId AND ${blockPairSql('p.author_id')}
+    GROUP BY month
+    ORDER BY month DESC
+  `).all({ authorId: user.id, viewerId: req.user?.id ?? null });
+
+  res.json({
+    months,
+    total: months.reduce((sum, m) => sum + m.count, 0),
+  });
+});
+
 router.get('/:username', (req, res) => {
   const uname = String(req.params.username).toLowerCase();
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(uname);

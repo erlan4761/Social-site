@@ -16,6 +16,8 @@ import { router as messageRoutes } from './routes/messages.js';
 import { router as chatRoutes } from './routes/chats.js';
 import { router as notificationRoutes, badgesRouter } from './routes/notifications.js';
 import { router as reportRoutes } from './routes/reports.js';
+import { router as searchRoutes } from './routes/search.js';
+import { router as bookmarkRoutes } from './routes/bookmarks.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -63,6 +65,11 @@ app.post('/api/chats', rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 
 // же мерке, что и ЛС.
 app.post('/api/chats/*splat', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 30 }));
 
+// Поиск дороже обычного чтения ленты: каждый терм — отдельный обход
+// FTS-индекса, и поле ввода на клиенте шлёт запрос по мере набора. Шестьдесят
+// в минуту — это запрос в секунду подряд, живому человеку столько не нужно.
+app.use('/api/search', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 60 }));
+
 // Жалоба — сигнал, а не действие: десятка в час хватит любому живому человеку,
 // а поток одинаковых жалоб от одного адреса только зашумит лог.
 app.use('/api/reports', rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 10 }));
@@ -85,6 +92,8 @@ app.use('/api/chats', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/badges', badgesRouter);
 app.use('/api/reports', reportRoutes);
+app.use('/api/search', searchRoutes);
+app.use('/api/bookmarks', bookmarkRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Нет такого эндпоинта' }));
 
