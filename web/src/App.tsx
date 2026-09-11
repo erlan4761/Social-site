@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Shell } from './components/Shell';
 import { DemoBanner } from './demo/DemoBanner';
 import { Auth } from './pages/Auth';
+import { Bookmarks } from './pages/Bookmarks';
 import { ChatThread } from './pages/ChatThread';
 import { Feed } from './pages/Feed';
 import { ForgotPassword } from './pages/ForgotPassword';
@@ -11,6 +12,7 @@ import { Notifications } from './pages/Notifications';
 import { PostPage } from './pages/PostPage';
 import { Profile } from './pages/Profile';
 import { ResetPassword } from './pages/ResetPassword';
+import { Search } from './pages/Search';
 import { Thread } from './pages/Thread';
 import { SessionProvider, useSession } from './session';
 
@@ -56,6 +58,11 @@ export function App() {
             }
           >
             <Route index element={<Feed />} />
+            {/* Один сегмент, как и `u/:username`, но постоянный: конфликта нет,
+                а объявление раньше закрепляет, что «search» — это экран, а не
+                чей-то логин. */}
+            <Route path="search" element={<Search />} />
+            <Route path="bookmarks" element={<Bookmarks />} />
             <Route path="u/:username" element={<Profile />} />
             <Route path="p/:id" element={<PostPage />} />
             <Route path="notifications" element={<Notifications />} />

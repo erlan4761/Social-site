@@ -21,6 +21,7 @@ export function Shell() {
           <NavLink to="/" end>
             Лента
           </NavLink>
+          <NavLink to="/bookmarks">Закладки</NavLink>
           <NavLink to="/messages">
             Сообщения
             {unreadTotal > 0 && (

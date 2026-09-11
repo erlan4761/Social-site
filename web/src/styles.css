@@ -246,7 +246,8 @@ a { color: inherit; }
 .post-actions {
   display: flex;
   align-items: center;
-  gap: 1.25rem;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
   margin-top: 0.625rem;
 }
 
@@ -271,7 +272,9 @@ a { color: inherit; }
 /* Отметка держит акцентный цвет и под курсором — иначе одно и то же
    состояние выглядит по-разному. Приглушать нельзя: контраст уйдёт ниже AA. */
 .act.liked,
-.act.liked:hover:not(:disabled) { color: var(--accent); }
+.act.liked:hover:not(:disabled),
+.act.saved,
+.act.saved:hover:not(:disabled) { color: var(--accent); }
 
 .post-delete {
   border: 0;
@@ -936,6 +939,81 @@ a.btn { display: inline-block; text-decoration: none; }
   .search-slot { order: 2; width: 100%; margin: 0; }
 }
 
+/* Первая строка выпадающего списка — «искать среди записей». `.search-hit`
+   ставит вложенному strong `display: block`, здесь имя запроса живёт в строке. */
+.search-all {
+  border-bottom: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 0.8125rem;
+  /* Вставленная в поле длинная строка не должна распирать выпадающий список. */
+  overflow-wrap: anywhere;
+}
+
+.search-all strong { display: inline; font-size: inherit; font-weight: 500; color: var(--ink); }
+
+/* ─ Экран поиска ──────────────────────────────────────────────────────── */
+/* Найденное помечается на полях, а не раскрашивается: своего цвета у подсветки
+   нет, скруглений-«таблеток» тоже — это дневник, а не поисковая выдача. */
+mark {
+  background: var(--accent-soft);
+  color: inherit;
+}
+
+.search-lede,
+.page-lede {
+  font-family: var(--read);
+  color: var(--muted);
+  font-size: 0.9375rem;
+  /* Строка в 60–75 знаков читается без возврата глаза к началу. */
+  max-width: 30rem;
+  margin: 0 0 2rem;
+  overflow-wrap: anywhere;
+}
+
+.search-section + .search-section { margin-top: 2.5rem; }
+
+.search-section-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0 0 1.25rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* Отступ под ленту здесь не нужен: у раздела своя левая граница по заголовку. */
+.empty.flush { margin-left: 0; }
+
+.people-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.people-hit {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 0.625rem 0.5rem 0;
+  border-radius: 8px;
+  text-decoration: none;
+  color: inherit;
+  transition: background 160ms ease-out;
+}
+
+/* minmax через min-width: длинное имя переносится, а не растягивает колонку. */
+.people-hit > span { min-width: 0; overflow-wrap: anywhere; }
+
+.people-hit:hover { background: var(--accent-soft); }
+.people-hit strong { display: block; font-size: 0.875rem; font-weight: 500; }
+.people-handle { font-size: 0.75rem; color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .people-hit { transition: none; }
+}
+
 /* ─ События ───────────────────────────────────────────────────────────── */
 /* Шапка страницы: заголовок и действие над ним в одной строке.
    Тем же правилом живёт шапка «Сообщений» с кнопкой «Новый чат» — приём один,
@@ -1304,3 +1382,109 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 
 .bubble-author:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+
+/* ─ Архив профиля ─────────────────────────────────────────────────────── */
+/* Панель раскрывается на месте, как список заблокированных: у архива нет
+   своей страницы, он нужен ровно там, где лежит лента, которую он фильтрует. */
+.archive { margin-bottom: 1.5rem; }
+
+.archive-body {
+  display: grid;
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+/* Год встаёт в колонку аватаров, месяцы — в колонку текста: архив ложится на
+   ту же сетку, что и лента под ним, и читается её оглавлением. */
+.archive-year {
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+
+.archive-months {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+/* Тот же язык, что у пунктов навигации: выбранное — акцент на мягкой заливке.
+   Ни рамок-таблеток, ни счётчиков-бейджей: это пометка на полях, не соцсеть. */
+.archive-tag {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  border: 0;
+  background: none;
+  padding: 0.1875rem 0.5rem;
+  margin-left: -0.5rem;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+  transition: background 160ms ease-out;
+}
+
+.archive-tag:hover { color: var(--ink); background: var(--accent-soft); }
+
+.archive-tag[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.archive-count { font-size: 0.75rem; font-variant-numeric: tabular-nums; opacity: 0.75; }
+
+/* Строка над лентой: какой отрезок времени сейчас показан и чем он кончается. */
+.period-bar {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  padding-bottom: 1rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.period-what {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.period-what strong {
+  font-family: var(--read);
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.period-what span::before { content: "· "; }
+
+.period-nav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .archive-tag { transition: none; }
+}
+
+@media (max-width: 46rem) {
+  /* «Раньше / Позже / Показать всё» на 375 px уходят под название периода,
+     а не выдавливают его из строки. */
+  .period-nav { margin-left: 0; }
+}

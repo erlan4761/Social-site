@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError, type Post } from '../api';
 import { useSession } from '../session';
+import { highlight as markTerms } from '../highlight';
 import { fullDate, plural, timeAgo } from '../time';
 import { CommentThread } from './CommentThread';
 import { Monogram } from './Monogram';
@@ -13,6 +14,9 @@ type Props = {
   canDelete: boolean;
   /** Страница отдельного поста открывает ветку сразу: за ней туда и приходят. */
   openThread?: boolean;
+  /** Термы поиска для подсветки тела записи. Задаёт только экран поиска —
+   *  в остальных лентах проп не передаётся и текст рисуется как раньше. */
+  highlight?: string[];
   onDelete: (id: number) => void;
   onPatch: (id: number, changes: Partial<Post>) => void;
 };
@@ -22,6 +26,21 @@ function Heart({ filled }: { filled: boolean }) {
     <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
       <path
         d="M8 14S1.5 10.2 1.5 5.9A3.4 3.4 0 0 1 8 4.3a3.4 3.4 0 0 1 6.5 1.6C14.5 10.2 8 14 8 14Z"
+        fill={filled ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Флажок закладки: та же манера, что у сердца — контур, заливка при включении. */
+function Flag({ filled }: { filled: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+      <path
+        d="M4 2.7h8v10.9l-4-2.9-4 2.9V2.7Z"
         fill={filled ? 'currentColor' : 'none'}
         stroke="currentColor"
         strokeWidth="1.4"
@@ -59,10 +78,11 @@ function PostMedia({ media }: { media: NonNullable<Post['media']> }) {
   );
 }
 
-export function PostRow({ post, fresh, canDelete, openThread = false, onDelete, onPatch }: Props) {
+export function PostRow({ post, fresh, canDelete, openThread = false, highlight, onDelete, onPatch }: Props) {
   const { user } = useSession();
   const [open, setOpen] = useState(openThread);
   const [likeError, setLikeError] = useState<string | null>(null);
+  const [bookmarkError, setBookmarkError] = useState<string | null>(null);
   const [reporting, setReporting] = useState(false);
   const { author } = post;
   const profile = `/u/${author.username}`;
@@ -89,6 +109,26 @@ export function PostRow({ post, fresh, canDelete, openThread = false, onDelete, 
     }
   }
 
+  /**
+   * Закладка приватна: уведомления о ней нет и не будет, автор о сохранении не
+   * узнаёт. Поэтому счётчика рядом с флажком тоже нет — считать нечего.
+   */
+  async function toggleBookmark() {
+    if (!user) return;
+    const next = !post.bookmarkedByMe;
+
+    onPatch(post.id, { bookmarkedByMe: next });
+    setBookmarkError(null);
+
+    try {
+      const res = await api.setBookmark(post.id, next);
+      onPatch(post.id, { bookmarkedByMe: res.bookmarkedByMe });
+    } catch (err) {
+      onPatch(post.id, { bookmarkedByMe: post.bookmarkedByMe });
+      setBookmarkError(err instanceof ApiError ? err.message : 'Не удалось изменить закладку');
+    }
+  }
+
   return (
     <article className={fresh ? 'rail-row fresh' : 'rail-row'}>
       <Link className="avatar-link" to={profile} aria-label={`Профиль ${author.displayName}`}>
@@ -106,7 +146,11 @@ export function PostRow({ post, fresh, canDelete, openThread = false, onDelete, 
           </time>
         </header>
 
-        {post.body && <p className="post-body">{post.body}</p>}
+        {post.body && (
+          <p className="post-body">
+            {highlight?.length ? markTerms(post.body, highlight) : post.body}
+          </p>
+        )}
 
         {post.media && <PostMedia media={post.media} />}
 
@@ -132,6 +176,18 @@ export function PostRow({ post, fresh, canDelete, openThread = false, onDelete, 
               : `${post.commentCount} ${plural(post.commentCount, 'ответ', 'ответа', 'ответов')}`}
           </button>
 
+          <button
+            className={post.bookmarkedByMe ? 'act saved' : 'act'}
+            type="button"
+            onClick={() => void toggleBookmark()}
+            disabled={!user}
+            aria-pressed={post.bookmarkedByMe}
+            title={user ? undefined : 'Войдите, чтобы сохранять записи'}
+          >
+            <Flag filled={post.bookmarkedByMe} />
+            <span>{post.bookmarkedByMe ? 'Сохранено' : 'Сохранить'}</span>
+          </button>
+
           {canDelete && (
             <button className="post-delete" type="button" onClick={() => onDelete(post.id)}>
               Удалить
@@ -155,6 +211,7 @@ export function PostRow({ post, fresh, canDelete, openThread = false, onDelete, 
         )}
 
         {likeError && <p className="error">{likeError}</p>}
+        {bookmarkError && <p className="error">{bookmarkError}</p>}
 
         {open && (
           <CommentThread

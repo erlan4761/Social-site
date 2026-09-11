@@ -1,13 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { api, ApiError, type BlockedUser, type User } from '../api';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { api, ApiError, type ArchiveMonth, type BlockedUser, type User } from '../api';
+import { ArchivePanel } from '../components/ArchivePanel';
 import { Monogram } from '../components/Monogram';
 import { PostRow } from '../components/PostRow';
 import { ReportDialog } from '../components/ReportDialog';
 import { useSession } from '../session';
-import { joinedOn, plural } from '../time';
+import { joinedOn, monthLabel, plural, yearOf } from '../time';
 import { usePostStream } from '../usePostStream';
+
+const YEAR_ONLY = /^\d{4}$/;
+
+/** `'2026'` → «2026 год», `'2026-09'` → «Сентябрь 2026». Мусор — как есть:
+ *  период человек видит в адресе, и подменять его выдумкой нечестно. */
+const periodTitle = (period: string) => (YEAR_ONLY.test(period) ? `${period} год` : monthLabel(period));
 
 export function Profile() {
   const { username = '' } = useParams();
@@ -23,7 +30,36 @@ export function Profile() {
   // Блокировка меняет выдачу сервера, а адрес страницы остаётся прежним —
   // ленту профиля приходится просить заново.
   const [reloadKey, setReloadKey] = useState(0);
-  const stream = usePostStream({ author: username, reloadKey });
+  const [archive, setArchive] = useState<{ months: ArchiveMonth[]; total: number }>({ months: [], total: 0 });
+  // Выбранный месяц живёт в адресе, а не в состоянии: иначе «назад» в браузере
+  // и перезагрузка страницы показывали бы не то, что обещает ссылка.
+  const [params, setParams] = useSearchParams();
+  const period = params.get('period') ?? '';
+  const stream = usePostStream({ author: username, period: period || undefined, reloadKey });
+
+  /** Пуск с `null` снимает фильтр. Не `replace`: «назад» обязан вернуть ленту целиком. */
+  function pickPeriod(next: string | null) {
+    const updated = new URLSearchParams(params);
+    if (next) updated.set('period', next);
+    else updated.delete('period');
+    setParams(updated);
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    setArchive({ months: [], total: 0 });
+
+    api
+      .archive(username)
+      // Молча: не открывшийся архив — не повод показывать ошибку поверх
+      // профиля, лента при этом на месте.
+      .then((res) => !cancelled && setArchive(res))
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [username, reloadKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,6 +82,19 @@ export function Profile() {
 
   const isMe = me?.id === profile.id;
   const count = profile.postCount ?? 0;
+  // Год покрывает свои месяцы префиксом строки — тем же сравнением, что и на
+  // сервере, поэтому число над лентой сходится с числом в панели.
+  const periodCount = archive.months
+    .filter((m) => m.month.startsWith(period))
+    .reduce((sum, m) => sum + m.count, 0);
+  // Шаг «раньше / позже» — по годам, если выбран год, и по месяцам иначе.
+  // Список идёт от новых к старым, поэтому «раньше» — это следующий элемент.
+  const steps = YEAR_ONLY.test(period)
+    ? [...new Set(archive.months.map((m) => yearOf(m.month)))]
+    : archive.months.map((m) => m.month);
+  const at = steps.indexOf(period);
+  const earlier = at >= 0 ? steps[at + 1] : undefined;
+  const later = at > 0 ? steps[at - 1] : undefined;
   const followers = profile.followerCount ?? 0;
   const following = profile.followingCount ?? 0;
 
@@ -236,6 +285,40 @@ export function Profile() {
         </div>
       </div>
 
+      {archive.total > 0 && (
+        <ArchivePanel months={archive.months} total={archive.total} active={period} onPick={pickPeriod} />
+      )}
+
+      {period && (
+        <div className="period-bar">
+          <p className="period-what">
+            <strong>{periodTitle(period)}</strong>
+            <span>
+              {periodCount} {plural(periodCount, 'запись', 'записи', 'записей')}
+            </span>
+          </p>
+
+          <div className="period-nav">
+            {/* Стрелки ходят по списку месяцев из архива, а не по календарю:
+                пустой месяц между двумя записями открывать незачем. */}
+            <button
+              className="act"
+              type="button"
+              onClick={() => earlier && pickPeriod(earlier)}
+              disabled={!earlier}
+            >
+              <span aria-hidden="true">←</span> Раньше
+            </button>
+            <button className="act" type="button" onClick={() => later && pickPeriod(later)} disabled={!later}>
+              Позже <span aria-hidden="true">→</span>
+            </button>
+            <button className="btn ghost small" type="button" onClick={() => pickPeriod(null)}>
+              Показать всё
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="rail">
         {stream.error && <p className="error">{stream.error}</p>}
 
@@ -248,6 +331,11 @@ export function Profile() {
             <p className="empty">
               <strong>Записи скрыты.</strong>
               Они появятся снова, если блокировка будет снята.
+            </p>
+          ) : period ? (
+            <p className="empty">
+              <strong>За этот период записей нет.</strong>
+              Выберите другой месяц в архиве или вернитесь ко всей ленте.
             </p>
           ) : (
             <p className="empty">
@@ -263,8 +351,17 @@ export function Profile() {
               canDelete={isMe}
               onPatch={stream.patch}
               onDelete={async (id) => {
+                const month = post.createdAt.slice(0, 7);
                 if (!(await stream.remove(id))) return;
                 setProfile((p) => (p ? { ...p, postCount: Math.max(0, (p.postCount ?? 1) - 1) } : p));
+                // Число в архиве обязано совпадать с тем, что откроется по клику,
+                // — иначе месяц обещал бы записи, которых уже нет.
+                setArchive((a) => ({
+                  total: Math.max(0, a.total - 1),
+                  months: a.months
+                    .map((m) => (m.month === month ? { ...m, count: m.count - 1 } : m))
+                    .filter((m) => m.count > 0),
+                }));
               }}
             />
           ))
