@@ -9,9 +9,9 @@
  * В обычную сборку этот файл не попадает: см. переключение в api.ts.
  */
 import type {
-  Author, Badges, BlockedUser, Chat, ChatMessage, ChatSummary, Comment, Conversation,
-  Media, Message, Notification as NotificationItem, NotificationKind, Page, Post,
-  ReportReason, ReportTargetType, User,
+  ArchiveMonth, Author, Badges, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
+  Conversation, Media, Message, Notification as NotificationItem, NotificationKind, Page,
+  Post, ReportReason, ReportTargetType, User,
 } from '../api';
 import { ApiError } from '../api';
 
@@ -53,6 +53,10 @@ type DbNotification = {
 
 type DbBlock = { blockerId: number; blockedId: number; createdAt: string };
 
+/** Суррогатный `id` — не украшение: список листается по времени сохранения,
+ *  а не по id записи, иначе сохранённая старая запись ушла бы в самый низ. */
+type DbBookmark = { id: number; userId: number; postId: number; createdAt: string };
+
 type DbReport = {
   reporterId: number;
   targetType: ReportTargetType;
@@ -80,6 +84,7 @@ let resets: { token: string; userId: number; expiresAt: number; usedAt: number |
 // модульные переменные, так что внутри методов это по-прежнему таблицы.
 let notifications: DbNotification[] = [];
 let blocks: DbBlock[] = [];
+let bookmarks: DbBookmark[] = [];
 let reports: DbReport[] = [];
 let chats: DbChat[] = [];
 let chatMembers: DbChatMember[] = [];
@@ -89,6 +94,8 @@ let nextId = 1;
 
 const id = () => nextId++;
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+/** Даты витрины считаются от «сейчас», чтобы архив не устаревал со временем. */
+const days = (count: number) => count * 24 * 60;
 
 /** Небольшая задержка: без неё состояния «Загружаю…» мигают в один кадр. */
 const tick = <T>(value: T): Promise<T> =>
@@ -120,6 +127,7 @@ function seed() {
   resets = [];
   notifications = [];
   blocks = [];
+  bookmarks = [];
   reports = [];
   chats = [];
   chatMembers = [];
@@ -129,7 +137,7 @@ function seed() {
   const make = (username: string, displayName: string, bio: string, avatar: string | null): DbUser => {
     const u: DbUser = {
       id: id(), username, displayName, bio, avatarUrl: avatar,
-      createdAt: ago(60 * 24 * 40), email: `${username}@example.test`, password: 'parol12345',
+      createdAt: ago(days(280)), email: `${username}@example.test`, password: 'parol12345',
     };
     users.push(u);
     return u;
@@ -146,6 +154,23 @@ function seed() {
     return p;
   };
 
+  // Записи прошлых месяцев. Заведены раньше свежих намеренно: id в витрине
+  // растёт вместе с датой, иначе keyset-пагинация листала бы вразнобой.
+  // Апрель
+  const op1 = post(nina, 'Проявила первую за зиму плёнку. Почти весь ролик засвечен по краю, зато три кадра вышли лучше, чем я помнила саму съёмку.', days(152));
+  post(marina, 'Начала записывать не то, что прочитала, а то, что вспомнилось через неделю после. Список выходит вдвое короче и вдвое честнее.', days(146));
+  // Май
+  const op3 = post(oleg, 'Сосед Борис отдал ящик метчиков — довоенных, в промасленной бумаге. Половину придётся править, но резьба у них глубже нынешней.', days(121));
+  // Июнь
+  post(demo, 'Переписал ленту на курсор вместо номера страницы. Записи перестали прыгать, когда кто-то публикует новое, пока ты листаешь.', days(96));
+  post(marina, 'Третий день читаю в трамвае одну и ту же страницу. Не потому что сложно — потому что за окном интереснее.', days(92));
+  // Июль
+  const op6 = post(nina, 'Плёнка, забытая в камере с прошлого лета: половина кадров — чужой двор, половина — мой. Проявка показала, что двор один и тот же.', days(63));
+  // Август
+  post(demo, 'Добавил блокировки. Сложным оказалось не спрятать записи, а сделать так, чтобы по счётчикам нельзя было догадаться, что тебя заблокировали.', days(36));
+  post(oleg, 'Станок гудит на полтона ниже, чем месяц назад. Подшипник ещё держит, но уже разговаривает.', days(33));
+  post(marina, 'Выписала за месяц двенадцать цитат и ни одной не вспомнила в разговоре. Кажется, выписывать — это способ не запоминать.', days(29));
+
   const p1 = post(marina, 'Перечитала «Хазарский словарь» и поняла, что читала его неправильно оба предыдущих раза. Это не роман, а инструкция по чтению самого себя.', 12);
   const p2 = post(oleg, 'Сегодня в мастерской починил станок 1969 года. Инструкция к нему на четырёх языках, и ни один из них уже не звучит так, как звучал тогда.', 48);
   const p3 = post(nina, 'Вечер на набережной. Небо переходило из тёплого в холодное минут за десять — не успел дойти до моста.', 120, {
@@ -160,6 +185,16 @@ function seed() {
   likes.push({ userId: marina.id, postId: p2.id });
   likes.push({ userId: demo.id, postId: p3.id }, { userId: marina.id, postId: p3.id });
   likes.push({ userId: marina.id, postId: p4.id });
+  likes.push({ userId: demo.id, postId: op1.id }, { userId: marina.id, postId: op6.id });
+
+  // Закладки витрины: сохранены в этом порядке, значит наверху списка будет
+  // последняя строка. Закладка на чужую запись уведомления не создаёт.
+  const save = (target: DbPost, minutes: number) => {
+    bookmarks.push({ id: id(), userId: demo.id, postId: target.id, createdAt: ago(minutes) });
+  };
+  save(op3, days(110));
+  save(op6, days(58));
+  save(p1, 6);
 
   const answer = (post: DbPost, from: DbUser, body: string, minutes: number): DbComment => {
     const c: DbComment = { id: id(), postId: post.id, authorId: from.id, body, createdAt: ago(minutes) };
@@ -271,6 +306,33 @@ const blockedPair = (aId: number, bId: number) =>
 const hidden = (authorId: number) => meId != null && blockedPair(meId, authorId);
 
 const visiblePosts = () => posts.filter((p) => !hidden(p.authorId));
+
+// ─ Поиск по записям ─────────────────────────────────────────────────────────
+
+/**
+ * `ё` сворачивается в `е` руками — и в запросе, и в тексте записи. На сервере
+ * это делает `replace()` в триггере индекса: токенизатор FTS5 кириллическое `ё`
+ * не трогает, а человек, который ищет «пленка», не должен промахиваться мимо
+ * «плёнки». Замена посимвольная, длина строки не меняется.
+ */
+const foldSearchText = (value: string) => value.replace(/ё/g, 'е').replace(/Ё/g, 'Е');
+
+/** Разбор строки на слова — той же границей, что и токенизатор `unicode61`. */
+const wordsOf = (value: string) =>
+  foldSearchText(value).toLowerCase().split(/[^\p{L}\p{N}_]+/u).filter((w) => w.length > 0);
+
+/** Термы запроса: не больше восьми, как потолок `ftsQuery()` на сервере. */
+const searchTerms = (raw: string) => wordsOf(raw).slice(0, 8);
+
+/**
+ * Совпадение по **началу** слова, а не по словоформе: русского стеммера в
+ * SQLite нет, и сервер ищет префиксом (`"проявк"*`). Термы соединяются через
+ * И — набравший два слова ждёт записи, где есть оба.
+ */
+const matchesTerms = (body: string, terms: string[]) => {
+  const words = wordsOf(body);
+  return terms.every((term) => words.some((word) => word.startsWith(term)));
+};
 const visibleComments = (postId: number) =>
   comments.filter((c) => c.postId === postId && !hidden(c.authorId));
 
@@ -299,6 +361,7 @@ const toPost = (p: DbPost): Post => ({
   // обезличенное число.
   commentCount: visibleComments(p.id).length,
   likedByMe: likes.some((l) => l.postId === p.id && l.userId === meId),
+  bookmarkedByMe: bookmarks.some((b) => b.postId === p.id && b.userId === meId),
   media: p.media,
   author: author(byId(p.authorId)!),
 });
@@ -478,6 +541,10 @@ function checkTitle(raw: unknown) {
 }
 
 const PAGE = 20;
+/** `YYYY` или `YYYY-MM` — та же проверка, что и на сервере. */
+const PERIOD_RE = /^\d{4}(-(0[1-9]|1[0-2]))?$/;
+/** Ответ поиска: `query` возвращается обратно, чтобы экран знал, что подсвечивать. */
+type SearchPage = { posts: Post[]; nextCursor: number | null; query: string };
 /** Страница переписки — и в личных сообщениях, и в чатах. */
 const CHAT_PAGE = 30;
 const BODY_MAX = 1000;
@@ -584,10 +651,18 @@ export const mockApi = {
     return tick({ user: publicUser(u) });
   },
 
-  posts: (opts: { author?: string; cursor?: number | null; feed?: 'following' } = {}) => {
+  posts: (opts: { author?: string; cursor?: number | null; feed?: 'following'; period?: string } = {}) => {
     // Блокировка — главный фильтр ленты: и общей, и «по подпискам», и профильной.
     let list = visiblePosts().sort((a, b) => b.id - a.id);
 
+    if (opts.period != null) {
+      // Мусорный период — 400, в отличие от мусорного курсора: период человек
+      // видит в адресе строки и может его исправить.
+      if (!PERIOD_RE.test(opts.period)) fail(400, 'Некорректный период');
+      // Границы месяца по UTC: в базе лежит ISO-время в UTC, и сравнение
+      // префикса строки — ровно то же, что `substr(created_at, 1, length(:period))`.
+      list = list.filter((p) => p.createdAt.slice(0, opts.period!.length) === opts.period);
+    }
     if (opts.author) {
       const u = byName(opts.author);
       list = u ? list.filter((p) => p.authorId === u.id) : [];
@@ -637,6 +712,7 @@ export const mockApi = {
     posts = posts.filter((x) => x.id !== postId);
     comments = comments.filter((c) => c.postId !== postId);
     likes = likes.filter((l) => l.postId !== postId);
+    bookmarks = bookmarks.filter((b) => b.postId !== postId);
     // События о записи ведут туда, где больше ничего нет — каскад, как в схеме.
     notifications = notifications.filter((n) => n.postId !== postId);
     return tick({ ok: true as const });
@@ -879,6 +955,112 @@ export const mockApi = {
     // «не найдено»: страница /p/<что угодно> показывает обычное пустое место.
     if (!p || hidden(p.authorId)) fail(404, 'Пост не найден');
     return tick({ post: toPost(p!) });
+  },
+
+  // ─ Поиск по записям, архив и закладки ─────────────────────────────────
+
+  searchPosts: (q: string, opts: { author?: string; cursor?: number | null } = {}) => {
+    // Сервер обрезает запрос до 100 символов — витрина обязана делать то же,
+    // иначе длинный ввод дал бы здесь другую выдачу.
+    const query = String(q).slice(0, 100);
+    const terms = searchTerms(query);
+
+    // Пустой и бессмысленный запрос («одни знаки препинания») — не ошибка, а
+    // промежуточное состояние строки ввода. Сервер тоже отвечает 200.
+    if (terms.length === 0) {
+      const empty: SearchPage = { posts: [], nextCursor: null, query };
+      return tick(empty);
+    }
+
+    // Порядок хронологический, а не по релевантности: это дневник, а не
+    // поисковик, и keyset-пагинация по id работает только так.
+    let list = visiblePosts()
+      .filter((post) => matchesTerms(post.body, terms))
+      .sort((a, b) => b.id - a.id);
+
+    if (opts.author) {
+      const u = byName(opts.author);
+      list = u ? list.filter((post) => post.authorId === u.id) : [];
+    }
+    if (opts.cursor != null) list = list.filter((post) => post.id < opts.cursor!);
+
+    const page = list.slice(0, PAGE);
+    const result: SearchPage = {
+      posts: page.map(toPost),
+      nextCursor: list.length > PAGE ? page.at(-1)!.id : null,
+      query,
+    };
+    return tick(result);
+  },
+
+  archive: (username: string) => {
+    const u = byName(username);
+    if (!u) fail(404, 'Пользователь не найден');
+
+    // Числа в архиве считаются по той же видимости, что и лента: «12 записей»
+    // над месяцем, который откроется пустым, читались бы как поломка.
+    const counts = new Map<string, number>();
+    for (const post of visiblePosts()) {
+      if (post.authorId !== u!.id) continue;
+      // Месяц — первые семь символов ISO-строки, то есть по UTC.
+      const month = post.createdAt.slice(0, 7);
+      counts.set(month, (counts.get(month) ?? 0) + 1);
+    }
+
+    const months: ArchiveMonth[] = [...counts.entries()]
+      .map(([month, count]) => ({ month, count }))
+      .sort((a, b) => b.month.localeCompare(a.month));
+
+    return tick({ months, total: months.reduce((sum, m) => sum + m.count, 0) });
+  },
+
+  setBookmark: (postId: number, on: boolean) => {
+    const u = requireMe()!;
+    const p = posts.find((x) => x.id === postId);
+    if (!p) fail(404, 'Пост не найден');
+    // Сохранить скрытую блокировкой запись нельзя — ответ тот же «не найдено»,
+    // что и у несуществующей. А вот снять закладку можно всегда: фильтр
+    // блокировки стоит на чтении, строка закладки остаётся, и требуй мы
+    // видимости на удалении — такая закладка застряла бы навсегда.
+    // Сверено с BE-03 (`.team/inbox/to-frontend.md`).
+    if (on && hidden(p!.authorId)) fail(404, 'Пост не найден');
+
+    const saved = bookmarks.find((b) => b.userId === u.id && b.postId === postId);
+    // Идемпотентно: повтор не создаёт вторую строку и не поднимает закладку
+    // наверх списка — у неё остаётся прежний id, то есть прежнее место.
+    if (on && !saved) {
+      bookmarks.push({ id: id(), userId: u.id, postId, createdAt: new Date().toISOString() });
+    }
+    if (!on && saved) bookmarks = bookmarks.filter((b) => b !== saved);
+
+    // Уведомления здесь нет намеренно: закладка приватна, и этим она
+    // отличается от отметки — автор о ней знать не должен.
+    return tick({ bookmarkedByMe: on });
+  },
+
+  bookmarks: (cursor?: number | null) => {
+    const u = requireMe()!;
+
+    // Фильтр стоит на чтении, а не на сохранении: заблокировали автора после
+    // того, как сохранили его запись, — она пропадает из списка, строка
+    // закладки остаётся. Правило одно — фильтровать там, где показываем.
+    let list = bookmarks
+      .filter((b) => b.userId === u.id)
+      .filter((b) => {
+        const post = posts.find((x) => x.id === b.postId);
+        return post != null && !hidden(post.authorId);
+      })
+      .sort((a, b) => b.id - a.id);
+
+    // Курсор — id закладки: список листается по времени сохранения.
+    if (cursor != null) list = list.filter((b) => b.id < cursor);
+
+    const page = list.slice(0, PAGE);
+    const result: Page = {
+      posts: page.map((b) => toPost(posts.find((x) => x.id === b.postId)!)),
+      nextCursor: list.length > PAGE ? page.at(-1)!.id : null,
+    };
+    return tick(result);
   },
 
   // ─ Блокировки и жалобы ────────────────────────────────────────────────

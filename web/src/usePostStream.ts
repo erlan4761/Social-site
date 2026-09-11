@@ -4,14 +4,18 @@ import { api, ApiError, type Post } from './api';
 type StreamSource = {
   author?: string;
   feed?: 'following';
+  /** `YYYY` или `YYYY-MM` — месяц архива, выбранный в профиле. */
+  period?: string;
+  /** Другой источник записей вместо `/posts`. Пока он один — свои закладки. */
+  source?: 'bookmarks';
   /** Смена числа перезагружает ленту тем же запросом. Нужна там, где выдача
    *  меняется не от нашей навигации, а от действия: после блокировки автора
    *  сервер отдаёт уже другой список, а адрес страницы прежний. */
   reloadKey?: number;
 };
 
-/** Loads a paginated stream of posts — the whole feed, one author's, or the viewer's subscriptions. */
-export function usePostStream({ author, feed, reloadKey }: StreamSource = {}) {
+/** Loads a paginated stream of posts — the whole feed, one author's, the viewer's subscriptions, or their bookmarks. */
+export function usePostStream({ author, feed, period, source, reloadKey }: StreamSource = {}) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -19,13 +23,24 @@ export function usePostStream({ author, feed, reloadKey }: StreamSource = {}) {
   const [error, setError] = useState<string | null>(null);
   const [freshId, setFreshId] = useState<number | null>(null);
 
+  /**
+   * Курсор здесь намеренно непрозрачный: в лентах это id последней записи, в
+   * закладках — id закладки. Хук его не толкует, а возвращает серверу тем же,
+   * чем получил, поэтому оба источника листаются одним кодом.
+   */
+  const fetchPage = useCallback(
+    (cursor?: number | null) => (source === 'bookmarks'
+      ? api.bookmarks(cursor)
+      : api.posts({ author, feed, period, cursor })),
+    [author, feed, period, source],
+  );
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
 
-    api
-      .posts({ author, feed })
+    fetchPage()
       .then((page) => {
         if (cancelled) return;
         setPosts(page.posts);
@@ -41,13 +56,13 @@ export function usePostStream({ author, feed, reloadKey }: StreamSource = {}) {
     return () => {
       cancelled = true;
     };
-  }, [author, feed, reloadKey]);
+  }, [fetchPage, reloadKey]);
 
   const loadMore = useCallback(async () => {
     if (cursor == null || loadingMore) return;
     setLoadingMore(true);
     try {
-      const page = await api.posts({ author, feed, cursor });
+      const page = await fetchPage(cursor);
       setPosts((prev) => [...prev, ...page.posts]);
       setCursor(page.nextCursor);
     } catch (err) {
@@ -55,7 +70,7 @@ export function usePostStream({ author, feed, reloadKey }: StreamSource = {}) {
     } finally {
       setLoadingMore(false);
     }
-  }, [author, feed, cursor, loadingMore]);
+  }, [fetchPage, cursor, loadingMore]);
 
   const prepend = useCallback((post: Post) => {
     setPosts((prev) => [post, ...prev]);

@@ -33,3 +33,29 @@ export function timeAgo(iso: string) {
 
 export const fullDate = (iso: string) => exact.format(new Date(iso));
 export const joinedOn = (iso: string) => withYear.format(new Date(iso));
+
+// ─ Архив по месяцам ─────────────────────────────────────────────────────────
+
+/**
+ * Названия месяцев статичны намеренно. Строка вида `2026-09` разбирается
+ * вручную: `new Date('2026-09')` — это полночь UTC, и в отрицательном
+ * смещении браузер показал бы август вместо сентября.
+ */
+const MONTH_NAMES = [
+  'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+  'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь',
+];
+
+/** `'2026-09'` → `'Сентябрь 2026'`. Нераспознанное возвращается как есть. */
+export function monthLabel(month: string) {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) return month;
+  const index = Number(match[2]) - 1;
+  const name = MONTH_NAMES[index];
+  return name ? `${name} ${match[1]}` : month;
+}
+
+/** `'2026-09'` → `'2026'`. Годом считаются первые четыре символа строки. */
+export function yearOf(month: string) {
+  return month.slice(0, 4);
+}

@@ -34,6 +34,9 @@ export type Post = {
   likeCount: number;
   commentCount: number;
   likedByMe: boolean;
+  /** Закладка смотрящего. Она приватна: автор записи о ней не узнаёт,
+   *  уведомления по ней нет — этим она и отличается от отметки. */
+  bookmarkedByMe: boolean;
   media: Media | null;
   author: Author;
 };
@@ -47,6 +50,9 @@ export type Comment = {
 };
 
 export type Page = { posts: Post[]; nextCursor: number | null };
+
+/** Строка архива: `2026-09` и число записей, видимых **этому** смотрящему. */
+export type ArchiveMonth = { month: string; count: number };
 
 export type Message = {
   id: number;
@@ -181,11 +187,14 @@ const realApi = {
   updateProfile: (input: { displayName: string; bio: string }) =>
     request<{ user: User }>('/users/me', { method: 'PATCH', body: body(input) }),
 
-  posts: (opts: { author?: string; cursor?: number | null; feed?: 'following' } = {}) => {
+  // period — `YYYY` или `YYYY-MM`; мусор сервер отвергает 400, потому что
+  // период человек видит в адресе и может исправить, в отличие от курсора.
+  posts: (opts: { author?: string; cursor?: number | null; feed?: 'following'; period?: string } = {}) => {
     const params = new URLSearchParams();
     if (opts.author) params.set('author', opts.author);
     if (opts.cursor != null) params.set('cursor', String(opts.cursor));
     if (opts.feed) params.set('feed', opts.feed);
+    if (opts.period) params.set('period', opts.period);
     const qs = params.toString();
     return request<Page>(`/posts${qs ? `?${qs}` : ''}`);
   },
@@ -282,6 +291,44 @@ const realApi = {
 
   /** Один пост — уведомление о лайке или ответе должно вести на предмет разговора. */
   post: (id: number) => request<{ post: Post }>(`/posts/${id}`),
+
+  // ─ Поиск по записям, архив и закладки ─────────────────────────────────
+
+  /**
+   * Полнотекстовый поиск по записям. Пустой и бессмысленный запрос — не
+   * ошибка: сервер отвечает 200 с пустым списком, потому что «одни знаки
+   * препинания» — это промежуточное состояние строки ввода, а не сбой.
+   * Порядок хронологический (`id DESC`), а не по релевантности.
+   */
+  searchPosts: (q: string, opts: { author?: string; cursor?: number | null } = {}) => {
+    const params = new URLSearchParams({ q });
+    if (opts.author) params.set('author', opts.author);
+    if (opts.cursor != null) params.set('cursor', String(opts.cursor));
+    return request<{ posts: Post[]; nextCursor: number | null; query: string }>(
+      `/search/posts?${params.toString()}`,
+    );
+  },
+
+  /** Месяцы, в которых у автора есть видимые смотрящему записи, новые сверху. */
+  archive: (username: string) =>
+    request<{ months: ArchiveMonth[]; total: number }>(
+      `/users/${encodeURIComponent(username)}/archive`,
+    ),
+
+  /** Идемпотентно: повторное сохранение не создаёт вторую закладку. */
+  setBookmark: (id: number, on: boolean) =>
+    request<{ bookmarkedByMe: boolean }>(`/posts/${id}/bookmark`, {
+      method: on ? 'PUT' : 'DELETE',
+    }),
+
+  /**
+   * Курсор здесь — id **закладки**, а не записи: список листается по времени
+   * сохранения. Сохранил старую запись — она обязана оказаться сверху.
+   */
+  bookmarks: (cursor?: number | null) => {
+    const qs = cursor != null ? `?cursor=${cursor}` : '';
+    return request<Page>(`/bookmarks${qs}`);
+  },
 
   // ─ Блокировки и жалобы ────────────────────────────────────────────────
 
