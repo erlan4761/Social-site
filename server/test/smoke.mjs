@@ -1078,5 +1078,447 @@ r = await n('/notifications');
 check('события об удалённом чате ушли вместе с ним',
   !r.body.notifications.some(x => x.chat?.id === pairChat), JSON.stringify(r.body.notifications.filter(x => x.chat).map(x => x.chat.id)));
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Этап 1: поиск по записям, архив по датам, закладки.
+ *
+ * Секции работают на своих аккаунтах и на клиенте `guest` (см. предупреждение
+ * выше: `anon` к этому моменту уже вошёл, и брать его для проверок 401 нельзя).
+ *
+ * Запросы к поиску и к ленте всегда сужены либо меткой MARK/SER, либо именем
+ * автора: обе строки содержат `stamp`, поэтому прогон не видит записей
+ * предыдущих прогонов, оставшихся в той же базе.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+// Даты записей через API не выставить — created_at ставит сервер. Архив без
+// разных месяцев проверять нечем, поэтому даты правятся прямым UPDATE в той же
+// базе, что видит сервер (тем же способом, что и токен сброса пароля выше).
+// Без DB_PATH секция бессмысленна, и молчать об этом хуже, чем остановиться.
+if (!process.env.DB_PATH) {
+  console.log('\n  ОСТАНОВ: секциям этапа 1 нужен DB_PATH — тот же файл базы, что у сервера.');
+  console.log('  Пример: $env:API_URL="http://127.0.0.1:3099"; $env:DB_PATH="$env:TEMP\\smoke.db"; npm run test:smoke');
+  process.exit(1);
+}
+
+function setCreatedAt(postId, iso) {
+  const wdb = new DatabaseSync(process.env.DB_PATH);
+  try {
+    wdb.prepare('UPDATE posts SET created_at = ? WHERE id = ?').run(iso, postId);
+  } finally {
+    wdb.close();
+  }
+}
+
+const fed = makeClient();   // Фёдор — автор записей для поиска
+const gal = makeClient();   // Галина — второй автор, её записи листаются страницами
+const igr = makeClient();   // Игорь — третье лицо: чужие блокировки его не касаются
+const mil = makeClient();   // Мила — автор архива, у её записей выставлены даты
+const nul = makeClient();   // Нора — человек без единой записи
+
+const userF = `fedor_${stamp}`;
+const userG = `galina_${stamp}`;
+const userI = `igor_${stamp}`;
+const userM = `mila_${stamp}`;
+const userNo = `nora_${stamp}`;
+
+// Метка прогона: слово, которого нет ни в одной чужой записи. Кириллица и
+// цифры для токенизатора unicode61 — один терм, разбиения не будет.
+const MARK = `мтк${stamp}`;
+const SER = `сер${stamp}`;
+
+const post = async (client, body) => (await client('/posts', { method: 'POST', body: JSON.stringify({ body }) })).body.post.id;
+const findQ = (client, q, extra = '') => client(`/search/posts?q=${encodeURIComponent(q)}${extra}`);
+const idsOf = (res) => (res.body.posts ?? []).map((x) => x.id);
+const hasId = (res, id) => idsOf(res).includes(id);
+const sorted = (arr) => [...arr].sort((x, y) => x - y);
+
+console.log('\n— поиск по записям —');
+r = await signUp(fed, userF, 'Фёдор');
+check('Фёдор зарегистрирован', r.status === 201, JSON.stringify(r.body));
+r = await signUp(gal, userG, 'Галина');
+check('Галина зарегистрирована', r.status === 201, JSON.stringify(r.body));
+r = await signUp(igr, userI, 'Игорь');
+check('Игорь зарегистрирован', r.status === 201, JSON.stringify(r.body));
+
+const pFilm = await post(fed, `Плёнка и проявка, ${MARK}`);
+const pFilm2 = await post(fed, `Отдал плёнку в проявку вчера, ${MARK}`);
+const pBoris = await post(fed, `Борис поехал в Бишкек, ${MARK}`);
+const pGal = await post(gal, `Борис прислал открытку, ${MARK}`);
+
+r = await findQ(fed, MARK);
+check('поиск по метке находит все четыре записи прогона',
+  r.status === 200 && idsOf(r).length === 4 && [pFilm, pFilm2, pBoris, pGal].every((id) => hasId(r, id)),
+  `${r.status} ${JSON.stringify(idsOf(r))}`);
+check('порядок — новые сверху (p.id DESC)',
+  idsOf(r).every((id, i, arr) => i === 0 || arr[i - 1] > id), JSON.stringify(idsOf(r)));
+
+r = await findQ(fed, `борис ${MARK}`);
+const borisIds = sorted(idsOf(r));
+check('нижний регистр находит «Борис»', borisIds.length === 2 && borisIds[0] === pBoris && borisIds[1] === pGal, JSON.stringify(borisIds));
+r = await findQ(fed, `БОРИС ${MARK}`);
+check('верхний регистр даёт тот же результат', JSON.stringify(sorted(idsOf(r))) === JSON.stringify(borisIds), JSON.stringify(idsOf(r)));
+r = await findQ(fed, `Борис ${MARK}`);
+check('смешанный регистр даёт тот же результат', JSON.stringify(sorted(idsOf(r))) === JSON.stringify(borisIds), JSON.stringify(idsOf(r)));
+
+r = await findQ(fed, `пленк ${MARK}`);
+check('«пленк» находит «Плёнка» и «плёнку» — ё свёрнуто', idsOf(r).length === 2 && hasId(r, pFilm) && hasId(r, pFilm2), JSON.stringify(idsOf(r)));
+r = await findQ(fed, `плёнк ${MARK}`);
+check('«плёнк» даёт ровно то же', idsOf(r).length === 2 && hasId(r, pFilm) && hasId(r, pFilm2), JSON.stringify(idsOf(r)));
+r = await findQ(fed, `ПЛЁНК ${MARK}`);
+check('«ПЛЁНК» даёт ровно то же', idsOf(r).length === 2 && hasId(r, pFilm) && hasId(r, pFilm2), JSON.stringify(idsOf(r)));
+
+r = await findQ(fed, `проявк ${MARK}`);
+check('префикс «проявк» находит «проявка» и «проявку»', idsOf(r).length === 2 && hasId(r, pFilm) && hasId(r, pFilm2), JSON.stringify(idsOf(r)));
+// Цена отказа от стеммера, названная в отчёте BE-03: ищется начало слова, а не
+// словоформа. «пленка» — не префикс слова «плёнку», поэтому находится только
+// первая запись. Это договорённость, а не поломка, и она закреплена здесь.
+r = await findQ(fed, `пленка ${MARK}`);
+check('«пленка» не находит «плёнку» — поиск префиксный', idsOf(r).length === 1 && hasId(r, pFilm), JSON.stringify(idsOf(r)));
+check('в найденном тексте осталось оригинальное «ё»', r.body.posts[0].body.includes('Плёнка'), r.body.posts[0].body);
+r = await findQ(fed, `пленках ${MARK}`);
+check('слово длиннее записанного не находит ничего', idsOf(r).length === 0, JSON.stringify(idsOf(r)));
+
+r = await findQ(fed, `борис бишкек ${MARK}`);
+check('два терма — это И: найдена только запись с обоими', idsOf(r).length === 1 && hasId(r, pBoris), JSON.stringify(idsOf(r)));
+r = await findQ(fed, `борис пленк ${MARK}`);
+check('слова из разных записей не складываются в ИЛИ', idsOf(r).length === 0, JSON.stringify(idsOf(r)));
+
+r = await findQ(fed, `бишкек ${MARK}`);
+check('ключи ответа ровно posts/nextCursor/query',
+  JSON.stringify(Object.keys(r.body).sort()) === '["nextCursor","posts","query"]', JSON.stringify(Object.keys(r.body)));
+check('query возвращает то, по чему искали', r.body.query === `бишкек ${MARK}`, JSON.stringify(r.body.query));
+check('nextCursor на короткой выдаче — null', r.body.nextCursor === null, JSON.stringify(r.body.nextCursor));
+const foundPost = r.body.posts[0] ?? {};
+check('форма поста совпадает с лентой',
+  ['id', 'body', 'createdAt', 'likeCount', 'commentCount', 'likedByMe', 'bookmarkedByMe', 'author'].every((k) => k in foundPost),
+  JSON.stringify(Object.keys(foundPost)));
+check('сниппет сервером не отдаётся', !('snippet' in foundPost), JSON.stringify(Object.keys(foundPost)));
+
+r = await findQ(fed, 'я'.repeat(300));
+check('слишком длинный запрос обрезан до 100 символов', r.status === 200 && r.body.query.length === 100, `${r.status} ${r.body.query?.length}`);
+
+r = await findQ(fed, MARK, `&author=${userG}`);
+check('author= сужает выдачу', idsOf(r).length === 1 && hasId(r, pGal), JSON.stringify(idsOf(r)));
+r = await findQ(fed, MARK, `&author=${userG.toUpperCase()}`);
+check('author= не чувствителен к регистру', idsOf(r).length === 1 && hasId(r, pGal), JSON.stringify(idsOf(r)));
+r = await findQ(fed, MARK, `&author=net_takogo_${stamp}`);
+check('несуществующий автор — пустой список, а не 404', r.status === 200 && idsOf(r).length === 0, `${r.status} ${JSON.stringify(idsOf(r))}`);
+
+r = await findQ(guest, MARK);
+check('гость может искать', r.status === 200 && idsOf(r).length === 4, `${r.status} ${JSON.stringify(idsOf(r))}`);
+check('у гостя likedByMe false', r.body.posts.every((x) => x.likedByMe === false), JSON.stringify(r.body.posts.map((x) => x.likedByMe)));
+check('у гостя bookmarkedByMe false', r.body.posts.every((x) => x.bookmarkedByMe === false), JSON.stringify(r.body.posts.map((x) => x.bookmarkedByMe)));
+
+// Мусор в строке поиска — обычное состояние поля ввода, а не атака: запрос
+// уходит на каждый символ. Ни один из них не имеет права дать 500 — сырой
+// текст в MATCH не попадает, выражение собирает ftsQuery().
+const junkQueries = ['"', 'a-b', '*', 'привет OR', 'NEAR(', '((', "'", '\\', '%', '{}[]', '^', 'AND', 'OR', 'NOT', '-борис', 'борис NEAR елка', 'борис*', '"незакрытая', '!!!', '***', '', '   ', ' '.repeat(500), 'борис '.repeat(60)];
+for (const q of junkQueries) {
+  r = await findQ(fed, q);
+  check(`мусорный запрос ${JSON.stringify(q.length > 12 ? `${q.slice(0, 12)}…` : q)} → 200`,
+    r.status === 200 && Array.isArray(r.body.posts), `${r.status} ${JSON.stringify(r.body).slice(0, 90)}`);
+}
+r = await fed('/search/posts');
+check('поиск без параметра q → 200 и пустой список', r.status === 200 && r.body.posts.length === 0, `${r.status} ${JSON.stringify(r.body)}`);
+r = await fed(`/search/posts?q=${encodeURIComponent(MARK)}&q=${encodeURIComponent(MARK)}`);
+check('повтор ?q= не роняет запрос', r.status === 200, `${r.status} ${JSON.stringify(r.body).slice(0, 90)}`);
+
+r = await findQ(fed, MARK, '&cursor=abc');
+check('мусорный курсор — первая страница', r.status === 200 && idsOf(r).length === 4, `${r.status} ${JSON.stringify(idsOf(r))}`);
+r = await findQ(fed, MARK, '&cursor=-5');
+check('отрицательный курсор — первая страница', r.status === 200 && idsOf(r).length === 4, `${r.status} ${JSON.stringify(idsOf(r))}`);
+r = await findQ(fed, MARK, `&cursor=${pBoris}`);
+check('курсор отдаёт строго более старые записи', idsOf(r).length === 2 && idsOf(r).every((id) => id < pBoris), JSON.stringify(idsOf(r)));
+
+// 25 записей с общим словом: страница поиска — 20, как во всех лентах проекта.
+// Эти же записи ниже листаются закладками.
+const serPosts = [];
+for (let i = 1; i <= 25; i++) serPosts.push(await post(gal, `Серия ${i}, ${SER}`));
+r = await findQ(fed, SER);
+const sPage1 = idsOf(r);
+check('первая страница поиска — 20 записей', sPage1.length === 20, `${sPage1.length}`);
+check('nextCursor первой страницы — id последней записи', r.body.nextCursor === sPage1.at(-1), `${r.body.nextCursor} vs ${sPage1.at(-1)}`);
+r = await findQ(fed, SER, `&cursor=${r.body.nextCursor}`);
+const sPage2 = idsOf(r);
+check('вторая страница — оставшиеся 5', sPage2.length === 5, `${sPage2.length}`);
+check('nextCursor второй страницы — null', r.body.nextCursor === null, JSON.stringify(r.body.nextCursor));
+check('дублей между страницами нет', sPage2.every((id) => !sPage1.includes(id)), JSON.stringify(sPage2.filter((id) => sPage1.includes(id))));
+check('две страницы покрывают все 25 записей',
+  serPosts.every((id) => sPage1.includes(id) || sPage2.includes(id)), `${sPage1.length + sPage2.length}`);
+
+r = await fed(`/users/${userG}/block`, { method: 'PUT' });
+check('Фёдор заблокировал Галину', r.status === 200 && r.body.blockedByMe === true, JSON.stringify(r.body));
+r = await findQ(fed, MARK);
+check('поиск не показывает записи заблокированного', !hasId(r, pGal) && idsOf(r).length === 3, JSON.stringify(idsOf(r)));
+r = await findQ(fed, MARK, `&author=${userG}`);
+check('через author= блокировка не обходится', idsOf(r).length === 0, JSON.stringify(idsOf(r)));
+r = await findQ(gal, MARK);
+check('правило симметрично: заблокированная не находит записи блокирующего',
+  idsOf(r).length === 1 && hasId(r, pGal), JSON.stringify(idsOf(r)));
+r = await findQ(igr, MARK);
+check('третье лицо по-прежнему находит все четыре', idsOf(r).length === 4, JSON.stringify(idsOf(r)));
+r = await findQ(guest, MARK);
+check('гостя чужая блокировка не касается', idsOf(r).length === 4, JSON.stringify(idsOf(r)));
+r = await fed(`/users/${userG}/block`, { method: 'DELETE' });
+check('блокировка снята', r.status === 200 && r.body.blockedByMe === false, JSON.stringify(r.body));
+r = await findQ(fed, MARK);
+check('записи вернулись в выдачу', idsOf(r).length === 4 && hasId(r, pGal), JSON.stringify(idsOf(r)));
+
+const pFresh = await post(fed, `Свежая запись про негатив, ${MARK}`);
+r = await findQ(fed, `негатив ${MARK}`);
+check('новая запись ищется сразу — триггер INSERT', idsOf(r).length === 1 && hasId(r, pFresh), JSON.stringify(idsOf(r)));
+await fed(`/posts/${pFresh}`, { method: 'DELETE' });
+r = await findQ(fed, `негатив ${MARK}`);
+check('удалённая запись сразу уходит из индекса — триггер DELETE', idsOf(r).length === 0, JSON.stringify(idsOf(r)));
+
+console.log('\n— архив по датам —');
+r = await signUp(mil, userM, 'Мила');
+check('Мила зарегистрирована', r.status === 201, JSON.stringify(r.body));
+r = await signUp(nul, userNo, 'Нора');
+check('Нора зарегистрирована', r.status === 201, JSON.stringify(r.body));
+
+// Раскладка: 3 записи в мае 2026, 1 в ноябре 2025, 2 в марте 2024.
+const archPlan = [
+  ['2026-05-07T09:00:00.000Z', 'Май, первая'],
+  ['2026-05-08T09:00:00.000Z', 'Май, вторая'],
+  ['2026-05-09T09:00:00.000Z', 'Май, третья'],
+  ['2025-11-02T09:00:00.000Z', 'Ноябрь, единственная'],
+  ['2024-03-05T09:00:00.000Z', 'Март, первая'],
+  ['2024-03-20T09:00:00.000Z', 'Март, вторая'],
+];
+const archIds = [];
+for (const [iso, text] of archPlan) {
+  const id = await post(mil, `${text}, ${MARK}`);
+  setCreatedAt(id, iso);
+  archIds.push(id);
+}
+r = await mil(`/posts?author=${userM}&period=2026-05`);
+check('прямой UPDATE дат виден серверу', r.body.posts.length === 3, JSON.stringify(r.body.posts.map((x) => x.createdAt)));
+
+r = await mil(`/users/${userM}/archive`);
+check('архив 200', r.status === 200, `${r.status}`);
+check('ключи ответа ровно months/total', JSON.stringify(Object.keys(r.body).sort()) === '["months","total"]', JSON.stringify(Object.keys(r.body)));
+const months = r.body.months ?? [];
+check('в архиве три непустых месяца', months.length === 3, JSON.stringify(months));
+check('месяцы новые сверху', months.map((m) => m.month).join(',') === '2026-05,2025-11,2024-03', JSON.stringify(months.map((m) => m.month)));
+check('числа по месяцам верные', months.map((m) => m.count).join(',') === '3,1,2', JSON.stringify(months.map((m) => m.count)));
+check('пустых месяцев в списке нет', months.every((m) => m.count > 0), JSON.stringify(months));
+check('total равен сумме count', r.body.total === months.reduce((s, m) => s + m.count, 0) && r.body.total === 6, `${r.body.total}`);
+r = await mil(`/users/${userM}`);
+check('total совпадает с postCount профиля', r.body.user?.postCount === 6, `${r.body.user?.postCount}`);
+
+// Главная проверка архива: число в панели обязано совпасть с тем, что реально
+// откроется по клику. «В мае 3 записи» над пустой лентой — самый заметный
+// способ сломать доверие к экрану.
+for (const m of months) {
+  r = await mil(`/posts?author=${userM}&period=${m.month}`);
+  check(`месяц ${m.month}: лента отдаёт ровно ${m.count} записей`, r.body.posts.length === m.count, `${r.body.posts.length}`);
+  check(`месяц ${m.month}: все записи из этого месяца`,
+    r.body.posts.every((x) => x.createdAt.startsWith(m.month)), JSON.stringify(r.body.posts.map((x) => x.createdAt)));
+}
+
+r = await mil(`/posts?author=${userM}&period=2026`);
+check('период-год 2026 → 3 записи', r.body.posts.length === 3, `${r.body.posts.length}`);
+r = await mil(`/posts?author=${userM}&period=2024`);
+check('период-год 2024 → 2 записи', r.body.posts.length === 2, `${r.body.posts.length}`);
+r = await mil(`/posts?author=${userM}&period=2030`);
+check('год без записей → пустая лента, а не ошибка', r.status === 200 && r.body.posts.length === 0, `${r.status}`);
+r = await mil(`/posts?author=${userM}`);
+check('без периода видны все шесть', r.body.posts.length === 6, `${r.body.posts.length}`);
+r = await mil(`/posts?author=${userM}&period=`);
+check('пустой ?period= — снятый фильтр, а не 400', r.status === 200 && r.body.posts.length === 6, `${r.status} ${r.body.posts?.length}`);
+r = await mil('/posts?period=2024-03');
+check('период работает и без author', r.body.posts.filter((x) => archIds.includes(x.id)).length === 2, JSON.stringify(r.body.posts.map((x) => x.id)));
+r = await mil(`/posts?author=${userM}&period=2026-05&cursor=${archIds[1]}`);
+check('период работает вместе с курсором', r.body.posts.length === 1 && r.body.posts[0].id === archIds[0], JSON.stringify(r.body.posts.map((x) => x.id)));
+r = await igr(`/users/${userM}/follow`, { method: 'PUT' });
+check('Игорь подписался на Милу', r.status === 200 && r.body.followedByMe === true, JSON.stringify(r.body));
+r = await igr('/posts?feed=following&period=2026-05');
+check('период работает вместе с feed=following', r.body.posts.length === 3, JSON.stringify(r.body.posts.map((x) => x.id)));
+r = await guest('/posts?feed=following&period=2026-05');
+check('feed=following гостю по-прежнему 401', r.status === 401, `${r.status}`);
+r = await guest(`/posts?author=${userM}&period=2026-05`);
+check('период доступен гостю', r.status === 200 && r.body.posts.length === 3, `${r.status}`);
+
+const badPeriods = ['13', 'abc', '2026-13', '2026-00', '2026-1', '20261', '2026-', '-2026', '2026-09-11', "'", 'null', '2026 OR 1=1', '202', '26-05', '2026/05'];
+for (const bad of badPeriods) {
+  r = await mil(`/posts?author=${userM}&period=${encodeURIComponent(bad)}`);
+  check(`период «${bad}» → 400`, r.status === 400 && r.body.error === 'Некорректный период', `${r.status} ${JSON.stringify(r.body)}`);
+}
+// Пробелы по краям — след копирования из адресной строки, а не мусор: период
+// обрезается и работает. Проверяется здесь, чтобы правка регулярки не сделала
+// из этого случая 400 незаметно.
+r = await mil(`/posts?author=${userM}&period=${encodeURIComponent(' 2026-05 ')}`);
+check('период с пробелами по краям обрезается, а не отвергается', r.status === 200 && r.body.posts.length === 3, `${r.status} ${r.body.posts?.length}`);
+
+r = await guest(`/users/${userM}/archive`);
+check('архив доступен гостю', r.status === 200 && r.body.total === 6, `${r.status} ${r.body.total}`);
+r = await fed(`/users/${userM.toUpperCase()}/archive`);
+check('имя в архиве не чувствительно к регистру', r.status === 200 && r.body.total === 6, `${r.status} ${r.body.total}`);
+r = await fed(`/users/net_takogo_${stamp}/archive`);
+check('архив несуществующего = 404', r.status === 404, `${r.status}`);
+check('текст ошибки тот же, что у профиля', r.body.error === 'Пользователь не найден', JSON.stringify(r.body));
+r = await nul(`/users/${userNo}/archive`);
+check('у автора без записей архив пуст', r.status === 200 && r.body.months.length === 0 && r.body.total === 0, JSON.stringify(r.body));
+r = await mil('/users/me/archive');
+check('служебное имя «me» архивом не перехвачено', r.status === 404, `${r.status}`);
+
+const pIgr = await post(igr, `Запись Игоря, ${MARK}`);
+check('у Игоря появилась своя запись', Number.isInteger(pIgr), `${pIgr}`);
+r = await igr(`/users/${userM}/block`, { method: 'PUT' });
+check('Игорь заблокировал Милу', r.status === 200 && r.body.blockedByMe === true, JSON.stringify(r.body));
+r = await igr(`/users/${userM}/archive`);
+check('архив заблокированного пуст', r.body.months.length === 0 && r.body.total === 0, JSON.stringify(r.body));
+r = await igr(`/users/${userM}`);
+check('postCount там же обнулился — числа сходятся', r.body.user?.postCount === 0, `${r.body.user?.postCount}`);
+r = await mil(`/users/${userI}/archive`);
+check('правило симметрично: архив блокирующего пуст с другой стороны', r.body.total === 0, JSON.stringify(r.body));
+r = await igr(`/posts?author=${userM}&period=2026-05`);
+check('лента по периоду у заблокированного пуста', r.body.posts.length === 0, JSON.stringify(r.body.posts.map((x) => x.id)));
+r = await findQ(igr, `май ${MARK}`);
+check('через поиск блокировка тоже не обходится', idsOf(r).length === 0, JSON.stringify(idsOf(r)));
+r = await fed(`/users/${userM}/archive`);
+check('третье лицо видит архив целиком', r.body.total === 6, JSON.stringify(r.body));
+r = await guest(`/users/${userM}/archive`);
+check('гостя чужая блокировка не касается', r.body.total === 6, JSON.stringify(r.body));
+r = await igr(`/users/${userM}/block`, { method: 'DELETE' });
+check('блокировка снята', r.status === 200 && r.body.blockedByMe === false, JSON.stringify(r.body));
+r = await igr(`/users/${userM}/archive`);
+check('архив вернулся полностью', r.body.total === 6 && r.body.months.length === 3, JSON.stringify(r.body));
+r = await mil(`/users/${userI}/archive`);
+check('и с другой стороны тоже', r.body.total === 1 && r.body.months[0]?.count === 1, JSON.stringify(r.body));
+
+console.log('\n— закладки —');
+r = await guest(`/posts/${pGal}/bookmark`, { method: 'PUT' });
+check('сохранить запись без входа нельзя (401)', r.status === 401, `${r.status}`);
+r = await guest(`/posts/${pGal}/bookmark`, { method: 'DELETE' });
+check('снять закладку без входа нельзя (401)', r.status === 401, `${r.status}`);
+r = await guest('/bookmarks');
+check('список закладок требует входа (401)', r.status === 401, `${r.status}`);
+
+r = await fed(`/posts/${pGal}/bookmark`, { method: 'PUT' });
+check('запись сохранена', r.status === 200 && r.body.bookmarkedByMe === true, `${r.status} ${JSON.stringify(r.body)}`);
+r = await fed(`/posts/${pGal}/bookmark`, { method: 'PUT' });
+check('повторное сохранение идемпотентно', r.status === 200 && r.body.bookmarkedByMe === true, `${r.status} ${JSON.stringify(r.body)}`);
+r = await fed('/bookmarks');
+check('ключи списка ровно posts/nextCursor', JSON.stringify(Object.keys(r.body).sort()) === '["nextCursor","posts"]', JSON.stringify(Object.keys(r.body)));
+check('сохранённая запись в списке', idsOf(r).length === 1 && hasId(r, pGal), JSON.stringify(idsOf(r)));
+check('в списке закладок bookmarkedByMe = true', r.body.posts[0]?.bookmarkedByMe === true, JSON.stringify(r.body.posts[0]?.bookmarkedByMe));
+check('id закладки наружу не течёт', !('bookmarkId' in (r.body.posts[0] ?? {})) && !('bookmark_id' in (r.body.posts[0] ?? {})), JSON.stringify(Object.keys(r.body.posts[0] ?? {})));
+
+r = await fed('/posts');
+check('поле bookmarkedByMe есть у каждой записи общей ленты',
+  r.body.posts.length > 0 && r.body.posts.every((x) => typeof x.bookmarkedByMe === 'boolean'),
+  JSON.stringify(r.body.posts.map((x) => x.bookmarkedByMe).slice(0, 5)));
+// Сохранённая запись — самая старая у Галины и на первую страницу общей ленты
+// уже не попадает, поэтому лента профиля с курсором, а не `/posts` без фильтров.
+r = await fed(`/posts?author=${userG}&cursor=${serPosts[0]}`);
+check('bookmarkedByMe = true у сохранённой записи в ленте', r.body.posts.find((x) => x.id === pGal)?.bookmarkedByMe === true, JSON.stringify(r.body.posts.map((x) => [x.id, x.bookmarkedByMe])));
+r = await fed(`/posts?author=${userF}`);
+check('у несохранённых записей в ленте флаг false', r.body.posts.find((x) => x.id === pBoris)?.bookmarkedByMe === false, JSON.stringify(r.body.posts.map((x) => [x.id, x.bookmarkedByMe])));
+r = await fed(`/posts/${pGal}`);
+check('bookmarkedByMe приходит в одиночной записи', r.body.post?.bookmarkedByMe === true, JSON.stringify(r.body.post?.bookmarkedByMe));
+r = await findQ(fed, MARK);
+check('bookmarkedByMe приходит в поиске', r.body.posts.find((x) => x.id === pGal)?.bookmarkedByMe === true, JSON.stringify(idsOf(r)));
+r = await mil(`/posts?author=${userM}&period=2026-05`);
+check('bookmarkedByMe приходит и в ленте по периоду',
+  r.body.posts.length === 3 && r.body.posts.every((x) => x.bookmarkedByMe === false),
+  JSON.stringify(r.body.posts.map((x) => x.bookmarkedByMe)));
+r = await gal(`/posts/${pGal}`);
+check('автор чужую закладку на своей записи не видит', r.body.post?.bookmarkedByMe === false, JSON.stringify(r.body.post?.bookmarkedByMe));
+r = await igr(`/posts/${pGal}`);
+check('третье лицо чужую закладку не видит', r.body.post?.bookmarkedByMe === false, JSON.stringify(r.body.post?.bookmarkedByMe));
+r = await guest(`/posts/${pGal}`);
+check('у гостя bookmarkedByMe = false', r.body.post?.bookmarkedByMe === false, JSON.stringify(r.body.post?.bookmarkedByMe));
+r = await gal('/bookmarks');
+check('чужие закладки в свой список не попадают', idsOf(r).length === 0, JSON.stringify(idsOf(r)));
+r = await gal('/notifications');
+check('о закладке автору не сообщают', !JSON.stringify(r.body).includes('bookmark'), JSON.stringify(r.body).slice(0, 120));
+
+for (const bad of ['0', 'abc', '-5']) {
+  r = await fed(`/posts/${bad}/bookmark`, { method: 'PUT' });
+  check(`PUT с id «${bad}» → 400`, r.status === 400 && r.body.error === 'Некорректный id', `${r.status} ${JSON.stringify(r.body)}`);
+  r = await fed(`/posts/${bad}/bookmark`, { method: 'DELETE' });
+  check(`DELETE с id «${bad}» → 400`, r.status === 400 && r.body.error === 'Некорректный id', `${r.status} ${JSON.stringify(r.body)}`);
+}
+r = await fed('/posts/99999999/bookmark', { method: 'PUT' });
+check('PUT на несуществующую запись → 404', r.status === 404 && r.body.error === 'Пост не найден', `${r.status} ${JSON.stringify(r.body)}`);
+r = await fed('/posts/99999999/bookmark', { method: 'DELETE' });
+check('DELETE на несуществующую запись → 404', r.status === 404 && r.body.error === 'Пост не найден', `${r.status} ${JSON.stringify(r.body)}`);
+
+// Порядок «недавно сохранённые сверху» держится на id закладки, а не на id
+// записи: сохранённая последней старая запись обязана оказаться первой.
+r = await fed(`/posts/${pFilm}/bookmark`, { method: 'PUT' });
+check('старая запись сохранена последней', r.status === 200, `${r.status}`);
+r = await fed('/bookmarks');
+check('последняя сохранённая — сверху, хотя запись самая старая', idsOf(r)[0] === pFilm && idsOf(r)[1] === pGal, JSON.stringify(idsOf(r)));
+r = await fed(`/posts/${pGal}/bookmark`, { method: 'PUT' });
+check('повторный PUT прошёл', r.status === 200, `${r.status}`);
+r = await fed('/bookmarks');
+check('повтор не поднимает запись наверх — id закладки не менялся', idsOf(r)[0] === pFilm && idsOf(r)[1] === pGal, JSON.stringify(idsOf(r)));
+
+r = await fed(`/posts/${pGal}/bookmark`, { method: 'DELETE' });
+check('закладка снята', r.status === 200 && r.body.bookmarkedByMe === false, `${r.status} ${JSON.stringify(r.body)}`);
+r = await fed(`/posts/${pGal}/bookmark`, { method: 'DELETE' });
+check('повторное снятие — не ошибка', r.status === 200 && r.body.bookmarkedByMe === false, `${r.status} ${JSON.stringify(r.body)}`);
+r = await fed('/bookmarks');
+check('снятая закладка ушла из списка', !hasId(r, pGal) && idsOf(r).length === 1, JSON.stringify(idsOf(r)));
+r = await fed(`/posts/${pGal}`);
+check('флаг в ленте вернулся в false', r.body.post?.bookmarkedByMe === false, JSON.stringify(r.body.post?.bookmarkedByMe));
+
+r = await fed(`/posts/${pBoris}/bookmark`, { method: 'PUT' });
+check('закладка на свою запись разрешена', r.status === 200 && r.body.bookmarkedByMe === true, `${r.status} ${JSON.stringify(r.body)}`);
+r = await fed('/bookmarks');
+check('своя запись видна в своём списке', hasId(r, pBoris), JSON.stringify(idsOf(r)));
+
+const pDoomed = await post(fed, `Запись под снос, ${MARK}`);
+await fed(`/posts/${pDoomed}/bookmark`, { method: 'PUT' });
+r = await fed('/bookmarks');
+check('запись под снос сохранена', hasId(r, pDoomed), JSON.stringify(idsOf(r)));
+await fed(`/posts/${pDoomed}`, { method: 'DELETE' });
+r = await fed('/bookmarks');
+check('удаление записи уносит закладку (каскад)', !hasId(r, pDoomed), JSON.stringify(idsOf(r)));
+check('остальные закладки на месте', idsOf(r).length === 2, JSON.stringify(idsOf(r)));
+
+// Игорь листает страницами: его список — ровно 25 записей серии и ничего больше.
+for (const id of serPosts) await igr(`/posts/${id}/bookmark`, { method: 'PUT' });
+r = await igr('/bookmarks');
+const bPage1 = idsOf(r);
+check('первая страница закладок — 20 записей', bPage1.length === 20, `${bPage1.length}`);
+check('сверху — сохранённая последней', bPage1[0] === serPosts.at(-1), `${bPage1[0]} vs ${serPosts.at(-1)}`);
+const bCursor = r.body.nextCursor;
+check('nextCursor списка — id закладки, а не записи', bCursor !== null && bCursor !== bPage1.at(-1), `${bCursor} vs ${bPage1.at(-1)}`);
+r = await igr(`/bookmarks?cursor=${bCursor}`);
+const bPage2 = idsOf(r);
+check('вторая страница — оставшиеся 5', bPage2.length === 5, `${bPage2.length}`);
+check('nextCursor второй страницы — null', r.body.nextCursor === null, JSON.stringify(r.body.nextCursor));
+check('дублей между страницами нет', bPage2.every((id) => !bPage1.includes(id)), JSON.stringify(bPage2.filter((id) => bPage1.includes(id))));
+check('две страницы покрывают все 25 закладок',
+  serPosts.every((id) => bPage1.includes(id) || bPage2.includes(id)), `${bPage1.length + bPage2.length}`);
+check('порядок обратен порядку сохранения',
+  JSON.stringify([...bPage1, ...bPage2]) === JSON.stringify([...serPosts].reverse()), JSON.stringify([...bPage1, ...bPage2].slice(0, 5)));
+r = await igr('/bookmarks?cursor=abc');
+check('мусорный курсор списка — первая страница', r.status === 200 && idsOf(r).length === 20, `${r.status} ${idsOf(r).length}`);
+r = await igr('/bookmarks?cursor=-5');
+check('отрицательный курсор списка — первая страница', r.status === 200 && idsOf(r).length === 20, `${r.status} ${idsOf(r).length}`);
+
+r = await igr(`/users/${userG}/block`, { method: 'PUT' });
+check('Игорь заблокировал автора сохранённых записей', r.status === 200 && r.body.blockedByMe === true, JSON.stringify(r.body));
+r = await igr('/bookmarks');
+check('записи заблокированного пропали из списка', idsOf(r).length === 0, JSON.stringify(idsOf(r)));
+r = await igr(`/posts/${serPosts[0]}/bookmark`, { method: 'PUT' });
+check('сохранить скрытую блокировкой запись нельзя (404)', r.status === 404 && r.body.error === 'Пост не найден', `${r.status} ${JSON.stringify(r.body)}`);
+// Осознанное исключение BE-03: снять закладку можно и со скрытой записи —
+// иначе сохранённое до блокировки застряло бы в списке навсегда.
+r = await igr(`/posts/${serPosts[0]}/bookmark`, { method: 'DELETE' });
+check('снять закладку со скрытой записи можно (200)', r.status === 200 && r.body.bookmarkedByMe === false, `${r.status} ${JSON.stringify(r.body)}`);
+r = await igr(`/users/${userG}/block`, { method: 'DELETE' });
+check('блокировка снята', r.status === 200 && r.body.blockedByMe === false, JSON.stringify(r.body));
+r = await igr('/bookmarks');
+const bBack = idsOf(r).concat(idsOf(await igr(`/bookmarks?cursor=${r.body.nextCursor}`)));
+check('закладки вернулись — строки пережили блокировку', bBack.length === 24, `${bBack.length}`);
+check('снятая во время блокировки не воскресла', !bBack.includes(serPosts[0]), JSON.stringify(bBack.slice(-3)));
+r = await gal('/bookmarks');
+check('у автора записей чужие закладки по-прежнему не видны', idsOf(r).length === 0, JSON.stringify(idsOf(r)));
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
