@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { FocusEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, type Author } from '../api';
 import { Monogram } from './Monogram';
@@ -20,6 +21,7 @@ export function SearchBox() {
   const [results, setResults] = useState<Author[] | null>(null);
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const q = query.trim();
@@ -49,9 +51,26 @@ export function SearchBox() {
     navigate(`/u/${username}`);
   }
 
+  /**
+   * Enter уводит на экран поиска, а не в профиль первого попавшегося человека:
+   * запись искать здесь так же законно, как и людей, а угадывать за человека,
+   * чего он хотел, — худший из двух вариантов. Строка в поле остаётся: с неё
+   * удобно уточнять запрос.
+   */
+  function goSearch() {
+    const q = query.trim();
+    if (!q) return;
+    setOpen(false);
+    setResults(null);
+    navigate(`/search?q=${encodeURIComponent(q)}`);
+  }
+
   // Задержка перед закрытием: без неё клик по результату не успевает
   // сработать раньше onBlur и выпадающий список схлопывается первым.
-  function delayedClose() {
+  // Уход фокуса **внутрь** списка не закрывает его вовсе: иначе Tab с поля
+  // на первую строку («искать среди записей») уносил бы её из-под фокуса.
+  function delayedClose(event: FocusEvent<HTMLElement>) {
+    if (box.current?.contains(event.relatedTarget)) return;
     closeTimer.current = setTimeout(() => setOpen(false), 150);
   }
   function cancelClose() {
@@ -61,27 +80,33 @@ export function SearchBox() {
   const showDropdown = open && query.trim().length > 0;
 
   return (
-    <div className="search-box">
+    <div className="search-box" ref={box} onBlur={delayedClose}>
       <Glass />
       <input
         type="search"
-        placeholder="Найти человека…"
+        placeholder="Найти запись или человека…"
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
-        onBlur={delayedClose}
         onKeyDown={(e) => {
           if (e.key === 'Escape') { setOpen(false); (e.target as HTMLInputElement).blur(); }
-          if (e.key === 'Enter' && results?.[0]) go(results[0].username);
+          if (e.key === 'Enter') goSearch();
         }}
-        aria-label="Поиск людей"
+        aria-label="Поиск по записям и людям"
       />
 
       {showDropdown && (
         <div className="search-results" onMouseDown={cancelClose}>
+          <button type="button" className="search-hit search-all" onClick={goSearch}>
+            <Glass />
+            <span>
+              Искать <strong>«{query.trim()}»</strong> среди записей
+            </span>
+          </button>
+
           {results === null ? (
             <p className="search-empty">Ищу…</p>
           ) : results.length === 0 ? (
