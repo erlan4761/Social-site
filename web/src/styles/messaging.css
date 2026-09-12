@@ -1,0 +1,268 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   messaging.css — список диалогов, личная переписка, групповые чаты,
+   участники, поиск человека для нового чата.
+
+   Компоненты: Messages.tsx, Thread.tsx, ChatThread.tsx, MemberSearch.tsx.
+
+   ОСТОРОЖНО, тёзки: .thread-page / .thread-top / .thread-who — это
+   переписка, а .thread / .comment-* в feed.css — ветка комментариев под
+   записью. Слова одинаковые, экраны разные.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ─ Список диалогов ───────────────────────────────────────────────────── */
+.dialogs { list-style: none; margin: 0; padding: 0; }
+.dialogs li + li { border-top: 1px solid var(--line-strong); }
+
+.dialog {
+  display: grid;
+  grid-template-columns: var(--avatar) minmax(0, 1fr) auto;
+  gap: var(--avatar-gap);
+  align-items: center;
+  padding: 0.875rem 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.dialog:hover .dialog-name { text-decoration: underline; text-underline-offset: 2px; }
+
+.dialog-body { min-width: 0; }
+
+.dialog-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin-bottom: 0.125rem;
+}
+
+/* Имя ужимается первым: рядом с ним может стоять пометка блокировки,
+   и на узком экране строка иначе вылезла бы за край. */
+.dialog-name {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dialog-time {
+  margin-left: auto;
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.dialog-last {
+  margin: 0;
+  font-family: var(--read);
+  font-size: var(--t-body);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dialog-last.unread { color: var(--ink); font-weight: 500; }
+
+.dialog-you {
+  color: var(--ink-3);
+  font-family: var(--ui);
+  font-size: var(--t-meta);
+}
+
+/* Пометка в списке диалогов: одинаковая для обеих сторон блокировки. */
+.dialog-flag {
+  flex: none;
+  padding: 0 0.4375rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-full);
+  font-size: 0.6875rem;
+  line-height: var(--lh-meta);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/* ─ Переписка ─────────────────────────────────────────────────────────── */
+.thread-page { display: flex; flex-direction: column; }
+
+.thread-top {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding-bottom: var(--s-4);
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.thread-who {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  text-decoration: none;
+  color: inherit;
+  min-width: 0;
+}
+
+.thread-who strong { display: block; font-size: var(--t-body); }
+.thread-handle { font-size: var(--t-meta); color: var(--ink-3); }
+.thread-who:hover strong { text-decoration: underline; text-underline-offset: 2px; }
+
+.chat { display: flex; flex-direction: column; gap: var(--s-2); }
+.chat-more { align-self: center; margin-bottom: var(--s-2); }
+
+/* Пузыри, а не карточки: своё — справа с акцентной заливкой, чужое — слева.
+   Асимметричный радиус показывает, с какой стороны реплика «растёт». */
+.bubble {
+  max-width: 80%;
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md) var(--r-md) var(--r-md) var(--r-xs);
+  padding: var(--s-2) var(--s-3);
+  box-shadow: var(--shadow-1);
+}
+
+.bubble.mine {
+  align-self: flex-end;
+  background: var(--accent-tint);
+  border-color: transparent;
+  border-radius: var(--r-md) var(--r-md) var(--r-xs) var(--r-md);
+}
+
+.bubble p {
+  margin: 0;
+  font-family: var(--read);
+  font-size: var(--t-body);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble time {
+  display: block;
+  margin-top: var(--s-1);
+  font-size: 0.6875rem;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.bubble.mine time { text-align: right; }
+
+/* Подпись автора над чужой репликой: в личной переписке собеседник один,
+   в групповом чате — нет. Над своей репликой подписи нет: и так понятно. */
+.bubble-author {
+  display: block;
+  margin-bottom: 0.1875rem;
+  font-size: var(--t-micro);
+  font-weight: 600;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.bubble-author:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+
+/* ─ Поле ответа ───────────────────────────────────────────────────────── */
+.chat-form { margin-top: 1.25rem; }
+
+.chat-form textarea {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--read);
+  font-size: var(--t-read);
+  line-height: 1.6;
+  padding: 0.375rem 0 0.625rem;
+  resize: none;
+  field-sizing: content;
+}
+
+.chat-form textarea::placeholder { color: var(--ink-3); }
+.chat-form textarea:focus { outline: none; border-bottom-color: var(--accent); }
+
+.chat-form-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-4);
+  margin-top: var(--s-3);
+}
+
+.chat-blocked { margin-top: 1.25rem; }
+
+/* ─ Групповой чат ─────────────────────────────────────────────────────
+   Название вместо собеседника, состав вместо @логина. */
+.chat-who {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-who-text { min-width: 0; }
+
+.chat-title {
+  margin: 0;
+  font-size: var(--t-h2);
+  font-weight: 700;
+  letter-spacing: var(--tr-h2);
+  line-height: var(--lh-h2);
+  overflow-wrap: anywhere;
+}
+
+.chat-members-toggle { flex: none; }
+
+/* Панель участников раскрывается на месте, как список блокировок:
+   отдельная страница ради шести строк не нужна. */
+.members {
+  padding: var(--s-1) 0 1.25rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.members-list { list-style: none; margin: 0 0 var(--s-4); padding: 0; }
+
+.members-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+  padding: var(--s-2) 0;
+}
+
+.members-list li + li { border-top: 1px solid var(--line-strong); }
+
+.members-who { display: flex; align-items: center; gap: 0.625rem; }
+
+.members-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3) 1.25rem;
+}
+
+.rename-form .field { margin-bottom: var(--s-3); max-width: 22rem; }
+
+/* ─ Поиск человека для нового чата ────────────────────────────────────
+   Рамка и выпадающий список достаются от общего поиска людей
+   (discovery.css), своя здесь только подпись поля. */
+.member-search { margin-bottom: 1.125rem; }
+
+.member-search-label {
+  display: block;
+  font-size: var(--t-meta);
+  font-weight: 500;
+  color: var(--ink-2);
+  margin-bottom: 0.375rem;
+}
+
+/* ─ Телефон ───────────────────────────────────────────────────────────── */
+@media (max-width: 46rem) {
+  /* «Ко всем», название чата и «Участники» в одну строку на 375 px не
+     влезают: строка переносится, а не прокручивается вбок. */
+  .thread-top { flex-wrap: wrap; gap: var(--s-3); }
+  .chat-title { font-size: var(--t-read); }
+  .bubble { max-width: 88%; }
+}

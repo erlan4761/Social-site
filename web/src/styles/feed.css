@@ -1,0 +1,354 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   feed.css — лента и всё, что в ней: композер, строка записи, медиа,
+   действия под записью, вкладки «Все / Подписки», ветка комментариев.
+
+   Компоненты: Feed.tsx, PostRow.tsx, Composer.tsx, CommentThread.tsx,
+   Bookmarks.tsx, PostPage.tsx.
+
+   ОСТОРОЖНО, тёзки. В проекте два разных «треда»:
+     .thread, .comment-*      — ветка комментариев под записью (здесь);
+     .thread-page, .thread-top, .thread-who — личная переписка
+                                (messaging.css, другой экран).
+   Не сводить их в один блок: это разные сущности с одинаковым словом.
+
+   FE-03 заменяет «хребет» (.rail, .rail-row) карточками; вертикальная
+   линия остаётся только в ветке комментариев, где она означает вложенность.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ─ Хребет времени: одна непрерывная линия слева от ленты ─────────────
+   Наследие первой версии. FE-03 снимает его с ленты и ставит карточки
+   с липкими разделителями дат; токены --avatar / --avatar-gap при этом
+   остаются — на них держится колонка аватаров. */
+.rail { position: relative; }
+
+.rail::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--avatar) / 2 - 0.5px);
+  top: var(--s-2);
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    var(--line-strong) 0,
+    var(--line-strong) calc(100% - 5rem),
+    transparent 100%
+  );
+}
+
+.rail-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--avatar) minmax(0, 1fr);
+  gap: var(--avatar-gap);
+  padding-bottom: var(--s-6);
+}
+
+/* Одна запись — не отрезок времени, линия здесь лишняя. */
+.rail.single::before { display: none; }
+.rail.single .rail-row { padding-bottom: 0; }
+
+/* ─ Композер ──────────────────────────────────────────────────────────── */
+.composer textarea {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--read);
+  font-size: var(--t-read);
+  line-height: 1.6;
+  padding: 0.375rem 0 var(--s-3);
+  resize: none;
+  min-height: 3.25rem;
+  field-sizing: content;
+}
+
+.composer textarea::placeholder { color: var(--ink-3); }
+.composer textarea:focus { outline: none; border-bottom-color: var(--accent); }
+
+.composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-4);
+  margin-top: var(--s-3);
+}
+
+/* ─ Прикреплённый файл в композере ────────────────────────────────────── */
+.attach-btn { margin-right: auto; }
+
+.attach-preview {
+  margin-top: 0.875rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 0.625rem;
+  background: var(--surface);
+}
+
+.attach-preview img,
+.attach-preview video {
+  display: block;
+  width: 100%;
+  max-height: 14rem;
+  object-fit: contain;
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+}
+
+.attach-preview audio { display: block; width: 100%; }
+
+.attach-info {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  margin-top: var(--s-2);
+  font-size: var(--t-meta);
+  color: var(--ink-3);
+}
+
+.attach-name { overflow-wrap: anywhere; }
+.attach-size { margin-left: auto; white-space: nowrap; }
+
+/* ─ Запись ────────────────────────────────────────────────────────────── */
+.post-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--s-1);
+}
+
+.post-name { font-weight: 600; text-decoration: none; color: var(--ink); }
+.post-name:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+.post-handle,
+.post-time { font-size: var(--t-meta); color: var(--ink-3); }
+
+.post-time {
+  margin-left: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Тело записи — Literata. Это то, ради чего «Хронику» читают дольше,
+   чем ленту соцсети; размер и интерлиньяж не занижать. */
+.post-body {
+  font-family: var(--read);
+  font-size: var(--t-read);
+  line-height: var(--lh-read);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
+/* ─ Медиа в записи ────────────────────────────────────────────────────
+   contain, не cover: в дневнике кадр важнее ровной сетки. Ограничение по
+   высоте нужно, чтобы вертикальное фото не растягивало ленту на два экрана
+   (FE-03 доводит max-height до 32rem по брифу). */
+.post-media {
+  margin: var(--s-3) 0 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.post-media img,
+.post-media video {
+  display: block;
+  width: 100%;
+  max-height: 28rem;
+  object-fit: contain;
+  background: var(--surface-2);
+}
+
+.post-media.audio {
+  padding: var(--s-3);
+  background: none;
+}
+
+.post-media.audio figcaption {
+  font-size: var(--t-meta);
+  color: var(--ink-3);
+  margin-bottom: var(--s-2);
+  overflow-wrap: anywhere;
+}
+
+.post-media audio { display: block; width: 100%; }
+
+/* ─ Действия под записью ──────────────────────────────────────────────── */
+.post-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2) 1.25rem;
+  margin-top: 0.625rem;
+}
+
+.act {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition: color var(--dur-1) var(--ease);
+}
+
+.act:hover:not(:disabled) { color: var(--ink); }
+.act:disabled { cursor: default; opacity: 0.45; }
+.act.open { color: var(--ink); }
+
+/* Отметка держит акцентный цвет и под курсором — иначе одно и то же
+   состояние выглядит по-разному. Приглушать нельзя: контраст уйдёт ниже AA. */
+.act.liked,
+.act.liked:hover:not(:disabled),
+.act.saved,
+.act.saved:hover:not(:disabled) { color: var(--accent); }
+
+.post-delete {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease);
+}
+
+.post-delete:hover { color: var(--danger); }
+
+/* Единственное движение в ленте: своя запись приходит туда, куда её
+   положили. Гасится и здесь, и сквозным правилом base.css. */
+@keyframes settle {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.rail-row.fresh { animation: settle var(--dur-2) var(--ease); }
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-row.fresh { animation: none; }
+}
+
+/* ─ Вкладки ленты ─────────────────────────────────────────────────────── */
+.feed-tabs {
+  display: flex;
+  gap: var(--s-5);
+  margin-bottom: 1.75rem;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.feed-tab {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--ink-2);
+  padding: 0 0 var(--s-3);
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease);
+}
+
+.feed-tab:hover { color: var(--ink); }
+
+.feed-tab[aria-selected="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+/* ─ Ветка комментариев ────────────────────────────────────────────────
+   Своя вертикальная линия — вложенное эхо хребта ленты. В отличие от
+   хребта она остаётся и после редизайна: здесь линия означает вложенность,
+   а не время. */
+.thread {
+  margin-top: var(--s-4);
+  padding-left: var(--s-4);
+  border-left: 1px solid var(--line-strong);
+}
+
+.thread-empty {
+  color: var(--ink-2);
+  font-family: var(--read);
+  font-size: 0.875rem;
+  margin: 0 0 0.875rem;
+}
+
+.comment,
+.comment-form {
+  display: grid;
+  grid-template-columns: var(--avatar-sm) minmax(0, 1fr);
+  gap: 0.625rem;
+}
+
+.comment { padding-bottom: 0.875rem; }
+.comment-form { align-items: start; padding-top: var(--s-1); }
+
+.comment-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.comment-name {
+  font-weight: 600;
+  font-size: 0.875rem;
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.comment-name:hover { text-decoration: underline; text-underline-offset: 2px; }
+.comment-time { font-size: var(--t-micro); color: var(--ink-3); }
+
+.comment-body {
+  font-family: var(--read);
+  font-size: var(--t-body);
+  line-height: 1.55;
+  margin: 0.125rem 0 var(--s-1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.comment-form textarea {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--read);
+  font-size: var(--t-body);
+  line-height: 1.55;
+  padding: var(--s-1) 0 0.4375rem;
+  resize: none;
+  field-sizing: content;
+}
+
+.comment-form textarea::placeholder { color: var(--ink-3); }
+.comment-form textarea:focus { outline: none; border-bottom-color: var(--accent); }
+
+.comment-form-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-3);
+  margin-top: var(--s-2);
+}
+
+.comment-actions { display: flex; flex-wrap: wrap; gap: var(--s-4); }
+
+/* ─ Телефон ───────────────────────────────────────────────────────────── */
+@media (max-width: 46rem) {
+  /* Время уходит под имя, а не выдавливает его из строки. */
+  .post-time { margin-left: 0; }
+}

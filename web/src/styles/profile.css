@@ -1,0 +1,243 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   profile.css — экран профиля: шапка, метрики, смена аватара, действия,
+   архив по месяцам, строка периода, список блокировок.
+
+   Компоненты: Profile.tsx, ArchivePanel.tsx.
+   Общие примитивы (.btn, .notice, .act-danger, .monogram) — в controls.css.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ─ Шапка профиля ─────────────────────────────────────────────────────
+   FE-04 надстраивает над ней карточку с градиентной обложкой из --tint-N
+   человека; разметка и классы ниже — основание, на которое она ляжет. */
+.profile-head {
+  display: flex;
+  gap: 1.25rem;
+  align-items: flex-start;
+  padding-bottom: 1.75rem;
+  margin-bottom: 1.75rem;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.profile-body { min-width: 0; flex: 1; }
+
+.profile-name {
+  font-size: var(--t-h1);
+  line-height: var(--lh-h1);
+  letter-spacing: var(--tr-h1);
+  font-weight: 700;
+  margin: 0;
+}
+
+.profile-handle {
+  color: var(--ink-3);
+  font-size: var(--t-body);
+  margin: 0.125rem 0 var(--s-3);
+}
+
+.profile-bio {
+  font-family: var(--read);
+  font-size: var(--t-read);
+  line-height: 1.6;
+  margin: 0 0 var(--s-3);
+  overflow-wrap: anywhere;
+  max-width: var(--measure);
+}
+
+.profile-meta {
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 0.375rem;
+  column-gap: 1.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Основные кнопки и тихие опасные действия в одной строке. */
+.profile-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3) 1.25rem;
+  margin-top: 0.875rem;
+}
+
+/* ─ Смена аватара ─────────────────────────────────────────────────────── */
+.avatar-editor {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.avatar-pick {
+  position: relative;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  display: block;
+}
+
+.avatar-pick:disabled { cursor: default; opacity: 0.6; }
+
+/* Подпись проявляется по наведению и по фокусу с клавиатуры. Лежит поверх
+   фотографии, поэтому цвет здесь свой, не зависящий от темы. */
+.avatar-hint {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 0.1875rem 0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--on-tint);
+  background: var(--overlay-ink);
+  border-radius: 0 0 var(--r-full) var(--r-full);
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease);
+}
+
+.avatar-pick:hover .avatar-hint,
+.avatar-pick:focus-visible .avatar-hint { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-hint { transition: none; }
+}
+
+.avatar-error { margin: 0; font-size: var(--t-meta); max-width: 9rem; }
+
+/* ─ Блокировки ────────────────────────────────────────────────────────
+   Свой список раскрывается на месте: отдельной страницы у него нет. */
+.blocked { margin-top: var(--s-4); }
+
+.blocked-list {
+  list-style: none;
+  margin: var(--s-2) 0 0;
+  padding: 0;
+  max-width: var(--measure);
+}
+
+.blocked-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 0.625rem 0;
+}
+
+.blocked-list li + li { border-top: 1px solid var(--line-strong); }
+
+.blocked-who { flex: 1; min-width: 0; text-decoration: none; color: inherit; }
+.blocked-who strong { display: block; font-size: 0.875rem; font-weight: 600; }
+.blocked-who:hover strong { text-decoration: underline; text-underline-offset: 2px; }
+.blocked-handle { font-size: var(--t-micro); color: var(--ink-3); }
+
+/* ─ Архив ─────────────────────────────────────────────────────────────
+   Панель раскрывается на месте, как список блокировок: архив нужен ровно
+   там, где лежит лента, которую он фильтрует. На >= 78rem FE-04 переносит
+   её в правую зону оболочки. */
+.archive { margin-bottom: var(--s-5); }
+
+.archive-body {
+  display: grid;
+  gap: var(--s-4);
+  margin-top: var(--s-3);
+}
+
+/* Год встаёт в колонку аватаров, месяцы — в колонку текста: архив ложится
+   на ту же сетку, что и лента под ним, и читается её оглавлением. */
+.archive-year {
+  display: grid;
+  grid-template-columns: var(--avatar) minmax(0, 1fr);
+  gap: var(--avatar-gap);
+  align-items: start;
+}
+
+.archive-months {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
+
+/* Тот же язык, что у пунктов навигации: выбранное — акцент на мягкой
+   заливке. */
+.archive-tag {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  border: 0;
+  background: none;
+  padding: 0.1875rem var(--s-2);
+  margin-left: calc(var(--s-2) * -1);
+  border-radius: var(--r-xs);
+  font: inherit;
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+}
+
+.archive-tag:hover { color: var(--ink); background: var(--surface-2); }
+
+.archive-tag[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-tint);
+  font-weight: 600;
+}
+
+.archive-count {
+  font-size: var(--t-micro);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .archive-tag { transition: none; }
+}
+
+/* ─ Строка периода над лентой профиля ─────────────────────────────────── */
+.period-bar {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s-2) 1.25rem;
+  padding-bottom: var(--s-4);
+  margin-bottom: var(--s-5);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.period-what {
+  margin: 0;
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.period-what strong {
+  font-family: var(--read);
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.period-what span::before { content: "· "; }
+
+.period-nav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3) var(--s-4);
+}
+
+@media (max-width: 46rem) {
+  /* «Раньше / Позже / Показать всё» на 375 px уходят под название периода,
+     а не выдавливают его из строки. */
+  .period-nav { margin-left: 0; }
+}

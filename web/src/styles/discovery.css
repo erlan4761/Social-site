@@ -1,0 +1,223 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   discovery.css — всё, чем ищут и что находят: строка поиска людей с
+   выпадающим списком, экран результатов, лента событий.
+
+   Компоненты: SearchBox.tsx, Search.tsx, Notifications.tsx,
+   MemberSearch.tsx (наследует .search-box и .search-results отсюда),
+   highlight.tsx (ставит <mark>, внешность которого — в base.css).
+
+   Закладки своей внешности не имеют: /bookmarks — это та же лента
+   (feed.css) плюс .page-lede отсюда.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ─ Строка поиска людей ───────────────────────────────────────────────── */
+.search-slot { margin-bottom: 1.25rem; }
+
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  padding: 0.4375rem 0.625rem;
+  background: var(--surface-2);
+  color: var(--ink-3);
+  transition: border-color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
+}
+
+.search-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+  color: var(--ink);
+}
+
+.search-box input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--ink);
+}
+
+.search-box input:focus { outline: none; box-shadow: none; }
+.search-box input::placeholder { color: var(--ink-3); }
+
+/* Убираем нативный крестик очистки у type=search — свой не нужен, а лишний
+   элемент в WebKit сбивал бы выравнивание с иконкой лупы. */
+.search-box input::-webkit-search-cancel-button { display: none; }
+
+/* ─ Выпадающий список подсказок ───────────────────────────────────────── */
+.search-results {
+  position: absolute;
+  top: calc(100% + 0.375rem);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.search-empty {
+  margin: 0;
+  padding: var(--s-3);
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+}
+
+.search-hit {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: var(--s-2) var(--s-3);
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.search-hit:hover,
+.search-hit:focus-visible { background: var(--accent-tint); outline: none; }
+.search-hit strong { display: block; font-size: 0.875rem; }
+.search-hit-handle { font-size: var(--t-micro); color: var(--ink-3); }
+
+/* Первая строка списка — «искать среди записей». `.search-hit` ставит
+   вложенному strong display: block, здесь имя запроса живёт в строке. */
+.search-all {
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: var(--t-meta);
+  /* Вставленная в поле длинная строка не должна распирать список. */
+  overflow-wrap: anywhere;
+}
+
+.search-all strong {
+  display: inline;
+  font-size: inherit;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+/* ─ Экран результатов ─────────────────────────────────────────────────── */
+.search-lede,
+.page-lede {
+  font-family: var(--read);
+  color: var(--ink-2);
+  font-size: var(--t-body);
+  /* Строка в 60–75 знаков читается без возврата глаза к началу. */
+  max-width: 30rem;
+  margin: 0 0 var(--s-6);
+  overflow-wrap: anywhere;
+}
+
+.search-section + .search-section { margin-top: 2.5rem; }
+
+.search-section-title {
+  font-size: var(--t-meta);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--ink-2);
+  margin: 0 0 1.25rem;
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.people-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-1);
+}
+
+.people-hit {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: var(--s-2) 0.625rem var(--s-2) 0;
+  border-radius: var(--r-sm);
+  text-decoration: none;
+  color: inherit;
+  transition: background var(--dur-2) var(--ease);
+}
+
+/* min-width: 0 вместо minmax: длинное имя переносится, а не растягивает
+   колонку. */
+.people-hit > span { min-width: 0; overflow-wrap: anywhere; }
+
+.people-hit:hover { background: var(--accent-tint); }
+.people-hit strong { display: block; font-size: 0.875rem; font-weight: 500; }
+.people-handle { font-size: var(--t-micro); color: var(--ink-3); }
+
+@media (prefers-reduced-motion: reduce) {
+  .people-hit { transition: none; }
+}
+
+/* ─ События ───────────────────────────────────────────────────────────── */
+.events { list-style: none; margin: 0; padding: 0; }
+.events li + li { border-top: 1px solid var(--line-strong); }
+
+.event-link {
+  display: grid;
+  grid-template-columns: var(--avatar-sm) minmax(0, 1fr) auto;
+  gap: var(--s-3);
+  align-items: start;
+  padding: 0.875rem 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.event-body { min-width: 0; }
+
+.event-line { margin: 0; font-size: var(--t-body); color: var(--ink-2); }
+.event.unread .event-line { color: var(--ink); font-weight: 500; }
+.event-link:hover .event-line { text-decoration: underline; text-underline-offset: 2px; }
+
+/* Цитата предмета — читательским шрифтом, как и сам предмет разговора. */
+.event-quote {
+  margin: 0.1875rem 0 0;
+  font-family: var(--read);
+  font-size: 0.875rem;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-time {
+  display: block;
+  margin-top: var(--s-1);
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+}
+
+/* Спокойная точка вместо числа: непрочитанное отличимо, но не требует
+   внимания. FE-05 добавит к ней полосу и фон --accent-tint на всю строку. */
+.event-mark {
+  display: block;
+  width: var(--s-2);
+  height: var(--s-2);
+  margin-top: 0.4375rem;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.events-more { margin-top: var(--s-5); }
+
+/* ─ Телефон ───────────────────────────────────────────────────────────── */
+@media (max-width: 46rem) {
+  /* Поиск в мобильной шапке занимает свою строку целиком. */
+  .search-slot { order: 2; width: 100%; margin: 0; }
+
+  .event-link { gap: 0.625rem; }
+}

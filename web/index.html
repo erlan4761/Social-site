@@ -11,6 +11,22 @@
       href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;900&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,500;1,7..72,400&display=swap"
       rel="stylesheet"
     />
+    <!-- Тема применяется ДО первой отрисовки, иначе при загрузке тёмной
+         страница успевает моргнуть светлым. Ключ и значения — те же, что в
+         src/theme.ts; «auto» атрибута не ставит, дальше решает медиазапрос
+         prefers-color-scheme в styles/tokens.css. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('chronicle-theme');
+          if (t === 'dark' || t === 'light') {
+            document.documentElement.setAttribute('data-theme', t);
+          }
+        } catch (e) {
+          /* хранилище запрещено — остаётся системная тема */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
