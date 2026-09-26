@@ -8,7 +8,11 @@ services:
     region: frankfurt
     branch: main
 
-    buildCommand: cd server && npm ci && cd ../web && npm ci && npm run build
+    # --include=dev у фронтенда обязателен: NODE_ENV=production ниже действует
+    # и во время сборки, а в этом режиме npm ci молча пропускает
+    # devDependencies — вместе с typescript и vite, без которых сборка падает.
+    # Серверу это не нужно: все его зависимости рабочие.
+    buildCommand: cd server && npm ci && cd ../web && npm ci --include=dev && npm run build
     startCommand: node server/src/index.js
     healthCheckPath: /
 
@@ -27,3 +31,8 @@ services:
         value: production
       - key: DATA_DIR
         value: /var/data
+      # Секрет: в репозитории его нет, Render спросит значение при создании
+      # сервиса. Можно оставить пустым — тогда письма сброса пароля печатаются
+      # в лог сервиса, а не уходят на почту.
+      - key: RESEND_API_KEY
+        sync: false
