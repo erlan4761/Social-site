@@ -9,7 +9,7 @@
  * В обычную сборку этот файл не попадает: см. переключение в api.ts.
  */
 import type {
-  ArchiveMonth, Attachment, AttachmentInput, Author, Badges, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
+  ArchiveMonth, Attachment, AttachmentInput, Author, Badges, Channel, ChannelComment, ChannelPost, ChannelSummary, ForwardedFrom, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
   Conversation, ForwardRef, ForwardTarget, Media, Message, Notification as NotificationItem,
   NotificationKind, Page, Person, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
 } from '../api';
@@ -42,7 +42,22 @@ type DbPost = {
 type DbComment = { id: number; postId: number; authorId: number; body: string; createdAt: string };
 /** Поля действий с сообщениями — как колонки reply_to_id, edited_at, fwd_user_id на сервере. */
 /** Вложение витрины — ссылка blob: или data: прямо в памяти вкладки. */
-type DbExtras = { replyToId: number | null; editedAt: string | null; fwdUserId: number | null; attachment: Attachment | null };
+type DbExtras = {
+  replyToId: number | null;
+  editedAt: string | null;
+  fwdUserId: number | null;
+  /** Переслано из канала — подпись ведёт на канал, а не на человека. */
+  fwdChannelId: number | null;
+  attachment: Attachment | null;
+};
+
+type DbChannel = { id: number; handle: string; title: string; description: string; ownerId: number; createdAt: string };
+type DbChannelSub = { channelId: number; userId: number; joinedAt: string; lastReadId: number };
+type DbChannelPost = {
+  id: number; channelId: number; authorId: number; body: string; createdAt: string; editedAt: string | null;
+  attachment: Attachment | null;
+};
+type DbChannelComment = { id: number; postId: number; authorId: number; body: string; createdAt: string };
 type DbMessage = DbExtras & { id: number; fromId: number; toId: number; body: string; createdAt: string; readAt: string | null };
 /** Реакция: одна на человека на сообщение, как первичный ключ на сервере. */
 type DbReaction = { messageId: number; userId: number; emoji: string; createdAt: string };
@@ -80,7 +95,7 @@ type DbChat = { id: number; title: string; ownerId: number; createdAt: string };
 /** `lastReadId` — ватерлиния прочитанного, как в схеме сервера: в группе
  *  получателей много, и отметка на каждом сообщении стоила бы таблицы N×M. */
 type DbChatMember = { chatId: number; userId: number; joinedAt: string; lastReadId: number };
-const NO_EXTRAS: DbExtras = { replyToId: null, editedAt: null, fwdUserId: null, attachment: null };
+const NO_EXTRAS: DbExtras = { replyToId: null, editedAt: null, fwdUserId: null, fwdChannelId: null, attachment: null };
 
 type DbChatMessage = DbExtras & { id: number; chatId: number; authorId: number; body: string; createdAt: string };
 
@@ -103,6 +118,13 @@ let chatMembers: DbChatMember[] = [];
 let chatMessages: DbChatMessage[] = [];
 let dmReactions: DbReaction[] = [];
 let chatReactions: DbReaction[] = [];
+let channels: DbChannel[] = [];
+let channelSubs: DbChannelSub[] = [];
+let channelPosts: DbChannelPost[] = [];
+/** Просмотр — один на человека, как первичный ключ на сервере. */
+let channelViews: { postId: number; userId: number }[] = [];
+let postReactions: DbReaction[] = [];
+let channelComments: DbChannelComment[] = [];
 /** «Печатает…»: ключ переписки|id человека → до какого момента. Как на
  *  сервере, живёт только в памяти и гаснет сам. */
 const typingUntil = new Map<string, number>();
@@ -182,6 +204,12 @@ function seed() {
   chatMessages = [];
   dmReactions = [];
   chatReactions = [];
+  channels = [];
+  channelSubs = [];
+  channelPosts = [];
+  channelViews = [];
+  postReactions = [];
+  channelComments = [];
   typingUntil.clear();
   nextId = 1;
 
@@ -353,6 +381,55 @@ function seed() {
   event(marina, 'chat_message', 59, false, { chatId: room.id });
   event(oleg, 'comment', 39, false, { postId: p4.id, commentId: c4.id });
   event(oleg, 'message', 25, false);
+
+  // Каналы. Канал Нины — чужой, на него подписан смотрящий, и последняя
+  // публикация у него не прочитана. «Хроника изнутри» — свой: в нём витрина
+  // даёт опубликовать самому.
+  const channel = (owner: DbUser, handle: string, title: string, description: string, minutes: number) => {
+    const c: DbChannel = { id: id(), handle, title, description, ownerId: owner.id, createdAt: ago(minutes) };
+    channels.push(c);
+    channelSubs.push({ channelId: c.id, userId: owner.id, joinedAt: c.createdAt, lastReadId: 0 });
+    return c;
+  };
+  const publish = (c: DbChannel, body: string, minutes: number, attachment: Attachment | null = null) => {
+    const post: DbChannelPost = {
+      id: id(), channelId: c.id, authorId: c.ownerId, body, createdAt: ago(minutes), editedAt: null, attachment,
+    };
+    channelPosts.push(post);
+    return post;
+  };
+  const sub = (c: DbChannel, u: DbUser, lastReadId: number) =>
+    channelSubs.push({ channelId: c.id, userId: u.id, joinedAt: c.createdAt, lastReadId });
+  const saw = (post: DbChannelPost, ...who: DbUser[]) => who.forEach((u) => channelViews.push({ postId: post.id, userId: u.id }));
+
+  const notes = channel(nina, 'plenka_notes', 'Заметки о плёнке', 'Проявка дома, старые камеры и кадры, которые получились не так, как задумывалось.', days(40));
+  const n1 = publish(notes, 'Как я проявляю дома: бачок, термометр, три раствора и полчаса тишины. Ничего сложного, если не спешить и не открывать бачок «одним глазком».', days(20));
+  const n2 = publish(notes, 'Три кадра с засвеченной по краю плёнки. Засветка вышла красивее задуманного — оставлю так.', days(6), {
+    url: gradient('#e08a4a', '#8265ba', 720, 480, 'три кадра, засветка по краю'),
+    kind: 'image', mime: 'image/svg+xml', name: 'zasvetka.jpg', size: null, duration: null, wave: null,
+  });
+  const n3 = publish(notes, 'В субботу проявляем вместе с ребятами из чата. Напишу, что получилось, — и что не получилось тоже.', 180);
+  saw(n1, nina, demo, marina, oleg);
+  saw(n2, nina, demo, marina, oleg);
+  saw(n3, nina, marina);
+  sub(notes, demo, n2.id);
+  sub(notes, marina, n3.id);
+  postReactions.push(
+    { messageId: n1.id, userId: marina.id, emoji: '❤️', createdAt: ago(days(19)) },
+    { messageId: n1.id, userId: demo.id, emoji: '❤️', createdAt: ago(days(19)) },
+    { messageId: n2.id, userId: oleg.id, emoji: '🔥', createdAt: ago(days(5)) },
+  );
+  channelComments.push(
+    { id: id(), postId: n1.id, authorId: oleg.id, body: 'А какой проявитель берёшь?', createdAt: ago(days(19)) },
+    { id: id(), postId: n1.id, authorId: nina.id, body: 'Родинал, 1+50 — он прощает почти всё.', createdAt: ago(days(19) - 30) },
+  );
+
+  const dev = channel(demo, 'chronika_dev', 'Хроника изнутри', 'Как устроен этот сайт: решения, ошибки и то, что пришлось переделывать.', days(10));
+  const d1 = publish(dev, 'Здесь пишу о том, как устроена «Хроника» изнутри. Первое: сообщения ходят опросом раз в три секунды, без WebSocket, — и этого хватает.', days(9));
+  channelSubs.find((s) => s.channelId === dev.id && s.userId === demo.id)!.lastReadId = d1.id;
+  sub(dev, marina, d1.id);
+  sub(dev, oleg, d1.id);
+  saw(d1, demo, marina, oleg);
 
   meId = demo.id;
 }
@@ -543,9 +620,13 @@ function attachmentFrom(input: AttachmentInput): Attachment {
   };
 }
 
-const forwardedOf = (fwdUserId: number | null) => {
-  const u = fwdUserId != null ? byId(fwdUserId) : undefined;
-  return u ? { username: u.username, displayName: u.displayName } : null;
+const forwardedOf = (m: DbExtras): ForwardedFrom | null => {
+  if (m.fwdChannelId != null) {
+    const c = channels.find((x) => x.id === m.fwdChannelId);
+    return c ? { kind: 'channel', handle: c.handle, title: c.title } : null;
+  }
+  const u = m.fwdUserId != null ? byId(m.fwdUserId) : undefined;
+  return u ? { kind: 'user', username: u.username, displayName: u.displayName } : null;
 };
 
 const pairOf = (m: DbMessage) =>
@@ -554,17 +635,17 @@ const pairOf = (m: DbMessage) =>
 const toMessage = (m: DbMessage): Message => ({
   id: m.id, body: m.body, createdAt: m.createdAt, fromId: m.fromId, toId: m.toId, readAt: m.readAt,
   editedAt: m.editedAt,
-  forwardedFrom: forwardedOf(m.fwdUserId),
+  forwardedFrom: forwardedOf(m),
   replyTo: quoteOf(m.replyToId, pairOf(m).map((x) => ({ id: x.id, body: x.body, authorId: x.fromId, attachment: x.attachment }))),
   reactions: reactionsOf(dmReactions, m.id),
   attachment: m.attachment,
 });
 
 /** Правка: своё, не пересланное, в первые двое суток — те же правила, что на сервере. */
-function assertEditable(authorId: number, createdAt: string, fwdUserId: number | null, u: DbUser) {
+function assertEditable(authorId: number, createdAt: string, fwdUserId: number | null, u: DbUser, fwdChannelId: number | null = null) {
   if (authorId !== u.id) fail(403, 'Изменить можно только своё сообщение');
   if (Date.now() - Date.parse(createdAt) > EDIT_WINDOW_MS) fail(403, 'Сообщение можно изменить только в течение 48 часов');
-  if (fwdUserId != null) fail(403, 'Пересланное сообщение изменить нельзя');
+  if (fwdUserId != null || fwdChannelId != null) fail(403, 'Пересланное сообщение изменить нельзя');
 }
 
 function setReaction(list: DbReaction[], messageId: number, userId: number, emoji: string | null) {
@@ -594,16 +675,27 @@ const setTyping = (key: string, userId: number) => typingUntil.set(`${key}|${use
 const clearTyping = (key: string, userId: number) => typingUntil.delete(`${key}|${userId}`);
 const isTyping = (key: string, userId: number) => (typingUntil.get(`${key}|${userId}`) ?? 0) > Date.now();
 
+/** Первоисточник: пересланное пересланного указывает туда же, куда оригинал. */
+const origin = (m: DbExtras & { body: string }, author: number) =>
+  m.fwdChannelId != null
+    ? { body: m.body, fwdUserId: null, fwdChannelId: m.fwdChannelId, attachment: m.attachment }
+    : { body: m.body, fwdUserId: m.fwdUserId ?? author, fwdChannelId: null, attachment: m.attachment };
+
 /** Источник пересылки глазами пересылающего; пересланное указывает на первоисточник. */
 function forwardSource(source: ForwardRef, u: DbUser) {
   if (source.from === 'dm') {
     const m = messages.find((x) => x.id === source.id && (x.fromId === u.id || x.toId === u.id));
     if (!m) fail(404, 'Сообщение для пересылки не найдено');
-    return { body: m!.body, fwdUserId: m!.fwdUserId ?? m!.fromId, attachment: m!.attachment };
+    return origin(m!, m!.fromId);
+  }
+  if (source.from === 'channel') {
+    const post = channelPosts.find((x) => x.id === source.id);
+    if (!post) fail(404, 'Сообщение для пересылки не найдено');
+    return { body: post!.body, fwdUserId: null, fwdChannelId: post!.channelId, attachment: post!.attachment };
   }
   const m = chatMessages.find((x) => x.id === source.id && memberRow(x.chatId, u.id) && !hidden(x.authorId));
   if (!m) fail(404, 'Сообщение для пересылки не найдено');
-  return { body: m!.body, fwdUserId: m!.fwdUserId ?? m!.authorId, attachment: m!.attachment };
+  return origin(m!, m!.authorId);
 }
 
 // ─ Живая витрина ──────────────────────────────────────────────────────────
@@ -760,7 +852,7 @@ const visibleChatMessages = (chatId: number) =>
 const toChatMessage = (m: DbChatMessage): ChatMessage => ({
   id: m.id, chatId: m.chatId, body: m.body, createdAt: m.createdAt, author: author(byId(m.authorId)!),
   editedAt: m.editedAt,
-  forwardedFrom: forwardedOf(m.fwdUserId),
+  forwardedFrom: forwardedOf(m),
   replyTo: quoteOf(m.replyToId, visibleChatMessages(m.chatId)),
   reactions: reactionsOf(chatReactions, m.id),
   attachment: m.attachment,
@@ -847,6 +939,66 @@ function rejectInsteadOfThrow<T extends object>(methods: T): T {
   }
   return wrapped as T;
 }
+
+// ─ Каналы ────────────────────────────────────────────────────────────────────
+
+const CHANNEL_HANDLE_RE = /^[a-z][a-z0-9_]{3,31}$/;
+
+const channelBy = (handle: string) => channels.find((c) => c.handle === handle.toLowerCase().replace(/^@/, ''));
+
+function requireChannel(handle: string) {
+  const u = requireMe()!;
+  const c = channelBy(handle);
+  if (!c) fail(404, 'Канал не найден');
+  return { u, c: c! };
+}
+
+function requireOwner(handle: string) {
+  const { u, c } = requireChannel(handle);
+  if (c.ownerId !== u.id) fail(403, 'Публиковать и править канал может только владелец');
+  return { u, c };
+}
+
+const subOf = (channelId: number, userId: number) =>
+  channelSubs.find((s) => s.channelId === channelId && s.userId === userId);
+
+/** Своё — не «непрочитанное»: владелец свои публикации и так видел. */
+function channelUnread(s: DbChannelSub) {
+  const c = channels.find((x) => x.id === s.channelId);
+  if (!c || c.ownerId === s.userId) return 0;
+  return channelPosts.filter((p) => p.channelId === s.channelId && p.id > s.lastReadId).length;
+}
+
+const toChannel = (c: DbChannel): Channel => {
+  const owner = byId(c.ownerId);
+  return {
+    id: c.id, handle: c.handle, title: c.title, description: c.description, createdAt: c.createdAt,
+    owner: owner ? author(owner) : null,
+    iAmOwner: c.ownerId === meId,
+    subscribed: meId != null && Boolean(subOf(c.id, meId)),
+    subscriberCount: channelSubs.filter((s) => s.channelId === c.id).length,
+  };
+};
+
+const toChannelPost = (p: DbChannelPost): ChannelPost => ({
+  id: p.id, channelId: p.channelId, body: p.body, createdAt: p.createdAt, editedAt: p.editedAt,
+  views: channelViews.filter((v) => v.postId === p.id).length,
+  commentCount: channelComments.filter((c) => c.postId === p.id && !hidden(c.authorId)).length,
+  attachment: p.attachment,
+  reactions: reactionsOf(postReactions, p.id),
+});
+
+const postsOf = (channelId: number) => channelPosts.filter((p) => p.channelId === channelId).sort((a, b) => a.id - b.id);
+
+function requirePost(channelId: number, postId: number) {
+  const p = channelPosts.find((x) => x.id === postId && x.channelId === channelId);
+  if (!p) fail(404, 'Публикация не найдена');
+  return p!;
+}
+
+const toChannelComment = (c: DbChannelComment): ChannelComment => ({
+  id: c.id, body: c.body, createdAt: c.createdAt, author: author(byId(c.authorId)!),
+});
 
 export const mockApi = rejectInsteadOfThrow({
   me: () => tick({ user: me() ? publicUser(me()!) : null }),
@@ -1191,7 +1343,7 @@ export const mockApi = rejectInsteadOfThrow({
     const m: DbMessage = {
       id: id(), fromId: u.id, toId: other!.id, body,
       createdAt: new Date().toISOString(), readAt: null,
-      replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, attachment,
+      replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, fwdChannelId: src?.fwdChannelId ?? null, attachment,
     };
     messages.push(m);
     clearTyping(dmKey(u.id, other!.id), u.id);
@@ -1205,7 +1357,7 @@ export const mockApi = rejectInsteadOfThrow({
 
   editMessage: (username: string, messageId: number, text: string) => {
     const { u, other, m } = requirePairMessage(username, messageId);
-    assertEditable(m.fromId, m.createdAt, m.fwdUserId, u);
+    assertEditable(m.fromId, m.createdAt, m.fwdUserId, u, m.fwdChannelId);
     if (blockedPair(u.id, other.id)) fail(403, 'Переписка с этим пользователем недоступна');
     const body = text.trim();
     if (!body && !m.attachment) fail(400, '«сообщение»: минимум 1 символов');
@@ -1301,6 +1453,9 @@ export const mockApi = rejectInsteadOfThrow({
       chats: chatMembers
         .filter((m) => m.userId === u.id)
         .reduce((sum, m) => sum + chatUnread(m.chatId, u.id), 0),
+      channels: channelSubs
+        .filter((s) => s.userId === u.id)
+        .reduce((sum, s) => sum + channelUnread(s), 0),
       notifications: unreadNotifications(u.id),
     });
   },
@@ -1626,7 +1781,7 @@ export const mockApi = rejectInsteadOfThrow({
 
     const m: DbChatMessage = {
       id: id(), chatId: chat.id, authorId: u.id, body, createdAt: new Date().toISOString(),
-      replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, attachment,
+      replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, fwdChannelId: src?.fwdChannelId ?? null, attachment,
     };
     chatMessages.push(m);
     clearTyping(`chat:${chat.id}`, u.id);
@@ -1644,7 +1799,7 @@ export const mockApi = rejectInsteadOfThrow({
   editChatMessage: (chatId: number, messageId: number, text: string) => {
     const { u, chat } = requireChat(chatId);
     const m = requireChatMessage(chat.id, messageId);
-    assertEditable(m.authorId, m.createdAt, m.fwdUserId, u);
+    assertEditable(m.authorId, m.createdAt, m.fwdUserId, u, m.fwdChannelId);
     const body = text.trim();
     if (!body && !m.attachment) fail(400, '«сообщение»: минимум 1 символов');
     if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
@@ -1733,5 +1888,189 @@ export const mockApi = rejectInsteadOfThrow({
     }
 
     return leaving ? tick({ ok: true as const, left: true }) : tick({ ok: true as const });
+  },
+
+  // ─ Каналы ─────────────────────────────────────────────────────────────
+
+  channels: () => {
+    const u = requireMe()!;
+    const list: ChannelSummary[] = channelSubs
+      .filter((s) => s.userId === u.id)
+      .map((s) => {
+        const c = channels.find((x) => x.id === s.channelId)!;
+        const last = postsOf(c.id).at(-1) ?? null;
+        return { ...toChannel(c), unread: channelUnread(s), lastPost: last ? toChannelPost(last) : null };
+      })
+      .sort((a, b) => (b.lastPost?.createdAt ?? b.createdAt).localeCompare(a.lastPost?.createdAt ?? a.createdAt));
+    return tick({ channels: list, unreadTotal: list.reduce((sum, c) => sum + c.unread, 0) });
+  },
+
+  searchChannels: (q: string) => {
+    requireMe();
+    const needle = q.trim().toLowerCase().replace(/^@/, '').replace(/ё/g, 'е');
+    if (needle.length < 2) return tick({ channels: [] as Channel[] });
+    const fold = (s: string) => s.toLowerCase().replace(/ё/g, 'е');
+    return tick({
+      channels: channels
+        .filter((c) => fold(c.title).includes(needle) || c.handle.includes(needle))
+        .map(toChannel)
+        .sort((a, b) => b.subscriberCount - a.subscriberCount),
+    });
+  },
+
+  createChannel: (input: { title: string; handle: string; description: string }) => {
+    const u = requireMe()!;
+    const title = input.title.trim();
+    const handle = input.handle.trim().toLowerCase().replace(/^@/, '');
+    if (!title) fail(400, '«название канала»: минимум 1 символов');
+    if (title.length > 60) fail(400, '«название канала»: максимум 60 символов');
+    if (!CHANNEL_HANDLE_RE.test(handle)) fail(400, 'Адрес канала: 4–32 символа, латиница, цифры и _, начинается с буквы');
+    if (handle === 'search') fail(400, 'Этот адрес зарезервирован');
+    if (channelBy(handle)) fail(409, 'Этот адрес уже занят');
+    const c: DbChannel = {
+      id: id(), handle, title, description: input.description.trim().slice(0, 255), ownerId: u.id,
+      createdAt: new Date().toISOString(),
+    };
+    channels.push(c);
+    channelSubs.push({ channelId: c.id, userId: u.id, joinedAt: c.createdAt, lastReadId: 0 });
+    return tick({ channel: toChannel(c) });
+  },
+
+  channel: (handle: string) => tick({ channel: toChannel(requireChannel(handle).c) }),
+
+  updateChannel: (handle: string, input: { title?: string; description?: string }) => {
+    const { c } = requireOwner(handle);
+    if (input.title !== undefined) {
+      if (!input.title.trim()) fail(400, '«название канала»: минимум 1 символов');
+      c.title = input.title.trim().slice(0, 60);
+    }
+    if (input.description !== undefined) c.description = input.description.trim().slice(0, 255);
+    return tick({ channel: toChannel(c) });
+  },
+
+  deleteChannel: (handle: string) => {
+    const { u, c } = requireChannel(handle);
+    if (c.ownerId !== u.id) fail(403, 'Удалить канал может только владелец');
+    const ids = new Set(postsOf(c.id).map((p) => p.id));
+    channels = channels.filter((x) => x.id !== c.id);
+    channelSubs = channelSubs.filter((s) => s.channelId !== c.id);
+    channelPosts = channelPosts.filter((p) => p.channelId !== c.id);
+    channelViews = channelViews.filter((v) => !ids.has(v.postId));
+    postReactions = postReactions.filter((r) => !ids.has(r.messageId));
+    channelComments = channelComments.filter((x) => !ids.has(x.postId));
+    return tick({ ok: true as const });
+  },
+
+  subscribe: (handle: string, on: boolean) => {
+    const { u, c } = requireChannel(handle);
+    if (on) {
+      // Подписчик читает с этого места: старое — не «непрочитанное».
+      const top = postsOf(c.id).at(-1)?.id ?? 0;
+      if (!subOf(c.id, u.id)) channelSubs.push({ channelId: c.id, userId: u.id, joinedAt: new Date().toISOString(), lastReadId: top });
+    } else {
+      if (c.ownerId === u.id) fail(400, 'Владелец не может отписаться от своего канала');
+      channelSubs = channelSubs.filter((s) => !(s.channelId === c.id && s.userId === u.id));
+    }
+    return tick({ channel: toChannel(c) });
+  },
+
+  markChannelRead: (handle: string) => {
+    const { u, c } = requireChannel(handle);
+    const s = subOf(c.id, u.id);
+    if (s) s.lastReadId = postsOf(c.id).at(-1)?.id ?? 0;
+    return tick({ ok: true as const });
+  },
+
+  channelPosts: (handle: string, cursor?: number | null) => {
+    const { u, c } = requireChannel(handle);
+    let list = postsOf(c.id);
+    if (cursor != null) list = list.filter((p) => p.id < cursor);
+    const page = list.slice(-20);
+    // Просмотр — один на человека.
+    for (const p of page) {
+      if (!channelViews.some((v) => v.postId === p.id && v.userId === u.id)) channelViews.push({ postId: p.id, userId: u.id });
+    }
+    return tick({
+      channel: toChannel(c),
+      posts: page.map(toChannelPost),
+      nextCursor: list.length > 20 ? page[0].id : null,
+    });
+  },
+
+  publish: (handle: string, input: { body: string } | AttachmentInput) => {
+    const { u, c } = requireOwner(handle);
+    const body = (input.body ?? '').trim();
+    const attachment = 'file' in input ? attachmentFrom(input) : null;
+    if (!body && !attachment) fail(400, '«публикация»: минимум 1 символов');
+    if (body.length > 4000) fail(400, '«публикация»: максимум 4000 символов');
+    const post: DbChannelPost = {
+      id: id(), channelId: c.id, authorId: u.id, body, createdAt: new Date().toISOString(), editedAt: null, attachment,
+    };
+    channelPosts.push(post);
+    const s = subOf(c.id, u.id);
+    if (s) s.lastReadId = post.id;
+    return tick({ post: toChannelPost(post) });
+  },
+
+  editPost: (handle: string, postId: number, text: string) => {
+    const { c } = requireOwner(handle);
+    const post = requirePost(c.id, postId);
+    if (Date.now() - Date.parse(post.createdAt) > EDIT_WINDOW_MS) fail(403, 'Сообщение можно изменить только в течение 48 часов');
+    const body = text.trim();
+    if (!body && !post.attachment) fail(400, '«публикация»: минимум 1 символов');
+    if (body !== post.body) {
+      post.body = body;
+      post.editedAt = new Date().toISOString();
+    }
+    return tick({ post: toChannelPost(post) });
+  },
+
+  deleteChannelPost: (handle: string, postId: number) => {
+    const { c } = requireOwner(handle);
+    const post = requirePost(c.id, postId);
+    channelPosts = channelPosts.filter((p) => p.id !== post.id);
+    channelComments = channelComments.filter((x) => x.postId !== post.id);
+    postReactions = postReactions.filter((r) => r.messageId !== post.id);
+    return tick({ ok: true as const });
+  },
+
+  reactPost: (handle: string, postId: number, emoji: string | null) => {
+    const { u, c } = requireChannel(handle);
+    const post = requirePost(c.id, postId);
+    setReaction(postReactions, post.id, u.id, emoji);
+    return tick({ post: toChannelPost(post) });
+  },
+
+  channelComments: (handle: string, postId: number) => {
+    const { u, c } = requireChannel(handle);
+    const post = requirePost(c.id, postId);
+    return tick({
+      channel: toChannel(c),
+      post: toChannelPost(post),
+      comments: channelComments.filter((x) => x.postId === post.id && !hidden(x.authorId)).sort((a, b) => a.id - b.id).map(toChannelComment),
+      canComment: !blockedPair(u.id, c.ownerId),
+    });
+  },
+
+  addChannelComment: (handle: string, postId: number, text: string) => {
+    const { u, c } = requireChannel(handle);
+    const post = requirePost(c.id, postId);
+    if (blockedPair(u.id, c.ownerId)) fail(403, 'Комментировать этот канал нельзя');
+    const body = text.trim();
+    if (!body) fail(400, '«комментарий»: минимум 1 символов');
+    if (body.length > 1000) fail(400, '«комментарий»: максимум 1000 символов');
+    const comment: DbChannelComment = { id: id(), postId: post.id, authorId: u.id, body, createdAt: new Date().toISOString() };
+    channelComments.push(comment);
+    return tick({ comment: toChannelComment(comment) });
+  },
+
+  deleteChannelComment: (handle: string, postId: number, commentId: number) => {
+    const { u, c } = requireChannel(handle);
+    const post = requirePost(c.id, postId);
+    const comment = channelComments.find((x) => x.id === commentId && x.postId === post.id);
+    if (!comment) fail(404, 'Комментарий не найден');
+    if (comment!.authorId !== u.id && c.ownerId !== u.id) fail(403, 'Удалить можно только свой комментарий');
+    channelComments = channelComments.filter((x) => x.id !== commentId);
+    return tick({ ok: true as const });
   },
 });

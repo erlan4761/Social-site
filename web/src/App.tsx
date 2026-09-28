@@ -4,6 +4,8 @@ import { Shell } from './components/Shell';
 import { DemoBanner } from './demo/DemoBanner';
 import { Auth } from './pages/Auth';
 import { Bookmarks } from './pages/Bookmarks';
+import { ChannelComments } from './pages/ChannelComments';
+import { ChannelView } from './pages/ChannelView';
 import { ChatThread } from './pages/ChatThread';
 import { Feed } from './pages/Feed';
 import { ForgotPassword } from './pages/ForgotPassword';
@@ -77,6 +79,11 @@ export function App() {
                   ломает — его диалог живёт на `/messages/c`, это по-прежнему
                   один сегмент, а не два. */}
               <Route path="c/:id" element={<ChatThread />} />
+              {/* Канал и ветка комментариев под его публикацией. Путь из двух
+                  и трёх сегментов — с личной перепиской (`:username`, один
+                  сегмент) не пересекается, даже у человека с логином «ch». */}
+              <Route path="ch/:handle" element={<ChannelView />} />
+              <Route path="ch/:handle/:postId" element={<ChannelComments />} />
               <Route path=":username" element={<Thread />} />
             </Route>
           </Route>

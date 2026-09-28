@@ -115,13 +115,48 @@ function attachmentForm(input: AttachmentInput) {
 export type MessageExtras = {
   attachment: Attachment | null;
   editedAt: string | null;
-  forwardedFrom: { username: string; displayName: string } | null;
+  forwardedFrom: ForwardedFrom | null;
   replyTo: Quote | null;
   reactions: Reaction[];
 };
 
 /** Откуда пересылается сообщение. */
-export type ForwardRef = { from: 'dm' | 'chat'; id: number };
+export type ForwardRef = { from: 'dm' | 'chat' | 'channel'; id: number };
+
+/** Откуда пересланное: от человека или из канала — подпись ведёт туда. */
+export type ForwardedFrom =
+  | { kind: 'user'; username: string; displayName: string }
+  | { kind: 'channel'; handle: string; title: string };
+
+/* ─ Каналы ─────────────────────────────────────────────────────────────── */
+
+export type Channel = {
+  id: number;
+  handle: string;
+  title: string;
+  description: string;
+  createdAt: string;
+  owner: Author | null;
+  iAmOwner: boolean;
+  subscribed: boolean;
+  subscriberCount: number;
+};
+
+export type ChannelPost = {
+  id: number;
+  channelId: number;
+  body: string;
+  createdAt: string;
+  editedAt: string | null;
+  views: number;
+  commentCount: number;
+  attachment: Attachment | null;
+  reactions: Reaction[];
+};
+
+export type ChannelSummary = Channel & { unread: number; lastPost: ChannelPost | null };
+
+export type ChannelComment = { id: number; body: string; createdAt: string; author: Author };
 
 /** Куда: в личную переписку по имени или в групповой чат по id. */
 export type ForwardTarget = { kind: 'dm'; username: string } | { kind: 'chat'; id: number };
@@ -167,7 +202,7 @@ export type Notification = {
 };
 
 /** Три счётчика одним запросом — иначе оболочка опрашивала бы три эндпоинта. */
-export type Badges = { messages: number; chats: number; notifications: number };
+export type Badges = { messages: number; chats: number; channels: number; notifications: number };
 
 /** Список заблокированных — те же поля, что у автора поста. */
 export type BlockedUser = Author;
@@ -527,6 +562,75 @@ const realApi = {
     }),
 
   chatTyping: (id: number) => request<{ ok: true }>(`/chats/${id}/typing`, { method: 'PUT' }),
+
+  // ─ Каналы ───────────────────────────────────────────────────────────────
+
+  channels: () => request<{ channels: ChannelSummary[]; unreadTotal: number }>('/channels'),
+
+  searchChannels: (q: string) =>
+    request<{ channels: Channel[] }>(`/channels/search?q=${encodeURIComponent(q)}`),
+
+  createChannel: (input: { title: string; handle: string; description: string }) =>
+    request<{ channel: Channel }>('/channels', { method: 'POST', body: body(input) }),
+
+  channel: (handle: string) => request<{ channel: Channel }>(`/channels/${encodeURIComponent(handle)}`),
+
+  updateChannel: (handle: string, input: { title?: string; description?: string }) =>
+    request<{ channel: Channel }>(`/channels/${encodeURIComponent(handle)}`, { method: 'PATCH', body: body(input) }),
+
+  deleteChannel: (handle: string) =>
+    request<{ ok: true }>(`/channels/${encodeURIComponent(handle)}`, { method: 'DELETE' }),
+
+  subscribe: (handle: string, on: boolean) =>
+    request<{ channel: Channel }>(`/channels/${encodeURIComponent(handle)}/subscription`, {
+      method: on ? 'PUT' : 'DELETE',
+    }),
+
+  markChannelRead: (handle: string) =>
+    request<{ ok: true }>(`/channels/${encodeURIComponent(handle)}/read`, { method: 'PUT' }),
+
+  channelPosts: (handle: string, cursor?: number | null) =>
+    request<{ channel: Channel; posts: ChannelPost[]; nextCursor: number | null }>(
+      `/channels/${encodeURIComponent(handle)}/posts${cursor != null ? `?cursor=${cursor}` : ''}`,
+    ),
+
+  /** Публикация: текст, файл или голосовое — multipart, как в переписке. */
+  publish: (handle: string, input: { body: string } | AttachmentInput) =>
+    request<{ post: ChannelPost }>(`/channels/${encodeURIComponent(handle)}/posts`, {
+      method: 'POST',
+      body: 'file' in input ? attachmentForm(input) : body(input),
+    }),
+
+  editPost: (handle: string, id: number, text: string) =>
+    request<{ post: ChannelPost }>(`/channels/${encodeURIComponent(handle)}/posts/${id}`, {
+      method: 'PATCH',
+      body: body({ body: text }),
+    }),
+
+  deleteChannelPost: (handle: string, id: number) =>
+    request<{ ok: true }>(`/channels/${encodeURIComponent(handle)}/posts/${id}`, { method: 'DELETE' }),
+
+  reactPost: (handle: string, id: number, emoji: string | null) =>
+    request<{ post: ChannelPost }>(`/channels/${encodeURIComponent(handle)}/posts/${id}/reaction`, {
+      method: emoji ? 'PUT' : 'DELETE',
+      body: emoji ? body({ emoji }) : undefined,
+    }),
+
+  channelComments: (handle: string, postId: number) =>
+    request<{ channel: Channel; post: ChannelPost; comments: ChannelComment[]; canComment: boolean }>(
+      `/channels/${encodeURIComponent(handle)}/posts/${postId}/comments`,
+    ),
+
+  addChannelComment: (handle: string, postId: number, text: string) =>
+    request<{ comment: ChannelComment }>(`/channels/${encodeURIComponent(handle)}/posts/${postId}/comments`, {
+      method: 'POST',
+      body: body({ body: text }),
+    }),
+
+  deleteChannelComment: (handle: string, postId: number, id: number) =>
+    request<{ ok: true }>(`/channels/${encodeURIComponent(handle)}/posts/${postId}/comments/${id}`, {
+      method: 'DELETE',
+    }),
 
   markChatRead: (id: number) =>
     request<{ ok: true; unread: number }>(`/chats/${id}/read`, { method: 'PUT' }),

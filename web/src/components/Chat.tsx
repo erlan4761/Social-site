@@ -1,8 +1,10 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { REACTIONS, type Attachment, type AttachmentInput, type Author, type Quote, type Reaction } from '../api';
-import { clockTime, dayKey, dayLabel, fullDate, isOnline } from '../time';
+import {
+  REACTIONS, type Attachment, type AttachmentInput, type Author, type ForwardedFrom, type Quote, type Reaction,
+} from '../api';
+import { clockTime, dayKey, dayLabel, fullDate, isOnline, plural } from '../time';
 import { canRecord, mmss, useVoiceRecorder } from '../voice';
 import { Icon } from './Icon';
 import { Monogram } from './Monogram';
@@ -243,13 +245,23 @@ export type BubbleItem = {
   /** Только у своих сообщений. */
   status?: Delivery;
   editedAt: string | null;
-  forwardedFrom: { username: string; displayName: string } | null;
+  forwardedFrom: ForwardedFrom | null;
   replyTo: Quote | null;
   reactions: Reaction[];
   attachment: Attachment | null;
   canEdit: boolean;
   canDelete: boolean;
+  /** Только у публикаций канала: сколько людей видели. */
+  views?: number;
+  /** Публикация канала: куда ведёт строка «N комментариев». */
+  commentsTo?: string;
+  commentCount?: number;
 };
+
+/** Какие действия есть в меню. У публикации канала нет «Ответить», у
+ *  комментария — ни реакций, ни пересылки. */
+export type ListActions = { reply?: boolean; react?: boolean; forward?: boolean };
+const ALL_ACTIONS: Required<ListActions> = { reply: true, react: true, forward: true };
 
 export type MessageAction =
   | { type: 'reply' }
@@ -306,6 +318,9 @@ type ListProps = {
   onAction: (action: MessageAction, item: BubbleItem) => void;
   /** Отвечать и реагировать нельзя — например, при блокировке. */
   readOnly?: boolean;
+  actions?: ListActions;
+  /** Канал: публикации шире и без хвостов «своё/чужое». */
+  variant?: 'chat' | 'channel';
 };
 
 type MenuState = { item: BubbleItem; x: number; y: number } | null;
@@ -315,7 +330,19 @@ type MenuState = { item: BubbleItem; x: number; y: number } | null;
  * переписки (`key`), иначе смена чата выглядела бы как «пришло 30 новых
  * сообщений» и прокрутка вела бы себя по правилам дозагрузки.
  */
-export function MessageList({ items, loading, hasMore, loadingMore, onLoadOlder, empty, onAction, readOnly = false }: ListProps) {
+export function MessageList({
+  items,
+  loading,
+  hasMore,
+  loadingMore,
+  onLoadOlder,
+  empty,
+  onAction,
+  readOnly = false,
+  actions,
+  variant = 'chat',
+}: ListProps) {
+  const can = { ...ALL_ACTIONS, ...actions };
   const box = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const prev = useRef<{ first?: number; last?: number; height: number }>({ height: 0 });
@@ -398,7 +425,7 @@ export function MessageList({ items, loading, hasMore, loadingMore, onLoadOlder,
   }
 
   return (
-    <div className="msgs" ref={box} onScroll={onScroll}>
+    <div className={variant === 'channel' ? 'msgs channel' : 'msgs'} ref={box} onScroll={onScroll}>
       <div className="msgs-inner">
         {loading ? (
           <p className="msgs-note">Загружаю…</p>
@@ -430,6 +457,13 @@ export function MessageList({ items, loading, hasMore, loadingMore, onLoadOlder,
 
               const meta = (
                 <>
+                  {m.views != null && (
+                    <span className="bubble-views" title="Просмотры">
+                      <Icon name="eye" size={14} />
+                      {m.views}
+                      <span className="sr-only"> просмотров</span>
+                    </span>
+                  )}
                   {m.editedAt && <span className="bubble-edited" title={fullDate(m.editedAt)}>изменено</span>}
                   <time dateTime={m.createdAt} title={fullDate(m.createdAt)}>
                     {clockTime(m.createdAt)}
@@ -467,8 +501,17 @@ export function MessageList({ items, loading, hasMore, loadingMore, onLoadOlder,
 
                     {m.forwardedFrom && (
                       <span className="bubble-forwarded">
-                        Переслано от{' '}
-                        <Link to={`/u/${m.forwardedFrom.username}`}>{m.forwardedFrom.displayName}</Link>
+                        {m.forwardedFrom.kind === 'channel' ? (
+                          <>
+                            Переслано из канала{' '}
+                            <Link to={`/messages/ch/${m.forwardedFrom.handle}`}>{m.forwardedFrom.title}</Link>
+                          </>
+                        ) : (
+                          <>
+                            Переслано от{' '}
+                            <Link to={`/u/${m.forwardedFrom.username}`}>{m.forwardedFrom.displayName}</Link>
+                          </>
+                        )}
                       </span>
                     )}
 
@@ -522,7 +565,7 @@ export function MessageList({ items, loading, hasMore, loadingMore, onLoadOlder,
                             type="button"
                             aria-pressed={r.mine}
                             aria-label={`${r.emoji} ${r.count}${r.mine ? ', ваша реакция' : ''}`}
-                            disabled={readOnly}
+                            disabled={readOnly || !can.react}
                             onClick={() => onAction({ type: 'react', emoji: r.mine ? null : r.emoji }, m)}
                           >
                             <span className="reaction-emoji">{r.emoji}</span>
@@ -533,6 +576,18 @@ export function MessageList({ items, loading, hasMore, loadingMore, onLoadOlder,
                     )}
 
                     <span className="bubble-meta">{meta}</span>
+
+                    {/* Комментарии под публикацией канала — отдельной строкой
+                        во всю ширину пузыря, как в Телеграме. */}
+                    {m.commentsTo && (
+                      <Link className="bubble-comments" to={m.commentsTo}>
+                        <Icon name="comment" size={18} />
+                        {m.commentCount
+                          ? `${m.commentCount} ${plural(m.commentCount, 'комментарий', 'комментария', 'комментариев')}`
+                          : 'Прокомментировать'}
+                        <Icon name="chevron-right" size={16} />
+                      </Link>
+                    )}
 
                     {/* Меню с клавиатуры и мышью без правой кнопки. На сенсорных
                         экранах кнопки нет — там долгое нажатие. */}
@@ -562,6 +617,7 @@ export function MessageList({ items, loading, hasMore, loadingMore, onLoadOlder,
         <MessageMenu
           state={menu}
           readOnly={readOnly}
+          can={can}
           onClose={() => setMenu(null)}
           onAction={(action) => {
             const item = menu.item;
@@ -607,6 +663,7 @@ function ImageViewer({ url, alt, onClose }: { url: string; alt: string; onClose:
 type MenuProps = {
   state: NonNullable<MenuState>;
   readOnly: boolean;
+  can: Required<ListActions>;
   onClose: () => void;
   onAction: (action: MessageAction) => void;
 };
@@ -616,7 +673,7 @@ type MenuProps = {
  * там, где щёлкнули, и отодвигается от краёв окна. Esc и щелчок мимо —
  * закрыть; стрелки ходят по пунктам.
  */
-function MessageMenu({ state, readOnly, onClose, onAction }: MenuProps) {
+function MessageMenu({ state, readOnly, can, onClose, onAction }: MenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: state.x, top: state.y });
   const { item } = state;
@@ -670,7 +727,7 @@ function MessageMenu({ state, readOnly, onClose, onAction }: MenuProps) {
       style={{ left: pos.left, top: pos.top }}
       onKeyDown={onKeyDown}
     >
-      {!readOnly && (
+      {!readOnly && can.react && (
         <div className="msg-menu-reactions">
           {REACTIONS.map((emoji) => (
             <button
@@ -688,7 +745,7 @@ function MessageMenu({ state, readOnly, onClose, onAction }: MenuProps) {
       )}
 
       <div className="msg-menu-list">
-        {!readOnly && (
+        {!readOnly && can.reply && (
           <MenuItem icon="reply" onClick={() => onAction({ type: 'reply' })}>
             Ответить
           </MenuItem>
@@ -698,9 +755,11 @@ function MessageMenu({ state, readOnly, onClose, onAction }: MenuProps) {
             Копировать текст
           </MenuItem>
         )}
-        <MenuItem icon="forward" onClick={() => onAction({ type: 'forward' })}>
-          Переслать
-        </MenuItem>
+        {can.forward && (
+          <MenuItem icon="forward" onClick={() => onAction({ type: 'forward' })}>
+            Переслать
+          </MenuItem>
+        )}
         {item.canEdit && !readOnly && (
           <MenuItem icon="edit" onClick={() => onAction({ type: 'edit' })}>
             Изменить
@@ -1048,9 +1107,12 @@ type HeadProps = {
   actions?: ReactNode;
   /** Подзаголовок акцентным цветом — «в сети», «печатает…». */
   live?: boolean;
+  /** Куда «назад», если не в список чатов: из комментариев — в канал. Такая
+   *  стрелка видна всегда, и в две колонки: список рядом, а канал — нет. */
+  back?: { to: string; label: string };
 };
 
-export function PaneHead({ avatar, title, subtitle, to, actions, live = false }: HeadProps) {
+export function PaneHead({ avatar, title, subtitle, to, actions, live = false, back }: HeadProps) {
   const who = (
     <>
       {avatar}
@@ -1069,7 +1131,7 @@ export function PaneHead({ avatar, title, subtitle, to, actions, live = false }:
     <header className="pane-head">
       {/* Назад — только когда список и переписка не помещаются рядом: в две
           колонки список и так на виду (см. messaging.css). */}
-      <Link className="pane-back" to="/messages" aria-label="Ко всем чатам">
+      <Link className={back ? 'pane-back always' : 'pane-back'} to={back?.to ?? '/messages'} aria-label={back?.label ?? 'Ко всем чатам'}>
         <Icon name="chevron-left" size={22} />
       </Link>
       {to ? (

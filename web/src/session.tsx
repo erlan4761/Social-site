@@ -6,12 +6,12 @@ import { api, type Badges, type User } from './api';
  *  между «узнал вовремя» и «не долбим сервер вхолостую». */
 const UNREAD_POLL_MS = 30_000;
 
-const NO_BADGES: Badges = { messages: 0, chats: 0, notifications: 0 };
+const NO_BADGES: Badges = { messages: 0, chats: 0, channels: 0, notifications: 0 };
 
 type Session = {
   user: User | null;
   ready: boolean;
-  /** Что показывает сайдбар у «Сообщений»: личные плюс групповые чаты. */
+  /** Что показывает сайдбар у «Сообщений»: личные, групповые чаты и каналы. */
   unreadTotal: number;
   messageUnread: number;
   chatUnread: number;
@@ -85,7 +85,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     () => ({
       user,
       ready,
-      unreadTotal: badges.messages + badges.chats,
+      unreadTotal: badges.messages + badges.chats + (badges.channels ?? 0),
       messageUnread: badges.messages,
       chatUnread: badges.chats,
       notifUnread: badges.notifications,
