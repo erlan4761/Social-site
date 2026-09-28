@@ -1,10 +1,159 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { REACTIONS, type Author, type Quote, type Reaction } from '../api';
+import { REACTIONS, type Attachment, type AttachmentInput, type Author, type Quote, type Reaction } from '../api';
 import { clockTime, dayKey, dayLabel, fullDate, isOnline } from '../time';
+import { canRecord, mmss, useVoiceRecorder } from '../voice';
 import { Icon } from './Icon';
 import { Monogram } from './Monogram';
+
+/* ─ Вложения ───────────────────────────────────────────────────────────── */
+
+/** Подпись вложения там, где его самого не видно: список чатов, полоса ответа. */
+export function attachmentLabel(a: Pick<Attachment, 'kind' | 'name'> | null | undefined) {
+  if (!a) return '';
+  switch (a.kind) {
+    case 'image': return 'Фото';
+    case 'video': return 'Видео';
+    case 'voice': return 'Голосовое сообщение';
+    case 'audio': return a.name || 'Аудио';
+    case 'file': return a.name || 'Файл';
+  }
+}
+
+/** Превью сообщения в одну строку: текст, а без него — что приложено. */
+export const previewText = (body: string, a: Attachment | null) =>
+  body ? oneLine(body) : attachmentLabel(a);
+
+/** `1536` → `1,5 КБ`. */
+export function fileSize(bytes: number | null) {
+  if (bytes == null) return '';
+  if (bytes < 1024) return `${bytes} Б`;
+  const units = ['КБ', 'МБ', 'ГБ'];
+  let v = bytes / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v.toLocaleString('ru-RU', { maximumFractionDigits: v < 10 ? 1 : 0 })} ${units[i]}`;
+}
+
+/**
+ * Плеер голосового: кнопка, «волна» и время — как в Телеграме. Сыгранная
+ * часть волны закрашена; по волне можно щёлкнуть и перемотать.
+ */
+function VoicePlayer({ a }: { a: Attachment }) {
+  const audio = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [at, setAt] = useState(0);
+  const total = a.duration ?? 0;
+  const bars = (a.wave ?? '').split('').map(Number);
+  const shown = bars.length > 0 ? bars : Array<number>(32).fill(2);
+  const progress = total > 0 ? Math.min(1, at / total) : 0;
+
+  function toggle() {
+    const el = audio.current;
+    if (!el) return;
+    if (el.paused) void el.play().catch(() => setPlaying(false));
+    else el.pause();
+  }
+
+  return (
+    <div className="voice">
+      <button className="voice-play" type="button" onClick={toggle} aria-label={playing ? 'Пауза' : 'Слушать голосовое'}>
+        {playing ? (
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="2" width="3.5" height="12" rx="1" fill="currentColor" /><rect x="9.5" y="2" width="3.5" height="12" rx="1" fill="currentColor" /></svg>
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.4v11.2a.8.8 0 0 0 1.2.7l9.3-5.6a.8.8 0 0 0 0-1.4L5.2 1.7A.8.8 0 0 0 4 2.4z" fill="currentColor" /></svg>
+        )}
+      </button>
+      <span className="voice-body">
+        <span
+          className="voice-wave"
+          role="slider"
+          aria-label="Перемотка"
+          aria-valuemin={0}
+          aria-valuemax={total}
+          aria-valuenow={Math.round(at)}
+          tabIndex={0}
+          onClick={(e) => {
+            const el = audio.current;
+            if (!el || !total) return;
+            const r = e.currentTarget.getBoundingClientRect();
+            el.currentTime = ((e.clientX - r.left) / r.width) * total;
+          }}
+          onKeyDown={(e) => {
+            const el = audio.current;
+            if (!el) return;
+            if (e.key === 'ArrowRight') el.currentTime = Math.min(total, el.currentTime + 5);
+            if (e.key === 'ArrowLeft') el.currentTime = Math.max(0, el.currentTime - 5);
+          }}
+        >
+          {shown.map((h, i) => (
+            <span
+              key={i}
+              className={i / shown.length < progress ? 'played' : undefined}
+              style={{ height: `${3 + h * 2}px` }}
+            />
+          ))}
+        </span>
+        <span className="voice-time">{mmss(playing || at > 0 ? at : total)}</span>
+      </span>
+      <audio
+        ref={audio}
+        src={a.url}
+        preload="none"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false);
+          setAt(0);
+        }}
+        onTimeUpdate={(e) => setAt(e.currentTarget.currentTime)}
+      />
+    </div>
+  );
+}
+
+type ViewProps = { a: Attachment; onMediaLoad: () => void; onOpenImage: (url: string, alt: string) => void };
+
+function AttachmentView({ a, onMediaLoad, onOpenImage }: ViewProps) {
+  switch (a.kind) {
+    case 'image':
+      return (
+        <button className="att-image" type="button" onClick={() => onOpenImage(a.url, a.name ?? 'Фото')} aria-label="Открыть фото">
+          <img src={a.url} alt={a.name ?? 'Фото'} loading="lazy" onLoad={onMediaLoad} />
+        </button>
+      );
+    case 'video':
+      return <video className="att-video" src={a.url} controls preload="metadata" playsInline onLoadedMetadata={onMediaLoad} />;
+    case 'voice':
+      return <VoicePlayer a={a} />;
+    case 'audio':
+      return (
+        <div className="att-audio">
+          <span className="att-audio-name">
+            <Icon name="music" size={18} />
+            {a.name ?? 'Аудио'}
+          </span>
+          <audio src={a.url} controls preload="none" />
+        </div>
+      );
+    case 'file':
+      return (
+        <a className="att-file" href={a.url} download={a.name ?? undefined}>
+          <span className="att-file-icon">
+            <Icon name="file" size={22} />
+          </span>
+          <span className="att-file-text">
+            <span className="att-file-name">{a.name ?? 'Файл'}</span>
+            <span className="att-file-size">{fileSize(a.size)}</span>
+          </span>
+        </a>
+      );
+  }
+}
 
 /**
  * Детали мессенджера, общие для личной переписки и группового чата: у них
@@ -97,6 +246,7 @@ export type BubbleItem = {
   forwardedFrom: { username: string; displayName: string } | null;
   replyTo: Quote | null;
   reactions: Reaction[];
+  attachment: Attachment | null;
   canEdit: boolean;
   canDelete: boolean;
 };
@@ -171,7 +321,14 @@ export function MessageList({ items, loading, hasMore, loadingMore, onLoadOlder,
   const prev = useRef<{ first?: number; last?: number; height: number }>({ height: 0 });
   const [menu, setMenu] = useState<MenuState>(null);
   const [flash, setFlash] = useState<number | null>(null);
+  const [viewer, setViewer] = useState<{ url: string; alt: string } | null>(null);
   const press = useRef<{ timer: number; x: number; y: number } | null>(null);
+
+  /** Фото догрузилось и выросло — если человек был внизу, он и остаётся внизу. */
+  function onMediaLoad() {
+    const el = box.current;
+    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
+  }
 
   // Прокрутка решается до отрисовки кадра, иначе на миг был бы виден скачок.
   useLayoutEffect(() => {
@@ -333,15 +490,28 @@ export function MessageList({ items, loading, hasMore, loadingMore, onLoadOlder,
                       </button>
                     )}
 
+                    {m.attachment && (
+                      <AttachmentView
+                        a={m.attachment}
+                        onMediaLoad={onMediaLoad}
+                        onOpenImage={(url, alt) => setViewer({ url, alt })}
+                      />
+                    )}
+
                     {/* Невидимая копия подписи в конце текста резервирует ей место
                         в последней строке: время встаёт справа внизу, как в
-                        Телеграме, и никогда не наезжает на слова. */}
-                    <p className="bubble-text">
-                      {m.body}
-                      <span className="bubble-meta-space" aria-hidden="true">
-                        {meta}
-                      </span>
-                    </p>
+                        Телеграме, и никогда не наезжает на слова. Без текста
+                        (фото, голосовое) подпись идёт отдельной строкой. */}
+                    {m.body ? (
+                      <p className="bubble-text">
+                        {m.body}
+                        <span className="bubble-meta-space" aria-hidden="true">
+                          {meta}
+                        </span>
+                      </p>
+                    ) : (
+                      m.reactions.length === 0 && <span className="bubble-foot" aria-hidden="true" />
+                    )}
 
                     {m.reactions.length > 0 && (
                       <div className="reactions">
@@ -386,6 +556,8 @@ export function MessageList({ items, loading, hasMore, loadingMore, onLoadOlder,
         )}
       </div>
 
+      {viewer && <ImageViewer url={viewer.url} alt={viewer.alt} onClose={() => setViewer(null)} />}
+
       {menu && (
         <MessageMenu
           state={menu}
@@ -399,6 +571,34 @@ export function MessageList({ items, loading, hasMore, loadingMore, onLoadOlder,
         />
       )}
     </div>
+  );
+}
+
+/* ─ Просмотр фото ──────────────────────────────────────────────────────── */
+
+/** Фото во весь экран. Нативный `<dialog>`: Esc и возврат фокуса — от
+ *  платформы. Щелчок куда угодно закрывает, как в Телеграме. */
+function ImageViewer({ url, alt, onClose }: { url: string; alt: string; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.showModal();
+    const onNativeClose = () => close.current();
+    el.addEventListener('close', onNativeClose);
+    return () => el.removeEventListener('close', onNativeClose);
+  }, []);
+
+  return (
+    <dialog className="viewer" ref={ref} onClick={() => ref.current?.close()} aria-label={alt}>
+      <img src={url} alt={alt} />
+      <a className="viewer-open" href={url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+        Открыть оригинал
+      </a>
+    </dialog>
   );
 }
 
@@ -493,9 +693,11 @@ function MessageMenu({ state, readOnly, onClose, onAction }: MenuProps) {
             Ответить
           </MenuItem>
         )}
-        <MenuItem icon="copy" onClick={() => onAction({ type: 'copy' })}>
-          Копировать текст
-        </MenuItem>
+        {item.body && (
+          <MenuItem icon="copy" onClick={() => onAction({ type: 'copy' })}>
+            Копировать текст
+          </MenuItem>
+        )}
         <MenuItem icon="forward" onClick={() => onAction({ type: 'forward' })}>
           Переслать
         </MenuItem>
@@ -552,11 +754,19 @@ export type ComposerMode =
   | { kind: 'edit'; id: number; body: string }
   | null;
 
+/** Потолок вложения — как у сервера: больше он всё равно не примет. */
+const FILE_MAX = 40 * 1024 * 1024;
+/** Что предлагает окно выбора файла. Решает всё равно сервер — по содержимому. */
+const ACCEPT = 'image/*,video/*,audio/*,.pdf,.zip,.docx,.xlsx,.pptx';
+
 type ComposerProps = {
   placeholder: string;
   /** Отправка или сохранение правки. `true` — готово, поле очищается;
    *  `false` — ошибка, текст остаётся. */
   onSend: (text: string) => Promise<boolean>;
+  /** Отправка с вложением: файл с подписью или голосовое. Без неё скрепки и
+   *  микрофона нет. */
+  onSendAttachment?: (input: Omit<AttachmentInput, 'replyTo'>) => Promise<boolean>;
   mode?: ComposerMode;
   onCancelMode?: () => void;
   /** Стрелка вверх в пустом поле — править последнее своё, как в Телеграме. */
@@ -568,6 +778,7 @@ type ComposerProps = {
 export function Composer({
   placeholder,
   onSend,
+  onSendAttachment,
   mode = null,
   onCancelMode,
   onEditLast,
@@ -576,11 +787,24 @@ export function Composer({
 }: ComposerProps) {
   const id = useId();
   const field = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [pending, setPending] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const lastTyping = useRef(0);
+  const editing = mode?.kind === 'edit';
   const left = LIMIT - text.length;
-  const ready = text.trim().length > 0 && left >= 0 && !sending;
+  const ready = (text.trim().length > 0 || pending != null) && left >= 0 && !sending;
+  const attachable = Boolean(onSendAttachment) && !editing;
+
+  const voice = useVoiceRecorder((rec) => {
+    if (!onSendAttachment) return;
+    setSending(true);
+    void onSendAttachment({ file: rec.blob, name: rec.name, voice: { duration: rec.duration, wave: rec.wave } })
+      .finally(() => setSending(false));
+  });
 
   // Вход в правку подставляет текст сообщения, выход из неё — очищает поле:
   // иначе после «Отмена» в поле остался бы старый текст, похожий на черновик.
@@ -598,18 +822,47 @@ export function Composer({
     if (modeKey) field.current?.focus();
   }, [modeKey, editBody]);
 
+  // Миниатюра выбранного фото — через object URL, который надо отпускать.
+  useEffect(() => {
+    if (!pending || !pending.type.startsWith('image/')) {
+      setPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(pending);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [pending]);
+
+  function pick(file: File | null | undefined) {
+    setFileError(null);
+    if (!file) return;
+    if (file.size > FILE_MAX) {
+      setFileError('Файл больше 40 МБ — такой не отправить.');
+      return;
+    }
+    setPending(file);
+    field.current?.focus();
+  }
+
   async function submit() {
     const trimmed = text.trim();
-    if (!trimmed || trimmed.length > LIMIT || sending) return;
+    if ((!trimmed && !pending) || trimmed.length > LIMIT || sending) return;
     setSending(true);
-    const ok = await onSend(trimmed);
+    const ok =
+      pending && onSendAttachment && !editing
+        ? await onSendAttachment({ file: pending, name: pending.name, body: trimmed })
+        : await onSend(trimmed);
     setSending(false);
     if (ok) {
       setText('');
+      setPending(null);
       wasEditing.current = false;
     }
     field.current?.focus();
   }
+
+  // Пустое поле без файла — вместо «Отправить» микрофон, как в Телеграме.
+  const showMic = attachable && canRecord() && !text.trim() && !pending;
 
   return (
     <div className="composer-wrap">
@@ -637,60 +890,149 @@ export function Composer({
         </div>
       )}
 
-      <form
-        className="composer"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void submit();
-        }}
-      >
-        <label className="sr-only" htmlFor={id}>
-          {mode?.kind === 'edit' ? 'Новый текст сообщения' : 'Сообщение'}
-        </label>
-        <textarea
-          id={id}
-          ref={field}
-          rows={1}
-          value={text}
-          placeholder={placeholder}
-          autoFocus={autoFocus && !touch()}
-          onChange={(e) => {
-            setText(e.target.value);
-            const now = Date.now();
-            if (onTyping && e.target.value.trim() && mode?.kind !== 'edit' && now - lastTyping.current > TYPING_EVERY_MS) {
-              lastTyping.current = now;
-              onTyping();
-            }
+      {pending && (
+        <div className="composer-file">
+          {preview ? (
+            <img className="composer-file-thumb" src={preview} alt="" />
+          ) : (
+            <span className="composer-file-icon">
+              <Icon name={pending.type.startsWith('audio/') ? 'music' : 'file'} size={22} />
+            </span>
+          )}
+          <span className="composer-file-text">
+            <strong>{pending.name}</strong>
+            <span>{fileSize(pending.size)}</span>
+          </span>
+          <button className="icon-btn" type="button" aria-label="Убрать файл" onClick={() => setPending(null)}>
+            <Icon name="close" size={18} />
+          </button>
+        </div>
+      )}
+
+      {(fileError || voice.error) && (
+        <p className="composer-error" role="alert">
+          {fileError ?? voice.error}
+        </p>
+      )}
+
+      {voice.recording ? (
+        <div className="composer recording" role="group" aria-label="Запись голосового">
+          <button className="icon-btn" type="button" aria-label="Отменить запись" onClick={() => voice.stop(true)}>
+            <Icon name="trash" />
+          </button>
+          <span className="rec-dot" aria-hidden="true" />
+          <span className="rec-time" aria-live="off">
+            {mmss(voice.elapsed)}
+          </span>
+          <span className="rec-hint">Идёт запись — отправьте, когда закончите</span>
+          <button className="composer-send" type="button" aria-label="Отправить голосовое" onClick={() => voice.stop(false)}>
+            <Icon name="send" size={20} />
+          </button>
+        </div>
+      ) : (
+        <form
+          className="composer"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
           }}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape' && mode) {
-              e.preventDefault();
-              onCancelMode?.();
-              return;
-            }
-            if (e.key === 'ArrowUp' && !text && !mode && onEditLast) {
-              e.preventDefault();
-              onEditLast();
-              return;
-            }
-            // isComposing — набор через IME: Enter там подтверждает слово, а не
-            // отправляет сообщение.
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !touch()) {
-              e.preventDefault();
-              void submit();
-            }
-          }}
-        />
-        {left <= COUNTER_FROM && <span className={left < 0 ? 'counter over' : 'counter'}>{left}</span>}
-        <button
-          className="composer-send"
-          type="submit"
-          disabled={!ready}
-          aria-label={mode?.kind === 'edit' ? 'Сохранить' : 'Отправить'}
         >
-          <Icon name={mode?.kind === 'edit' ? 'check' : 'send'} size={20} />
-        </button>
-      </form>
+          {attachable && (
+            <>
+              <button
+                className="icon-btn composer-attach"
+                type="button"
+                aria-label="Прикрепить файл"
+                title="Фото, видео, музыка или документ"
+                onClick={() => picker.current?.click()}
+              >
+                <Icon name="paperclip" />
+              </button>
+              <input
+                ref={picker}
+                type="file"
+                accept={ACCEPT}
+                hidden
+                onChange={(e) => {
+                  pick(e.target.files?.[0]);
+                  e.target.value = '';
+                }}
+              />
+            </>
+          )}
+
+          <label className="sr-only" htmlFor={id}>
+            {editing ? 'Новый текст сообщения' : pending ? 'Подпись к файлу' : 'Сообщение'}
+          </label>
+          <textarea
+            id={id}
+            ref={field}
+            rows={1}
+            value={text}
+            placeholder={pending ? 'Подпись' : placeholder}
+            autoFocus={autoFocus && !touch()}
+            onChange={(e) => {
+              setText(e.target.value);
+              const now = Date.now();
+              if (onTyping && e.target.value.trim() && !editing && now - lastTyping.current > TYPING_EVERY_MS) {
+                lastTyping.current = now;
+                onTyping();
+              }
+            }}
+            // Вставка картинки из буфера (скриншот) — сразу вложение, как в Телеграме.
+            onPaste={(e) => {
+              const file = attachable ? e.clipboardData.files[0] : undefined;
+              if (file) {
+                e.preventDefault();
+                pick(file);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && (mode || pending)) {
+                e.preventDefault();
+                if (pending) setPending(null);
+                else onCancelMode?.();
+                return;
+              }
+              if (e.key === 'ArrowUp' && !text && !mode && !pending && onEditLast) {
+                e.preventDefault();
+                onEditLast();
+                return;
+              }
+              // isComposing — набор через IME: Enter там подтверждает слово, а не
+              // отправляет сообщение.
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !touch()) {
+                e.preventDefault();
+                void submit();
+              }
+            }}
+          />
+          {left <= COUNTER_FROM && <span className={left < 0 ? 'counter over' : 'counter'}>{left}</span>}
+          {showMic ? (
+            <button
+              className="composer-send mic"
+              type="button"
+              aria-label="Записать голосовое"
+              disabled={sending}
+              onClick={() => {
+                voice.clearError();
+                void voice.start();
+              }}
+            >
+              <Icon name="mic" size={20} />
+            </button>
+          ) : (
+            <button
+              className="composer-send"
+              type="submit"
+              disabled={!ready}
+              aria-label={editing ? 'Сохранить' : 'Отправить'}
+            >
+              <Icon name={editing ? 'check' : 'send'} size={20} />
+            </button>
+          )}
+        </form>
+      )}
     </div>
   );
 }

@@ -66,11 +66,54 @@ export type Reaction = { emoji: string; count: number; mine: boolean };
 /** Цитата в ответе. `deleted` — оригинал удалён или скрыт блокировкой: для
  *  читающего это одно и то же «сообщение недоступно». */
 export type Quote =
-  | { id: number; author: { id: number; displayName: string }; body: string; deleted?: undefined }
+  | {
+      id: number;
+      author: { id: number; displayName: string };
+      body: string;
+      attachmentKind?: AttachmentKind | null;
+      deleted?: undefined;
+    }
   | { id: number; deleted: true };
 
-/** Общее у сообщений ЛС и групп: правка, пересылка, ответ, реакции. */
+export type AttachmentKind = 'image' | 'video' | 'audio' | 'voice' | 'file';
+
+/** Вложение сообщения. `url` отдаёт файл только тем, кто видит сообщение. */
+export type Attachment = {
+  url: string;
+  kind: AttachmentKind;
+  mime: string;
+  name: string | null;
+  size: number | null;
+  /** Только у голосовых: секунды и «волна» — строка цифр 0–9, по столбику на цифру. */
+  duration: number | null;
+  wave: string | null;
+};
+
+/** Что уходит вместе с файлом. */
+export type AttachmentInput = {
+  file: Blob;
+  name?: string;
+  body?: string;
+  replyTo?: number | null;
+  voice?: { duration: number; wave: string };
+};
+
+function attachmentForm(input: AttachmentInput) {
+  const form = new FormData();
+  form.append('file', input.file, input.name ?? 'file');
+  if (input.body) form.append('body', input.body);
+  if (input.replyTo != null) form.append('replyTo', String(input.replyTo));
+  if (input.voice) {
+    form.append('voice', '1');
+    form.append('duration', String(input.voice.duration));
+    form.append('wave', input.voice.wave);
+  }
+  return form;
+}
+
+/** Общее у сообщений ЛС и групп: правка, пересылка, ответ, реакции, вложение. */
 export type MessageExtras = {
+  attachment: Attachment | null;
   editedAt: string | null;
   forwardedFrom: { username: string; displayName: string } | null;
   replyTo: Quote | null;
@@ -294,6 +337,12 @@ const realApi = {
       body: body({ body: text, replyTo: replyTo ?? undefined }),
     }),
 
+  sendAttachment: (username: string, input: AttachmentInput) =>
+    request<{ message: Message }>(`/messages/${encodeURIComponent(username)}`, {
+      method: 'POST',
+      body: attachmentForm(input),
+    }),
+
   editMessage: (username: string, id: number, text: string) =>
     request<{ message: Message }>(`/messages/${encodeURIComponent(username)}/${id}`, {
       method: 'PATCH',
@@ -454,6 +503,12 @@ const realApi = {
     request<{ message: ChatMessage }>(`/chats/${id}/messages`, {
       method: 'POST',
       body: body({ body: text, replyTo: replyTo ?? undefined }),
+    }),
+
+  sendChatAttachment: (chatId: number, input: AttachmentInput) =>
+    request<{ message: ChatMessage }>(`/chats/${chatId}/messages`, {
+      method: 'POST',
+      body: attachmentForm(input),
     }),
 
   editChatMessage: (chatId: number, id: number, text: string) =>

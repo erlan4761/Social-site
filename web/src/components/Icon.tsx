@@ -44,7 +44,10 @@ export type IconName =
   | 'reply'
   | 'forward'
   | 'copy'
-  | 'edit';
+  | 'edit'
+  | 'mic'
+  | 'music'
+  | 'file';
 
 /** Лучи солнца: восемь отрезков по кругу, считаются один раз при загрузке. */
 const SUN_RAYS = [0, 45, 90, 135, 180, 225, 270, 315].map((deg) => {
@@ -194,6 +197,26 @@ const SHAPES: Record<IconName, ReactElement> = {
     <>
       <path d="M15.4 5.2 18.8 8.6 9 18.4l-4.2.8.8-4.2z" />
       <path d="m13.4 7.2 3.4 3.4" />
+    </>
+  ),
+  mic: (
+    <>
+      <rect x="9" y="3.4" width="6" height="11" rx="3" />
+      <path d="M5.8 11.6a6.2 6.2 0 0 0 12.4 0" />
+      <path d="M12 17.8v2.8" />
+    </>
+  ),
+  music: (
+    <>
+      <path d="M9.4 17.2V5.6l9.2-1.8v11.6" />
+      <circle cx="7" cy="17.2" r="2.4" />
+      <circle cx="16.2" cy="15.4" r="2.4" />
+    </>
+  ),
+  file: (
+    <>
+      <path d="M13.6 3.4H7a1.6 1.6 0 0 0-1.6 1.6v14a1.6 1.6 0 0 0 1.6 1.6h10a1.6 1.6 0 0 0 1.6-1.6V8.4z" />
+      <path d="M13.6 3.4v5h5" />
     </>
   ),
 };

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
-import { api, ApiError, type Chat, type ChatMessage } from '../api';
+import { api, ApiError, type AttachmentInput, type Chat, type ChatMessage } from '../api';
 import {
-  Composer, MessageList, PaneHead, PresenceAvatar, TypingDots, editable, mergeLatest, oneLine, typingLabel,
+  Composer, MessageList, PaneHead, PresenceAvatar, TypingDots, editable, mergeLatest, previewText, typingLabel,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
@@ -164,6 +164,21 @@ function ChatView({ idParam }: { idParam: string }) {
     }
   }
 
+  async function sendAttachment(input: Omit<AttachmentInput, 'replyTo'>) {
+    setError(null);
+    try {
+      const res = await api.sendChatAttachment(chatId, { ...input, replyTo: mode?.kind === 'reply' ? mode.id : null });
+      edits.current += 1;
+      setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
+      setMode(null);
+      refreshList();
+      return true;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось отправить файл');
+      return false;
+    }
+  }
+
   async function act(action: MessageAction, item: BubbleItem) {
     const msg = messages.find((m) => m.id === item.id);
     if (!msg) return;
@@ -172,7 +187,7 @@ function ChatView({ idParam }: { idParam: string }) {
     try {
       switch (action.type) {
         case 'reply':
-          setMode({ kind: 'reply', id: msg.id, who: msg.author.displayName, body: oneLine(msg.body) });
+          setMode({ kind: 'reply', id: msg.id, who: msg.author.displayName, body: previewText(msg.body, msg.attachment) });
           break;
         case 'edit':
           setMode({ kind: 'edit', id: msg.id, body: msg.body });
@@ -315,6 +330,7 @@ function ChatView({ idParam }: { idParam: string }) {
       forwardedFrom: m.forwardedFrom,
       replyTo: m.replyTo,
       reactions: m.reactions,
+      attachment: m.attachment,
       canEdit: mine && !m.forwardedFrom && editable(m.createdAt),
       // Владелец чата удаляет любое сообщение — как админ группы.
       canDelete: mine || Boolean(chat?.iAmOwner),
@@ -473,6 +489,7 @@ function ChatView({ idParam }: { idParam: string }) {
       <Composer
         placeholder="Сообщение в чат"
         onSend={send}
+        onSendAttachment={sendAttachment}
         mode={mode}
         onCancelMode={() => setMode(null)}
         onEditLast={editLast}
@@ -483,7 +500,7 @@ function ChatView({ idParam }: { idParam: string }) {
       {forwarding && (
         <ForwardDialog
           source={{ from: 'chat', id: forwarding.id }}
-          preview={oneLine(forwarding.body)}
+          preview={previewText(forwarding.body, forwarding.attachment)}
           onClose={() => setForwarding(null)}
         />
       )}

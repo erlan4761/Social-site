@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useMatch, useNavigate } from 'react-router-dom';
 import { api, ApiError, type Author, type ChatSummary, type Conversation } from '../api';
-import { PresenceAvatar, Ticks } from '../components/Chat';
+import { PresenceAvatar, Ticks, previewText } from '../components/Chat';
 import { Icon } from '../components/Icon';
 import { Monogram } from '../components/Monogram';
 import { NewChatDialog } from '../components/NewChatDialog';
@@ -252,7 +252,7 @@ function DmRow({ c, meId }: { c: Conversation; meId?: number }) {
         <span className="dialog-foot">
           <span className={c.unread > 0 ? 'dialog-last unread' : 'dialog-last'}>
             {mine && <span className="dialog-you">Вы: </span>}
-            {c.lastMessage.body}
+            {previewText(c.lastMessage.body, c.lastMessage.attachment)}
           </span>
           {c.unread > 0 && (
             <span className="badge">
@@ -288,7 +288,7 @@ function ChatRow({ c, meId }: { c: ChatSummary; meId?: number }) {
             {last ? (
               <>
                 <span className="dialog-you">{mine ? 'Вы: ' : `${last.author.displayName}: `}</span>
-                {last.body}
+                {previewText(last.body, last.attachment)}
               </>
             ) : (
               `${c.memberCount} ${plural(c.memberCount, 'участник', 'участника', 'участников')}, сообщений пока нет`

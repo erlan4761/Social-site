@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
-import { api, ApiError, type Message, type Person } from '../api';
+import { api, ApiError, type AttachmentInput, type Message, type Person } from '../api';
 import {
-  Composer, MessageList, PaneHead, PresenceAvatar, TypingDots, editable, mergeLatest, oneLine,
+  Composer, MessageList, PaneHead, PresenceAvatar, TypingDots, editable, mergeLatest, previewText,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
@@ -147,6 +147,22 @@ function ThreadView({ username }: { username: string }) {
     }
   }
 
+  /** Файл с подписью или голосовое. Ответом может быть и вложение. */
+  async function sendAttachment(input: Omit<AttachmentInput, 'replyTo'>) {
+    setError(null);
+    try {
+      const res = await api.sendAttachment(username, { ...input, replyTo: mode?.kind === 'reply' ? mode.id : null });
+      edits.current += 1;
+      setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
+      setMode(null);
+      refreshList();
+      return true;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось отправить файл');
+      return false;
+    }
+  }
+
   async function act(action: MessageAction, item: BubbleItem) {
     const msg = messages.find((m) => m.id === item.id);
     if (!msg || !other) return;
@@ -159,7 +175,7 @@ function ThreadView({ username }: { username: string }) {
             kind: 'reply',
             id: msg.id,
             who: msg.fromId === user?.id ? (user?.displayName ?? '') : other.displayName,
-            body: oneLine(msg.body),
+            body: previewText(msg.body, msg.attachment),
           });
           break;
         case 'edit':
@@ -216,6 +232,7 @@ function ThreadView({ username }: { username: string }) {
       forwardedFrom: m.forwardedFrom,
       replyTo: m.replyTo,
       reactions: m.reactions,
+      attachment: m.attachment,
       canEdit: mine && !m.forwardedFrom && editable(m.createdAt),
       canDelete: mine,
     };
@@ -279,6 +296,7 @@ function ThreadView({ username }: { username: string }) {
         <Composer
           placeholder="Сообщение"
           onSend={send}
+          onSendAttachment={sendAttachment}
           mode={mode}
           onCancelMode={() => setMode(null)}
           onEditLast={editLast}
@@ -290,7 +308,7 @@ function ThreadView({ username }: { username: string }) {
       {forwarding && (
         <ForwardDialog
           source={{ from: 'dm', id: forwarding.id }}
-          preview={oneLine(forwarding.body)}
+          preview={previewText(forwarding.body, forwarding.attachment)}
           onClose={() => setForwarding(null)}
         />
       )}

@@ -9,7 +9,7 @@
  * В обычную сборку этот файл не попадает: см. переключение в api.ts.
  */
 import type {
-  ArchiveMonth, Author, Badges, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
+  ArchiveMonth, Attachment, AttachmentInput, Author, Badges, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
   Conversation, ForwardRef, ForwardTarget, Media, Message, Notification as NotificationItem,
   NotificationKind, Page, Person, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
 } from '../api';
@@ -41,7 +41,8 @@ type DbPost = {
 
 type DbComment = { id: number; postId: number; authorId: number; body: string; createdAt: string };
 /** Поля действий с сообщениями — как колонки reply_to_id, edited_at, fwd_user_id на сервере. */
-type DbExtras = { replyToId: number | null; editedAt: string | null; fwdUserId: number | null };
+/** Вложение витрины — ссылка blob: или data: прямо в памяти вкладки. */
+type DbExtras = { replyToId: number | null; editedAt: string | null; fwdUserId: number | null; attachment: Attachment | null };
 type DbMessage = DbExtras & { id: number; fromId: number; toId: number; body: string; createdAt: string; readAt: string | null };
 /** Реакция: одна на человека на сообщение, как первичный ключ на сервере. */
 type DbReaction = { messageId: number; userId: number; emoji: string; createdAt: string };
@@ -79,7 +80,7 @@ type DbChat = { id: number; title: string; ownerId: number; createdAt: string };
 /** `lastReadId` — ватерлиния прочитанного, как в схеме сервера: в группе
  *  получателей много, и отметка на каждом сообщении стоила бы таблицы N×M. */
 type DbChatMember = { chatId: number; userId: number; joinedAt: string; lastReadId: number };
-const NO_EXTRAS: DbExtras = { replyToId: null, editedAt: null, fwdUserId: null };
+const NO_EXTRAS: DbExtras = { replyToId: null, editedAt: null, fwdUserId: null, attachment: null };
 
 type DbChatMessage = DbExtras & { id: number; chatId: number; authorId: number; body: string; createdAt: string };
 
@@ -131,6 +132,37 @@ function gradient(from: string, to: string, w = 720, h = 480, label = '') {
     ${label ? `<text x="50%" y="50%" fill="#fff" font-family="sans-serif" font-size="${Math.round(w / 18)}" text-anchor="middle" opacity=".75">${label}</text>` : ''}
   </svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+/**
+ * «Голосовое» витрины: напетая мелодия из шести нот, собранная в WAV прямо в
+ * браузере. Настоящую запись тащить в сборку незачем, а без неё плеер
+ * голосовых в витрине было бы нечем показать тому, у кого нет микрофона.
+ */
+function hummedVoice(seconds: number): { url: string; wave: string } {
+  const rate = 8000;
+  const n = Math.floor(rate * seconds);
+  const notes = [392, 440, 494, 440, 392, 330];
+  const span = seconds / notes.length;
+  const view = new DataView(new ArrayBuffer(44 + n * 2));
+  const text = (at: number, s: string) => [...s].forEach((ch, i) => view.setUint8(at + i, ch.charCodeAt(0)));
+  text(0, 'RIFF'); view.setUint32(4, 36 + n * 2, true); text(8, 'WAVE');
+  text(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  text(36, 'data'); view.setUint32(40, n * 2, true);
+
+  const envelope = (t: number) => Math.sin(Math.PI * ((t % span) / span)) ** 0.6;
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    const f = notes[Math.min(notes.length - 1, Math.floor(t / span))];
+    const s = envelope(t) * 0.3 * (Math.sin(2 * Math.PI * f * t) + 0.35 * Math.sin(4 * Math.PI * f * t));
+    view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, s)) * 32767, true);
+  }
+
+  const wave = Array.from({ length: 48 }, (_, i) => Math.round(envelope(((i + 0.5) / 48) * seconds) * 8) + 1)
+    .map((d) => Math.min(9, d))
+    .join('');
+  return { url: URL.createObjectURL(new Blob([view], { type: 'audio/wav' })), wave };
 }
 
 function seed() {
@@ -254,6 +286,9 @@ function seed() {
   const weekend = dm(demo, marina, 'Тогда схожу ещё раз. В выходные?', 84);
   // Ответ с цитатой и реакция — чтобы в витрине всё это было видно сразу.
   dm(marina, demo, 'Давай в субботу до обеда, пока пусто.', 82, true, weekend);
+  const hum = hummedVoice(6);
+  const voice = dm(marina, demo, '', 81);
+  voice.attachment = { url: hum.url, kind: 'voice', mime: 'audio/wav', name: null, size: null, duration: 6, wave: hum.wave };
   dmReactions.push({ messageId: weekend.id, userId: marina.id, emoji: '❤️', createdAt: ago(82) });
   dm(oleg, demo, 'Привет! Нашёл тот станок с фотографии — расскажу при встрече.', 30, false);
   dm(oleg, demo, 'И ещё: у тебя тот аккорд из поста — это Am7?', 25, false);
@@ -279,6 +314,11 @@ function seed() {
   };
 
   const invite = say(nina, 'Проявляем в субботу у меня? Бачок на две плёнки есть, проявителя хватит на четыре.', 70);
+  const tank = say(nina, 'Вот он, кстати.', 68);
+  tank.attachment = {
+    url: gradient('#3b7a9c', '#e08a4a', 720, 480, 'бачок и две плёнки'),
+    kind: 'image', mime: 'image/svg+xml', name: 'bachok.jpg', size: null, duration: null, wave: null,
+  };
   const mine = say(demo, 'Давайте. Принесу вторую плёнку и таймер, а то в прошлый раз считали вслух.', 65);
   const last = say(marina, 'Я приду с камерой деда — она пролежала на антресолях лет десять, надо проверить затвор.', 59, invite);
   chatReactions.push(
@@ -448,15 +488,58 @@ function reactionsOf(list: DbReaction[], messageId: number): Reaction[] {
 }
 
 /** Цитата: чего нет среди видимых сообщений той же переписки — «удалено». */
-function quoteOf(replyToId: number | null, visible: { id: number; body: string; authorId: number }[]): Quote | null {
+function quoteOf(
+  replyToId: number | null,
+  visible: { id: number; body: string; authorId: number; attachment: Attachment | null }[],
+): Quote | null {
   if (replyToId == null) return null;
   const m = visible.find((x) => x.id === replyToId);
   if (!m) return { id: replyToId, deleted: true };
   const a = byId(m.authorId)!;
+  const text = m.body || attachmentLabelOf(m.attachment);
   return {
     id: m.id,
     author: { id: a.id, displayName: a.displayName },
-    body: m.body.length > QUOTE_LEN ? `${m.body.slice(0, QUOTE_LEN).trimEnd()}…` : m.body,
+    body: text.length > QUOTE_LEN ? `${text.slice(0, QUOTE_LEN).trimEnd()}…` : text,
+    attachmentKind: m.attachment?.kind ?? null,
+  };
+}
+
+/** То же, что attachmentLabel() на сервере. */
+function attachmentLabelOf(a: Attachment | null) {
+  if (!a) return '';
+  if (a.kind === 'image') return 'Фото';
+  if (a.kind === 'video') return 'Видео';
+  if (a.kind === 'voice') return 'Голосовое сообщение';
+  if (a.kind === 'audio') return a.name || 'Аудио';
+  return a.name || 'Файл';
+}
+
+/**
+ * Вложение из выбранного файла. Настоящий сервер решает тип по первым байтам,
+ * витрине хватает MIME из браузера: сюда никто, кроме смотрящего, ничего не
+ * загружает, и бояться подмены некого.
+ */
+function attachmentFrom(input: AttachmentInput): Attachment {
+  if (input.file.size > 40 * 1024 * 1024) fail(413, 'Файл слишком большой');
+  const type = input.file.type;
+  const kind: Attachment['kind'] = input.voice
+    ? 'voice'
+    : type.startsWith('image/') ? 'image'
+    : type.startsWith('video/') ? 'video'
+    : type.startsWith('audio/') ? 'audio'
+    : 'file';
+  if (input.voice && (input.voice.duration < 1 || input.voice.duration > 300)) {
+    fail(400, 'Длительность голосового — от 1 до 300 секунд');
+  }
+  return {
+    url: URL.createObjectURL(input.file),
+    kind,
+    mime: type || 'application/octet-stream',
+    name: input.voice ? null : input.name ?? null,
+    size: input.file.size,
+    duration: input.voice?.duration ?? null,
+    wave: input.voice?.wave ?? null,
   };
 }
 
@@ -472,8 +555,9 @@ const toMessage = (m: DbMessage): Message => ({
   id: m.id, body: m.body, createdAt: m.createdAt, fromId: m.fromId, toId: m.toId, readAt: m.readAt,
   editedAt: m.editedAt,
   forwardedFrom: forwardedOf(m.fwdUserId),
-  replyTo: quoteOf(m.replyToId, pairOf(m).map((x) => ({ id: x.id, body: x.body, authorId: x.fromId }))),
+  replyTo: quoteOf(m.replyToId, pairOf(m).map((x) => ({ id: x.id, body: x.body, authorId: x.fromId, attachment: x.attachment }))),
   reactions: reactionsOf(dmReactions, m.id),
+  attachment: m.attachment,
 });
 
 /** Правка: своё, не пересланное, в первые двое суток — те же правила, что на сервере. */
@@ -515,11 +599,11 @@ function forwardSource(source: ForwardRef, u: DbUser) {
   if (source.from === 'dm') {
     const m = messages.find((x) => x.id === source.id && (x.fromId === u.id || x.toId === u.id));
     if (!m) fail(404, 'Сообщение для пересылки не найдено');
-    return { body: m!.body, fwdUserId: m!.fwdUserId ?? m!.fromId };
+    return { body: m!.body, fwdUserId: m!.fwdUserId ?? m!.fromId, attachment: m!.attachment };
   }
   const m = chatMessages.find((x) => x.id === source.id && memberRow(x.chatId, u.id) && !hidden(x.authorId));
   if (!m) fail(404, 'Сообщение для пересылки не найдено');
-  return { body: m!.body, fwdUserId: m!.fwdUserId ?? m!.authorId };
+  return { body: m!.body, fwdUserId: m!.fwdUserId ?? m!.authorId, attachment: m!.attachment };
 }
 
 // ─ Живая витрина ──────────────────────────────────────────────────────────
@@ -679,6 +763,7 @@ const toChatMessage = (m: DbChatMessage): ChatMessage => ({
   forwardedFrom: forwardedOf(m.fwdUserId),
   replyTo: quoteOf(m.replyToId, visibleChatMessages(m.chatId)),
   reactions: reactionsOf(chatReactions, m.id),
+  attachment: m.attachment,
 });
 
 /** Сообщение чата, видимое смотрящему, или 404. */
@@ -1085,7 +1170,7 @@ export const mockApi = rejectInsteadOfThrow({
     });
   },
 
-  sendMessage: (username: string, text: string, replyTo?: number | null, forward?: ForwardRef) => {
+  sendMessage: (username: string, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput) => {
     const u = requireMe()!;
     const other = byName(username);
     if (!other) fail(404, 'Пользователь не найден');
@@ -1096,7 +1181,8 @@ export const mockApi = rejectInsteadOfThrow({
 
     const src = forward ? forwardSource(forward, u) : null;
     const body = src ? src.body : text.trim();
-    if (!body) fail(400, '«сообщение»: минимум 1 символов');
+    const attachment = src ? src.attachment : file ? attachmentFrom(file) : null;
+    if (!body && !attachment) fail(400, '«сообщение»: минимум 1 символов');
     if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
     if (!src && replyTo != null && !pairThread(u.id, other!.id).some((m) => m.id === replyTo)) {
       fail(400, 'Сообщение, на которое вы отвечаете, не найдено');
@@ -1105,7 +1191,7 @@ export const mockApi = rejectInsteadOfThrow({
     const m: DbMessage = {
       id: id(), fromId: u.id, toId: other!.id, body,
       createdAt: new Date().toISOString(), readAt: null,
-      replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null,
+      replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, attachment,
     };
     messages.push(m);
     clearTyping(dmKey(u.id, other!.id), u.id);
@@ -1114,12 +1200,15 @@ export const mockApi = rejectInsteadOfThrow({
     return tick({ message: toMessage(m) });
   },
 
+  sendAttachment: (username: string, input: AttachmentInput) =>
+    mockApi.sendMessage(username, input.body ?? '', input.replyTo ?? null, undefined, input),
+
   editMessage: (username: string, messageId: number, text: string) => {
     const { u, other, m } = requirePairMessage(username, messageId);
     assertEditable(m.fromId, m.createdAt, m.fwdUserId, u);
     if (blockedPair(u.id, other.id)) fail(403, 'Переписка с этим пользователем недоступна');
     const body = text.trim();
-    if (!body) fail(400, '«сообщение»: минимум 1 символов');
+    if (!body && !m.attachment) fail(400, '«сообщение»: минимум 1 символов');
     if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
     if (body !== m.body) {
       m.body = body;
@@ -1524,11 +1613,12 @@ export const mockApi = rejectInsteadOfThrow({
     });
   },
 
-  sendChatMessage: (chatId: number, text: string, replyTo?: number | null, forward?: ForwardRef) => {
+  sendChatMessage: (chatId: number, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput) => {
     const { u, chat } = requireChat(chatId);
     const src = forward ? forwardSource(forward, u) : null;
     const body = src ? src.body : text.trim();
-    if (!body) fail(400, '«сообщение»: минимум 1 символов');
+    const attachment = src ? src.attachment : file ? attachmentFrom(file) : null;
+    if (!body && !attachment) fail(400, '«сообщение»: минимум 1 символов');
     if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
     if (!src && replyTo != null && !visibleChatMessages(chat.id).some((m) => m.id === replyTo)) {
       fail(400, 'Сообщение, на которое вы отвечаете, не найдено');
@@ -1536,7 +1626,7 @@ export const mockApi = rejectInsteadOfThrow({
 
     const m: DbChatMessage = {
       id: id(), chatId: chat.id, authorId: u.id, body, createdAt: new Date().toISOString(),
-      replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null,
+      replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, attachment,
     };
     chatMessages.push(m);
     clearTyping(`chat:${chat.id}`, u.id);
@@ -1548,12 +1638,15 @@ export const mockApi = rejectInsteadOfThrow({
     return tick({ message: toChatMessage(m) });
   },
 
+  sendChatAttachment: (chatId: number, input: AttachmentInput) =>
+    mockApi.sendChatMessage(chatId, input.body ?? '', input.replyTo ?? null, undefined, input),
+
   editChatMessage: (chatId: number, messageId: number, text: string) => {
     const { u, chat } = requireChat(chatId);
     const m = requireChatMessage(chat.id, messageId);
     assertEditable(m.authorId, m.createdAt, m.fwdUserId, u);
     const body = text.trim();
-    if (!body) fail(400, '«сообщение»: минимум 1 символов');
+    if (!body && !m.attachment) fail(400, '«сообщение»: минимум 1 символов');
     if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
     if (body !== m.body) {
       m.body = body;
