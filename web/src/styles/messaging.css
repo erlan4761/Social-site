@@ -361,6 +361,43 @@ a.pane-who:hover { background: var(--surface-2); }
 
 .pane-actions { display: flex; gap: var(--s-1); flex: none; }
 
+/* Поиск по переписке — строка и список найденного под шапкой. */
+.conv-search { padding: var(--s-3) var(--s-3) var(--s-2); }
+.conv-search-bar { display: flex; align-items: center; gap: var(--s-2); }
+.conv-search-bar .list-search { flex: 1; margin: 0; }
+.conv-search-count { margin: var(--s-2) var(--s-1) var(--s-1); font-size: var(--t-micro); color: var(--ink-3); }
+.conv-search-hits { list-style: none; margin: 0; padding: 0; }
+
+.conv-search-hits button {
+  display: grid;
+  gap: 0.125rem;
+  width: 100%;
+  padding: var(--s-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conv-search-hits button:hover,
+.conv-search-hits button:focus-visible { background: var(--surface-2); }
+
+.conv-hit-head { display: flex; gap: var(--s-2); align-items: baseline; font-size: var(--t-meta); }
+.conv-hit-head time { margin-left: auto; font-size: var(--t-micro); color: var(--ink-3); white-space: nowrap; }
+
+.conv-hit-body {
+  font-size: var(--t-body);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-hit-body mark { background: var(--accent-tint); color: var(--ink); border-radius: 3px; padding: 0 1px; }
+
 /* Закреплённое сообщение — полоса под шапкой с акцентной чертой слева. */
 .pinned-bar {
   display: flex;

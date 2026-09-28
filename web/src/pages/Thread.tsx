@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import { api, ApiError, type AttachmentInput, type Message, type Person, type PinnedPreview } from '../api';
 import {
-  Composer, MessageList, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText,
+  Composer, ConversationSearch, MessageList, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
+import { Icon } from '../components/Icon';
 import { useSession } from '../session';
 import { isOnline, lastSeenLabel } from '../time';
 import type { MessengerContext } from './Messenger';
@@ -37,6 +38,7 @@ function ThreadView({ username }: { username: string }) {
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<Message | null>(null);
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [jump, setJump] = useState<{ id: number; seq: number } | null>(null);
 
   /** Номер последнего своего изменения. Ответ опроса, ушедшего раньше него,
@@ -293,9 +295,32 @@ function ThreadView({ username }: { username: string }) {
             )
           }
           live={online || typing}
+          actions={
+            <button
+              className={searchOpen ? 'icon-btn on' : 'icon-btn'}
+              type="button"
+              aria-expanded={searchOpen}
+              aria-label="Поиск по переписке"
+              title="Поиск по переписке"
+              onClick={() => setSearchOpen((v) => !v)}
+            >
+              <Icon name="search" />
+            </button>
+          }
         />
       ) : (
         <header className="pane-head" />
+      )}
+
+      {searchOpen && (
+        <ConversationSearch
+          onSearch={async (q) => (await api.searchThread(username, q)).results}
+          onPick={(id) => {
+            setSearchOpen(false);
+            void reveal(id);
+          }}
+          onClose={() => setSearchOpen(false)}
+        />
       )}
 
       {pinned && (

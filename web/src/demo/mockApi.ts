@@ -9,7 +9,8 @@
  * В обычную сборку этот файл не попадает: см. переключение в api.ts.
  */
 import type {
-  ArchiveMonth, Attachment, AttachmentInput, Author, Badges, Channel, ChannelComment, ChannelPost, ChannelSummary, ForwardedFrom, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
+  ArchiveMonth, Attachment, AttachmentInput, Author, Badges, Channel, ChannelComment, ChannelPost, ChannelSummary,
+  ConversationHit, ForwardedFrom, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
   Conversation, ForwardRef, ForwardTarget, Media, Message, Notification as NotificationItem,
   NotificationKind, Page, Person, PinnedPreview, PrefKind, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
 } from '../api';
@@ -685,6 +686,37 @@ function requirePairMessage(username: string, messageId: number) {
   const m = pairThread(u.id, other!.id).find((x) => x.id === messageId);
   if (!m) fail(404, 'Сообщение не найдено');
   return { u, other: other!, m: m! };
+}
+
+/**
+ * Поиск по переписке — те же правила, что на сервере: ё → е, регистр не
+ * важен, все слова должны встретиться, ищется и имя файла; свежие сверху.
+ */
+function findHits<T extends { id: number; body: string; createdAt: string; attachment: Attachment | null }>(
+  q: string,
+  list: T[],
+  authorOf: (m: T) => number | null,
+): ConversationHit[] {
+  if (q.trim().length > 100) fail(400, 'Запрос длиннее 100 символов');
+  const terms = wordsOf(q).slice(0, 8);
+  if (terms.length === 0) return [];
+  return [...list]
+    .sort((a, b) => b.id - a.id)
+    .filter((m) => {
+      const text = foldSearchText(`${m.body} ${m.attachment?.name ?? ''}`).toLowerCase();
+      return terms.every((t) => text.includes(t));
+    })
+    .slice(0, 50)
+    .map((m) => {
+      const who = authorOf(m);
+      const a = who != null ? byId(who) : undefined;
+      return {
+        id: m.id,
+        body: m.body || attachmentLabelOf(m.attachment),
+        createdAt: m.createdAt,
+        author: a ? { id: a.id, displayName: a.displayName } : null,
+      };
+    });
 }
 
 const pinScope = (a: number, b: number) => `${Math.min(a, b)}-${Math.max(a, b)}`;
@@ -2141,6 +2173,26 @@ export const mockApi = rejectInsteadOfThrow({
   },
 
   // ─ Настройки чатов ────────────────────────────────────────────────────
+
+  // ─ Поиск внутри переписки ─────────────────────────────────────────────
+
+  searchThread: (username: string, q: string) => {
+    const u = requireMe()!;
+    const other = byName(username);
+    if (!other) fail(404, 'Пользователь не найден');
+    const hits = findHits(q, pairThread(u.id, other!.id), (m) => m.fromId);
+    return tick({ results: hits });
+  },
+
+  searchChat: (chatId: number, q: string) => {
+    const { chat } = requireChat(chatId);
+    return tick({ results: findHits(q, visibleChatMessages(chat.id), (m) => m.authorId) });
+  },
+
+  searchChannel: (handle: string, q: string) => {
+    const { c } = requireChannel(handle);
+    return tick({ results: findHits(q, postsOf(c.id), () => null) });
+  },
 
   pinMessage: (username: string, messageId: number) => {
     const { u, other, m } = requirePairMessage(username, messageId);

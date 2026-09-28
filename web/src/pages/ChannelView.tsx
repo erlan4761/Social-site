@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { api, ApiError, type AttachmentInput, type Channel, type ChannelPost, type PinnedPreview } from '../api';
 import {
-  Composer, MessageList, PaneHead, PinnedBar, editable, mergeLatest, previewText, revealOlder,
+  Composer, ConversationSearch, MessageList, PaneHead, PinnedBar, editable, mergeLatest, previewText, revealOlder,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
@@ -39,6 +39,7 @@ function ChannelPane({ handle }: { handle: string }) {
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<ChannelPost | null>(null);
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [jump, setJump] = useState<{ id: number; seq: number } | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -269,6 +270,17 @@ function ChannelPane({ handle }: { handle: string }) {
         subtitle={channel ? subscribers(channel.subscriberCount) : ''}
         actions={
           channel && (
+            <>
+            <button
+              className={searchOpen ? 'icon-btn on' : 'icon-btn'}
+              type="button"
+              aria-expanded={searchOpen}
+              aria-label="Поиск по переписке"
+              title="Поиск по переписке"
+              onClick={() => setSearchOpen((v) => !v)}
+            >
+              <Icon name="search" />
+            </button>
             <button
               className={infoOpen ? 'icon-btn on' : 'icon-btn'}
               type="button"
@@ -279,9 +291,21 @@ function ChannelPane({ handle }: { handle: string }) {
             >
               <Icon name="more" />
             </button>
+            </>
           )
         }
       />
+
+      {searchOpen && (
+        <ConversationSearch
+          onSearch={async (q) => (await api.searchChannel(handle, q)).results}
+          onPick={(id) => {
+            setSearchOpen(false);
+            void reveal(id);
+          }}
+          onClose={() => setSearchOpen(false)}
+        />
+      )}
 
       {pinned && (
         <PinnedBar

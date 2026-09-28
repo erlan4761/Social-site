@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { api, ApiError, type AttachmentInput, type Chat, type ChatMessage, type PinnedPreview } from '../api';
 import {
-  Composer, MessageList, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText, typingLabel,
+  Composer, ConversationSearch, MessageList, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText, typingLabel,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
@@ -56,6 +56,7 @@ function ChatView({ idParam }: { idParam: string }) {
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [jump, setJump] = useState<{ id: number; seq: number } | null>(null);
   /** Номер последнего своего изменения — см. Thread.tsx. */
   const edits = useRef(0);
@@ -392,6 +393,17 @@ function ChatView({ idParam }: { idParam: string }) {
         live={typing.length > 0}
         actions={
           chat && (
+            <>
+            <button
+              className={searchOpen ? 'icon-btn on' : 'icon-btn'}
+              type="button"
+              aria-expanded={searchOpen}
+              aria-label="Поиск по переписке"
+              title="Поиск по переписке"
+              onClick={() => setSearchOpen((v) => !v)}
+            >
+              <Icon name="search" />
+            </button>
             <button
               className={membersOpen ? 'icon-btn on' : 'icon-btn'}
               type="button"
@@ -405,9 +417,21 @@ function ChatView({ idParam }: { idParam: string }) {
             >
               <Icon name="user" />
             </button>
+            </>
           )
         }
       />
+
+      {searchOpen && (
+        <ConversationSearch
+          onSearch={async (q) => (await api.searchChat(chatId, q)).results}
+          onPick={(id) => {
+            setSearchOpen(false);
+            void reveal(id);
+          }}
+          onClose={() => setSearchOpen(false)}
+        />
+      )}
 
       {pinned && (
         <PinnedBar

@@ -123,6 +123,14 @@ export type MessageExtras = {
 /** Откуда пересылается сообщение. */
 export type ForwardRef = { from: 'dm' | 'chat' | 'channel'; id: number };
 
+/** Найденное внутри переписки: автор есть у ЛС и групп, у канала — нет. */
+export type ConversationHit = {
+  id: number;
+  body: string;
+  createdAt: string;
+  author: { id: number; displayName: string } | null;
+};
+
 /** Закреплённое сообщение переписки — для полосы под шапкой. */
 export type PinnedPreview = { id: number; body: string; attachmentKind: AttachmentKind | null };
 
@@ -396,6 +404,15 @@ const realApi = {
     request<{ ok: true }>(`/messages/${encodeURIComponent(username)}/${id}`, { method: 'DELETE' }),
 
   /** `null` — снять свою реакцию. */
+  searchThread: (username: string, q: string) =>
+    request<{ results: ConversationHit[] }>(`/messages/${encodeURIComponent(username)}/search?q=${encodeURIComponent(q)}`),
+
+  searchChat: (chatId: number, q: string) =>
+    request<{ results: ConversationHit[] }>(`/chats/${chatId}/search?q=${encodeURIComponent(q)}`),
+
+  searchChannel: (handle: string, q: string) =>
+    request<{ results: ConversationHit[] }>(`/channels/${encodeURIComponent(handle)}/search?q=${encodeURIComponent(q)}`),
+
   pinMessage: (username: string, id: number) =>
     request<{ pinned: PinnedPreview | null }>(`/messages/${encodeURIComponent(username)}/${id}/pin`, { method: 'PUT' }),
 
