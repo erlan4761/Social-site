@@ -2146,5 +2146,37 @@ await kira(`/channels/${pinHandle}/posts/${rulesPost}`, { method: 'DELETE' });
 r = await yan(`/channels/${pinHandle}/posts`);
 check('удалили публикацию — закрепа нет', r.body.pinned === null, JSON.stringify(r.body.pinned));
 
+console.log('\n— поиск внутри переписки —');
+const inSearch = (client, path, q) => client(`${path}/search?q=${encodeURIComponent(q)}`);
+await dmSend(kira, userLe, { body: 'Плёнку Ilford проявляем в субботу.' });
+await dmSend(lev, userKi, { body: 'А Kodak — в воскресенье.' });
+r = await inSearch(lev, `/messages/${userKi}`, 'ПЛЕНКУ');
+check('регистр и ё не важны', r.status === 200 && r.body.results?.[0]?.body.startsWith('Плёнку Ilford'), `${r.status} ${JSON.stringify(r.body)}`);
+check('у результата автор', r.body.results?.[0]?.author?.displayName === 'Кира', JSON.stringify(r.body.results?.[0]));
+r = await inSearch(lev, `/messages/${userKi}`, 'плёнку воскресенье');
+check('все слова должны встретиться', r.body.results?.length === 0, JSON.stringify(r.body.results));
+r = await inSearch(kira, `/messages/${userLe}`, 'договор');
+check('ищется и имя файла, с подписью вложения', r.body.results?.some((x) => x.body === 'Договор аренды.pdf'), JSON.stringify(r.body.results));
+r = await inSearch(mia, `/messages/${userKi}`, 'Ilford');
+check('чужая переписка не ищется — у постороннего пусто', r.status === 200 && r.body.results?.length === 0, JSON.stringify(r.body));
+r = await inSearch(lev, `/messages/${userKi}`, '***');
+check('мусорный запрос — пусто, не 500', r.status === 200 && r.body.results?.length === 0, `${r.status}`);
+r = await inSearch(lev, `/messages/${userKi}`, 'я'.repeat(101));
+check('запрос длиннее 100 — 400', r.status === 400, `${r.status}`);
+
+await chatSend(lev, { body: 'Проявитель Родинал заканчивается' });
+r = await inSearch(kira, `/chats/${actChat}`, 'родинал');
+check('поиск по чату', r.status === 200 && r.body.results?.[0]?.author?.displayName === 'Лев', `${r.status} ${JSON.stringify(r.body)}`);
+r = await inSearch(yan, `/chats/${actChat}`, 'родинал');
+check('не участник — 404', r.status === 404, `${r.status}`);
+await kira(`/users/${userLe}/block`, { method: 'PUT' });
+r = await inSearch(kira, `/chats/${actChat}`, 'родинал');
+check('реплики заблокированного не находятся', r.body.results?.length === 0, JSON.stringify(r.body.results));
+await kira(`/users/${userLe}/block`, { method: 'DELETE' });
+
+await kira(`/channels/${pinHandle}/posts`, { method: 'POST', body: JSON.stringify({ body: 'Сканер Epson V600 — впечатления' }) });
+r = await inSearch(yan, `/channels/${pinHandle}`, 'epson');
+check('поиск по каналу — любому вошедшему', r.status === 200 && r.body.results?.[0]?.body.startsWith('Сканер Epson'), `${r.status} ${JSON.stringify(r.body)}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

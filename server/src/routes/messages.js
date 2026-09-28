@@ -6,7 +6,7 @@ import { publicUrl } from '../media.js';
 import {
   ATTACH_INSERT_COLUMNS, FWD_COLUMNS, assertEditable, attachmentOf, attachmentUpload, attachmentValues,
   clearTyping, copyAttachment, decorate, dmKey, dropAttachment, emojiOf, extraFields, forwardSource, isForwarded, fwdJoin,
-  isTyping, readAttachment, replyIdOf, setTyping,
+  isTyping, readAttachment, replyIdOf, searchQuery, searchResult, searchRows, setTyping,
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
 import { dmUnreadTotal, prefFor, prefsOf } from '../prefs.js';
@@ -231,6 +231,27 @@ router.post('/:username', attachmentUpload.single('file'), async (req, res, next
 });
 
 /** Отмечает прочитанным всё входящее от этого собеседника. */
+/** Поиск по переписке с этим человеком — свежие сверху. */
+router.get('/:username/search', (req, res, next) => {
+  try {
+    const other = otherOr404(req, res);
+    if (!other) return;
+    const me = req.user.id;
+    const terms = searchQuery(req.query.q);
+    const rows = terms.length === 0 ? [] : db.prepare(`
+      SELECT m.id, m.body, m.created_at, m.from_id, m.attach_kind, m.attach_name FROM messages m
+      WHERE ${PAIR_SQL} ORDER BY m.id DESC
+    `).all({ me, other: other.id });
+    const names = { [me]: req.user.displayName, [other.id]: other.display_name };
+    res.json({
+      results: searchRows(rows, terms).map((row) =>
+        searchResult(row, { id: row.from_id, displayName: names[row.from_id] })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.put('/:username/read', (req, res) => {
   const other = otherOr404(req, res);
   if (!other) return;

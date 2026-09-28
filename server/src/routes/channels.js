@@ -5,7 +5,7 @@ import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { publicUrl } from '../media.js';
 import {
   ATTACH_COLUMNS, ATTACH_INSERT_COLUMNS, assertEditable, attachmentOf, attachmentUpload, attachmentValues,
-  dropAttachment, emojiOf, reactionsFor, readAttachment,
+  dropAttachment, emojiOf, reactionsFor, readAttachment, searchQuery, searchResult, searchRows,
 } from '../messageExtras.js';
 import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
 import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
@@ -287,6 +287,21 @@ router.delete('/:handle/pin', (req, res) => {
   if (!channel || !ownerOr403(channel, req, res)) return;
   unpin('channel', channel.id);
   res.json({ ok: true });
+});
+
+/** Поиск по публикациям канала. */
+router.get('/:handle/search', (req, res, next) => {
+  try {
+    const channel = channelOr404(req, res);
+    if (!channel) return;
+    const terms = searchQuery(req.query.q);
+    const rows = terms.length === 0 ? [] : db.prepare(
+      'SELECT id, body, created_at, attach_kind, attach_name FROM channel_posts WHERE channel_id = ? ORDER BY id DESC',
+    ).all(channel.id);
+    res.json({ results: searchRows(rows, terms).map((row) => searchResult(row)) });
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.put('/:handle/read', (req, res) => {

@@ -244,6 +244,42 @@ const attachmentFromRow = (row) =>
       }
     : null;
 
+/* ─ Поиск внутри переписки ─────────────────────────────────────────────
+ * Ищется только своя переписка — то, что человек и так видит, листая вверх.
+ * Правила те же, что у поиска по записям: свёртка ё → е, регистр не важен,
+ * все слова запроса должны встретиться. Фильтр на JS, а не LIKE: SQLite
+ * сравнивает без учёта регистра только латиницу. Переписка одного человека —
+ * тысячи строк, не миллионы; FTS-индекс здесь понадобится, когда станет иначе.
+ */
+const SEARCH_LIMIT = 50;
+const foldText = (s) => String(s ?? '').replace(/ё/g, 'е').replace(/Ё/g, 'Е').toLowerCase();
+
+export function searchQuery(raw) {
+  const q = String(raw ?? '').trim();
+  if (q.length > 100) throw bad('Запрос длиннее 100 символов');
+  return foldText(q).split(/[^\p{L}\p{N}_]+/u).filter(Boolean).slice(0, 8);
+}
+
+/** Строки, где встретились все слова, — свежие сверху, не больше пятидесяти.
+ *  Ищется и в имени файла: «договор» находит «Договор аренды.pdf». */
+export function searchRows(rows, terms) {
+  if (terms.length === 0) return [];
+  const out = [];
+  for (const row of rows) {
+    const text = foldText(`${row.body} ${row.attach_name ?? ''}`);
+    if (terms.every((t) => text.includes(t))) out.push(row);
+    if (out.length >= SEARCH_LIMIT) break;
+  }
+  return out;
+}
+
+export const searchResult = (row, author = null) => ({
+  id: row.id,
+  body: row.body || attachmentLabel(row.attach_kind, row.attach_name),
+  createdAt: row.created_at,
+  author,
+});
+
 /* ─ Проверки ввода ─────────────────────────────────────────────────────── */
 
 /** `replyTo` из тела запроса: число или отсутствие. Есть ли такое сообщение

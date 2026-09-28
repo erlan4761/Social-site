@@ -72,6 +72,11 @@ app.post('/api/chats/*splat', rateLimit({ windowMs: 60_000, max: relaxed ? 10_00
 // FTS-индекса, и поле ввода на клиенте шлёт запрос по мере набора. Шестьдесят
 // в минуту — это запрос в секунду подряд, живому человеку столько не нужно.
 app.use('/api/search', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 60 }));
+// Поиск внутри переписки — та же мерка: поле ввода шлёт запрос по мере набора.
+const conversationSearchLimit = rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 60 });
+app.get('/api/messages/:username/search', conversationSearchLimit);
+app.get('/api/chats/:id/search', conversationSearchLimit);
+app.get('/api/channels/:handle/search', conversationSearchLimit);
 
 // Жалоба — сигнал, а не действие: десятка в час хватит любому живому человеку,
 // а поток одинаковых жалоб от одного адреса только зашумит лог.

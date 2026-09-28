@@ -6,7 +6,8 @@ import { publicUrl } from '../media.js';
 import {
   ATTACH_COLUMNS, ATTACH_INSERT_COLUMNS, FWD_COLUMNS, assertEditable, attachmentOf, attachmentUpload,
   attachmentValues, chatKey, clearTyping, copyAttachment, decorate, dropAttachment, emojiOf, extraFields,
-  forwardSource, fwdJoin, isForwarded, isTyping, readAttachment, replyIdOf, setTyping,
+  forwardSource, fwdJoin, isForwarded, isTyping, readAttachment, replyIdOf, searchQuery, searchResult, searchRows,
+  setTyping,
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
 import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
@@ -443,6 +444,27 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
 });
 
 /** «Печатает…» в чате. Ответ всегда одинаковый. */
+/** Поиск по чату — только среди видимых смотрящему реплик. */
+router.get('/:id/search', (req, res, next) => {
+  try {
+    const me = req.user.id;
+    const chat = memberChat(req.params.id, me);
+    if (!chat) return res.status(404).json({ error: NOT_FOUND });
+    const terms = searchQuery(req.query.q);
+    const rows = terms.length === 0 ? [] : db.prepare(`
+      SELECT m.id, m.body, m.created_at, m.attach_kind, m.attach_name, u.id AS author_id, u.display_name
+      FROM chat_messages m JOIN users u ON u.id = m.author_id
+      WHERE ${CHAT_SCOPE} ORDER BY m.id DESC
+    `).all({ chatId: chat.id, viewerId: me });
+    res.json({
+      results: searchRows(rows, terms).map((row) =>
+        searchResult(row, { id: row.author_id, displayName: row.display_name })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.put('/:id/typing', (req, res) => {
   const chat = memberChat(req.params.id, req.user.id);
   if (!chat) return res.status(404).json({ error: NOT_FOUND });
