@@ -10,6 +10,7 @@ import {
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
 import { dmUnreadTotal, prefFor, prefsOf } from '../prefs.js';
+import { dmScope, pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -173,6 +174,7 @@ router.get('/:username', (req, res) => {
     blocked,
     // «Печатает…» — тоже только вне блокировки.
     typing: !blocked && isTyping(dmKey(me, other.id), other.id),
+    pinned: pinnedPreview('dm', dmScope(me, other.id), (id) => pairMessage(id, me, other.id)),
   });
 });
 
@@ -255,6 +257,29 @@ router.put('/:username/typing', (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Закреплённое сообщение пары. Закреплять может любой из двоих — переписка
+ * общая, как и в Телеграме. Объявлено раньше `/:username/:id`: иначе «pin» в
+ * пути приняли бы за номер сообщения.
+ */
+router.delete('/:username/pin', (req, res) => {
+  const other = otherOr404(req, res);
+  if (!other) return;
+  unpin('dm', dmScope(req.user.id, other.id));
+  res.json({ ok: true });
+});
+
+router.put('/:username/:id/pin', (req, res) => {
+  const other = otherOr404(req, res);
+  if (!other) return;
+  const me = req.user.id;
+  const msg = pairMessage(req.params.id, me, other.id);
+  if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
+  if (isBlockedPair(me, other.id)) return res.status(403).json({ error: BLOCKED_CHAT_MESSAGE });
+  pin('dm', dmScope(me, other.id), msg.id, me);
+  res.json({ pinned: pinnedPreview('dm', dmScope(me, other.id), (id) => pairMessage(id, me, other.id)) });
+});
+
 /** Правка своего сообщения — в течение 48 часов. Пересланное не правится: это чужие слова. */
 router.patch('/:username/:id', (req, res, next) => {
   try {
@@ -298,6 +323,7 @@ router.delete('/:username/:id', (req, res) => {
   if (msg.from_id !== me) return res.status(403).json({ error: 'Удалить можно только своё сообщение' });
 
   db.prepare('DELETE FROM messages WHERE id = ?').run(msg.id);
+  unpinIfPinned('dm', dmScope(me, other.id), msg.id);
   dropAttachment(msg.attach_path);
   res.json({ ok: true });
 });

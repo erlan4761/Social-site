@@ -2086,5 +2086,65 @@ await mia(`/chats/${actChat}/members/${userMi}`, { method: 'DELETE' });
   }
 }
 
+console.log('\n— закреплённые сообщения —');
+r = await dmSend(kira, userLe, { body: 'Адрес мастерской: Литейная, 12, второй двор.' });
+const pinMe = r.body.message.id;
+r = await lev(`/messages/${userKi}/${pinMe}/pin`, { method: 'PUT' });
+check('в ЛС закрепить может и получатель', r.status === 200 && r.body.pinned?.id === pinMe && r.body.pinned.body.startsWith('Адрес'), `${r.status} ${JSON.stringify(r.body)}`);
+r = await kira(`/messages/${userLe}`);
+check('закреплённое видно обоим', r.body.pinned?.id === pinMe, JSON.stringify(r.body.pinned));
+r = await mia(`/messages/${userKi}/${pinMe}/pin`, { method: 'PUT' });
+check('посторонний закрепить не может — 404', r.status === 404, `${r.status}`);
+r = await dmPost(kira, userLe, withFile(PNG, 'схема.png', 'image/png'));
+const pinPhoto = r.body.message.id;
+await kira(`/messages/${userLe}/${pinPhoto}/pin`, { method: 'PUT' });
+r = await lev(`/messages/${userKi}`);
+check('новое закрепление заменяет прежнее; фото без подписи — «Фото»', r.body.pinned?.id === pinPhoto && r.body.pinned.body === 'Фото' && r.body.pinned.attachmentKind === 'image', JSON.stringify(r.body.pinned));
+await kira(`/messages/${userLe}/${pinPhoto}`, { method: 'DELETE' });
+r = await lev(`/messages/${userKi}`);
+check('удалили закреплённое — полоса пропала', r.body.pinned === null, JSON.stringify(r.body.pinned));
+await lev(`/messages/${userKi}/${pinMe}/pin`, { method: 'PUT' });
+r = await kira(`/messages/${userLe}/pin`, { method: 'DELETE' });
+check('открепить', r.status === 200, `${r.status}`);
+r = await lev(`/messages/${userKi}`);
+check('после открепления — null', r.body.pinned === null, JSON.stringify(r.body.pinned));
+await lev(`/users/${userKi}/block`, { method: 'PUT' });
+r = await kira(`/messages/${userLe}/${pinMe}/pin`, { method: 'PUT' });
+check('при блокировке закрепить — 403', r.status === 403, `${r.status}`);
+await lev(`/users/${userKi}/block`, { method: 'DELETE' });
+
+// Группа: закрепляет владелец.
+r = await kira('/chats', { method: 'POST', body: JSON.stringify({ title: 'Закрепы', members: [userLe] }) });
+const pinChat = r.body.chat.id;
+r = await lev(`/chats/${pinChat}/messages`, { method: 'POST', body: JSON.stringify({ body: 'Сбор в 10:00 у проходной' }) });
+const chatPinMsg = r.body.message.id;
+r = await lev(`/chats/${pinChat}/messages/${chatPinMsg}/pin`, { method: 'PUT' });
+check('в группе участник не закрепляет — 403', r.status === 403, `${r.status}`);
+r = await kira(`/chats/${pinChat}/messages/${chatPinMsg}/pin`, { method: 'PUT' });
+check('владелец закрепляет', r.status === 200 && r.body.pinned?.id === chatPinMsg, `${r.status} ${JSON.stringify(r.body)}`);
+r = await lev(`/chats/${pinChat}/messages`);
+check('участник видит закреплённое', r.body.pinned?.body === 'Сбор в 10:00 у проходной', JSON.stringify(r.body.pinned));
+r = await lev(`/chats/${pinChat}/pin`, { method: 'DELETE' });
+check('участник не открепляет — 403', r.status === 403, `${r.status}`);
+await kira(`/users/${userLe}/block`, { method: 'PUT' });
+r = await kira(`/chats/${pinChat}/messages`);
+check('закреплённое от заблокированного не показывается', r.body.pinned === null, JSON.stringify(r.body.pinned));
+await kira(`/users/${userLe}/block`, { method: 'DELETE' });
+
+// Канал.
+const pinHandle = `pins_${stamp}`;
+await chCreate(kira, { title: 'Закреп в канале', handle: pinHandle });
+r = await kira(`/channels/${pinHandle}/posts`, { method: 'POST', body: JSON.stringify({ body: 'Правила канала: без спойлеров.' }) });
+const rulesPost = r.body.post.id;
+r = await kira(`/channels/${pinHandle}/posts/${rulesPost}/pin`, { method: 'PUT' });
+check('владелец канала закрепляет публикацию', r.status === 200 && r.body.pinned?.id === rulesPost, `${r.status} ${JSON.stringify(r.body)}`);
+r = await yan(`/channels/${pinHandle}/posts`);
+check('читатель видит закреплённую', r.body.pinned?.id === rulesPost, JSON.stringify(r.body.pinned));
+r = await yan(`/channels/${pinHandle}/pin`, { method: 'DELETE' });
+check('читатель не открепляет — 403', r.status === 403, `${r.status}`);
+await kira(`/channels/${pinHandle}/posts/${rulesPost}`, { method: 'DELETE' });
+r = await yan(`/channels/${pinHandle}/posts`);
+check('удалили публикацию — закрепа нет', r.body.pinned === null, JSON.stringify(r.body.pinned));
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

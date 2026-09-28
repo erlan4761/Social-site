@@ -8,6 +8,7 @@ import {
   dropAttachment, emojiOf, reactionsFor, readAttachment,
 } from '../messageExtras.js';
 import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
+import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -238,6 +239,7 @@ router.delete('/:handle', (req, res) => {
 
   const files = channelAttachments(channel.id);
   db.prepare('DELETE FROM channels WHERE id = ?').run(channel.id);
+  unpin('channel', channel.id);
   files.forEach(dropAttachment);
   dropPrefs({ kind: 'channel', targetId: channel.id });
   res.json({ ok: true });
@@ -268,6 +270,23 @@ router.delete('/:handle/subscription', (req, res) => {
   db.prepare('DELETE FROM channel_subscribers WHERE channel_id = ? AND user_id = ?').run(channel.id, req.user.id);
   dropPrefs({ userId: req.user.id, kind: 'channel', targetId: channel.id });
   res.json({ channel: serializeChannel(channel, req.user.id) });
+});
+
+/** Закреплённая публикация — владелец канала. */
+router.put('/:handle/posts/:id/pin', (req, res) => {
+  const channel = channelOr404(req, res);
+  if (!channel || !ownerOr403(channel, req, res)) return;
+  const post = channelPost(channel.id, req.params.id, req.user.id);
+  if (!post) return res.status(404).json({ error: POST_NOT_FOUND });
+  pin('channel', channel.id, post.id, req.user.id);
+  res.json({ pinned: pinnedPreview('channel', channel.id, (id) => channelPost(channel.id, id, req.user.id)) });
+});
+
+router.delete('/:handle/pin', (req, res) => {
+  const channel = channelOr404(req, res);
+  if (!channel || !ownerOr403(channel, req, res)) return;
+  unpin('channel', channel.id);
+  res.json({ ok: true });
 });
 
 router.put('/:handle/read', (req, res) => {
@@ -310,6 +329,7 @@ router.get('/:handle/posts', (req, res) => {
     channel: serializeChannel(channel, me),
     posts: serializePosts(page, me).reverse(),
     nextCursor: hasMore ? page.at(-1).id : null,
+    pinned: pinnedPreview('channel', channel.id, (id) => channelPost(channel.id, id, me)),
   });
 });
 
@@ -366,6 +386,7 @@ router.delete('/:handle/posts/:id', (req, res) => {
   if (!post) return res.status(404).json({ error: POST_NOT_FOUND });
 
   db.prepare('DELETE FROM channel_posts WHERE id = ?').run(post.id);
+  unpinIfPinned('channel', channel.id, post.id);
   dropAttachment(post.attach_path);
   res.json({ ok: true });
 });

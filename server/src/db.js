@@ -278,6 +278,23 @@ db.exec(`
   );
 `);
 
+/* ─ Закреплённое сообщение ──────────────────────────────────────────────
+ * Одно на переписку, общее для всех её участников: полоса под шапкой, по
+ * нажатию — переход к сообщению. scope_id — пара в ЛС («3-7»), номер чата или
+ * канала. Внешнего ключа на message_id нет (три разные таблицы): удалили
+ * сообщение — закрепление снимается в том же обработчике (см. pins.js).
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS pinned_messages (
+    kind       TEXT NOT NULL,
+    scope_id   TEXT NOT NULL,
+    message_id INTEGER NOT NULL,
+    pinned_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    pinned_at  TEXT NOT NULL,
+    PRIMARY KEY (kind, scope_id)
+  );
+`);
+
 // Действия с сообщениями — одинаково для ЛС и групп (см. messageExtras.js).
 // reply_to_id без внешнего ключа намеренно: ответ переживает удаление того, на
 // что отвечал, и показывает «сообщение удалено», а не исчезает вместе с ним.

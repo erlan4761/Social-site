@@ -10,6 +10,7 @@ import {
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
 import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
+import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -345,6 +346,7 @@ router.delete('/:id', (req, res) => {
   const files = chatAttachments(chat.id);
   db.prepare('DELETE FROM chats WHERE id = ?').run(chat.id);
   files.forEach(dropAttachment);
+  unpin('chat', chat.id);
   dropPrefs({ kind: 'chat', targetId: chat.id });
   res.json({ ok: true });
 });
@@ -388,6 +390,7 @@ router.get('/:id/messages', (req, res) => {
     nextCursor: hasMore ? page.at(-1).id : null,
     readUpTo: othersReadUpTo(chat.id, me),
     typing,
+    pinned: pinnedPreview('chat', chat.id, (id) => chatMessage(chat.id, id, me)),
   });
 });
 
@@ -488,6 +491,7 @@ router.delete('/:id/messages/:mid', (req, res) => {
   }
 
   db.prepare('DELETE FROM chat_messages WHERE id = ?').run(msg.id);
+  unpinIfPinned('chat', chat.id, msg.id);
   dropAttachment(msg.attach_path);
   res.json({ ok: true });
 });
@@ -531,6 +535,27 @@ router.delete('/:id/messages/:mid/reaction', (req, res) => {
  * сообщения: иначе сообщение заблокированного участника осталось бы «выше»
  * отметки навсегда и счётчик было бы нечем обнулить.
  */
+/** Закрепить сообщение в группе — владелец, как админ группы в Телеграме. */
+router.put('/:id/messages/:mid/pin', (req, res) => {
+  const me = req.user.id;
+  const chat = memberChat(req.params.id, me);
+  if (!chat) return res.status(404).json({ error: NOT_FOUND });
+  if (chat.owner_id !== me) return res.status(403).json({ error: 'Закреплять сообщения может только владелец чата' });
+  const msg = chatMessage(chat.id, req.params.mid, me);
+  if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
+  pin('chat', chat.id, msg.id, me);
+  res.json({ pinned: pinnedPreview('chat', chat.id, (id) => chatMessage(chat.id, id, me)) });
+});
+
+router.delete('/:id/pin', (req, res) => {
+  const me = req.user.id;
+  const chat = memberChat(req.params.id, me);
+  if (!chat) return res.status(404).json({ error: NOT_FOUND });
+  if (chat.owner_id !== me) return res.status(403).json({ error: 'Откреплять сообщения может только владелец чата' });
+  unpin('chat', chat.id);
+  res.json({ ok: true });
+});
+
 router.put('/:id/read', (req, res) => {
   const me = req.user.id;
   const chat = memberChat(req.params.id, me);
@@ -634,6 +659,7 @@ router.delete('/:id/members/:username', (req, res, next) => {
         // уходят каскадом, файлы вложений — после COMMIT.
         orphaned = chatAttachments(chat.id);
         db.prepare('DELETE FROM chats WHERE id = ?').run(chat.id);
+        unpin('chat', chat.id);
         dropPrefs({ kind: 'chat', targetId: chat.id });
       } else if (chat.owner_id === target.id) {
         // Владение переходит старейшему участнику: чат без владельца нельзя
