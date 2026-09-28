@@ -6,7 +6,7 @@ import { publicUrl } from '../media.js';
 import {
   ATTACH_COLUMNS, ATTACH_INSERT_COLUMNS, FWD_COLUMNS, assertEditable, attachmentOf, attachmentUpload,
   attachmentValues, chatKey, clearTyping, copyAttachment, decorate, dropAttachment, emojiOf, extraFields,
-  forwardSource, fwdJoin, isTyping, readAttachment, replyIdOf, setTyping,
+  forwardSource, fwdJoin, isForwarded, isTyping, readAttachment, replyIdOf, setTyping,
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
 import * as v from '../validate.js';
@@ -55,7 +55,7 @@ const member = (row, viewerId) => ({
 });
 
 const MESSAGE_SELECT = `
-  SELECT m.id, m.chat_id, m.body, m.created_at, m.reply_to_id, m.edited_at, m.fwd_user_id, ${ATTACH_COLUMNS},
+  SELECT m.id, m.chat_id, m.body, m.created_at, m.reply_to_id, m.edited_at, m.fwd_user_id, m.fwd_channel_id, ${ATTACH_COLUMNS},
          u.id AS author_id, u.username AS author_username,
          u.display_name AS author_display_name, u.avatar_path AS author_avatar_path,
          ${FWD_COLUMNS}
@@ -410,9 +410,9 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
     attachment = forward ? await copyAttachment(forward.attachment) : await readAttachment(req.file, req.body);
 
     const info = db.prepare(`
-      INSERT INTO chat_messages (chat_id, author_id, body, created_at, reply_to_id, fwd_user_id, ${ATTACH_INSERT_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(chat.id, me, body, nowIso(), replyTo, forward?.fwdUserId ?? null, ...attachmentValues(attachment));
+      INSERT INTO chat_messages (chat_id, author_id, body, created_at, reply_to_id, fwd_user_id, fwd_channel_id, ${ATTACH_INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(chat.id, me, body, nowIso(), replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, ...attachmentValues(attachment));
 
     clearTyping(chatKey(chat.id), me);
 
@@ -451,7 +451,7 @@ router.patch('/:id/messages/:mid', (req, res, next) => {
     const msg = chatMessage(chat.id, req.params.mid, me);
     if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
     assertEditable(msg.author_id, msg.created_at, me);
-    if (msg.fwd_user_id != null) return res.status(403).json({ error: 'Пересланное сообщение изменить нельзя' });
+    if (isForwarded(msg)) return res.status(403).json({ error: 'Пересланное сообщение изменить нельзя' });
 
     const body = v.str(req.body?.body ?? '', 'сообщение', { min: msg.attach_path ? 0 : 1, max: MAX_BODY });
     if (body !== msg.body) {

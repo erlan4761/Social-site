@@ -100,5 +100,15 @@ badgesRouter.get('/', (req, res) => {
       AND ${blockPairSql('m.author_id')}
   `).get({ viewerId: me }).c;
 
-  res.json({ messages, chats, notifications: unreadCount(me) });
+  // Непрочитанные публикации в каналах, на которые подписан, — кроме своих
+  // каналов: свои публикации владелец и так видел.
+  const channels = db.prepare(`
+    SELECT COUNT(*) AS c
+    FROM channel_subscribers s
+    JOIN channels c ON c.id = s.channel_id AND c.owner_id <> s.user_id
+    JOIN channel_posts p ON p.channel_id = s.channel_id AND p.id > s.last_read_id
+    WHERE s.user_id = ?
+  `).get(me).c;
+
+  res.json({ messages, chats, channels, notifications: unreadCount(me) });
 });

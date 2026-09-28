@@ -188,6 +188,77 @@ db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)');
 // Когда человек последний раз что-то запрашивал у сервера — отсюда «в сети» и
 // «был(а) 5 минут назад» в переписке. Пишется в loadUser не чаще раза в минуту.
 ensureColumn('users', 'last_seen_at', 'TEXT');
+/* ─ Каналы ──────────────────────────────────────────────────────────────
+ * Авторская лента с подписчиками, как канал в Телеграме: публикует владелец,
+ * остальные читают, реагируют и комментируют. Отдельные таблицы, а не записи
+ * ленты с пометкой: у публикации канала свои просмотры, свои комментарии и
+ * своё «непрочитанное», и ни одному запросу ленты не нужно помнить о каналах.
+ * Канал открыт всем, кто вошёл, — закрытых каналов нет.
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS channels (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    handle      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    title       TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    owner_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  TEXT NOT NULL
+  );
+
+  -- Ватерлиния непрочитанного — как у групповых чатов.
+  CREATE TABLE IF NOT EXISTS channel_subscribers (
+    channel_id   INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    joined_at    TEXT NOT NULL,
+    last_read_id INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (channel_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS channel_posts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id      INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    author_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body            TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    edited_at       TEXT,
+    attach_path     TEXT,
+    attach_kind     TEXT,
+    attach_mime     TEXT,
+    attach_name     TEXT,
+    attach_size     INTEGER,
+    attach_duration INTEGER,
+    attach_wave     TEXT
+  );
+
+  -- Просмотр — один на человека: счётчик считает людей, а не обновления страницы.
+  CREATE TABLE IF NOT EXISTS channel_post_views (
+    post_id INTEGER NOT NULL REFERENCES channel_posts(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (post_id, user_id)
+  );
+
+  -- Колонка message_id, а не post_id: реакции считает тот же код, что у ЛС и групп.
+  CREATE TABLE IF NOT EXISTS channel_post_reactions (
+    message_id INTEGER NOT NULL REFERENCES channel_posts(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji      TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (message_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS channel_comments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id    INTEGER NOT NULL REFERENCES channel_posts(id) ON DELETE CASCADE,
+    author_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_channel_posts    ON channel_posts(channel_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_channel_subs_u   ON channel_subscribers(user_id);
+  CREATE INDEX IF NOT EXISTS idx_channel_comments ON channel_comments(post_id, id);
+`);
+
 // Действия с сообщениями — одинаково для ЛС и групп (см. messageExtras.js).
 // reply_to_id без внешнего ключа намеренно: ответ переживает удаление того, на
 // что отвечал, и показывает «сообщение удалено», а не исчезает вместе с ним.
@@ -196,6 +267,8 @@ for (const table of ['messages', 'chat_messages']) {
   ensureColumn(table, 'reply_to_id', 'INTEGER');
   ensureColumn(table, 'edited_at', 'TEXT');
   ensureColumn(table, 'fwd_user_id', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+  // Переслано из канала: подпись ведёт на канал, а не на человека.
+  ensureColumn(table, 'fwd_channel_id', 'INTEGER REFERENCES channels(id) ON DELETE SET NULL');
   // Вложение — одно на сообщение, как и у записи. attach_kind: image | video |
   // audio | voice | file; длительность и «волна» — только у голосовых.
   ensureColumn(table, 'attach_path', 'TEXT');

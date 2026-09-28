@@ -5,7 +5,7 @@ import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { publicUrl } from '../media.js';
 import {
   ATTACH_INSERT_COLUMNS, FWD_COLUMNS, assertEditable, attachmentOf, attachmentUpload, attachmentValues,
-  clearTyping, copyAttachment, decorate, dmKey, dropAttachment, emojiOf, extraFields, forwardSource, fwdJoin,
+  clearTyping, copyAttachment, decorate, dmKey, dropAttachment, emojiOf, extraFields, forwardSource, isForwarded, fwdJoin,
   isTyping, readAttachment, replyIdOf, setTyping,
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
@@ -203,9 +203,9 @@ router.post('/:username', attachmentUpload.single('file'), async (req, res, next
     attachment = forward ? await copyAttachment(forward.attachment) : await readAttachment(req.file, req.body);
 
     const info = db.prepare(`
-      INSERT INTO messages (from_id, to_id, body, created_at, reply_to_id, fwd_user_id, ${ATTACH_INSERT_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(me, other.id, body, nowIso(), replyTo, forward?.fwdUserId ?? null, ...attachmentValues(attachment));
+      INSERT INTO messages (from_id, to_id, body, created_at, reply_to_id, fwd_user_id, fwd_channel_id, ${ATTACH_INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(me, other.id, body, nowIso(), replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, ...attachmentValues(attachment));
 
     clearTyping(dmKey(me, other.id), me);
 
@@ -260,7 +260,7 @@ router.patch('/:username/:id', (req, res, next) => {
     const msg = pairMessage(req.params.id, me, other.id);
     if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
     assertEditable(msg.from_id, msg.created_at, me);
-    if (msg.fwd_user_id != null) return res.status(403).json({ error: 'Пересланное сообщение изменить нельзя' });
+    if (isForwarded(msg)) return res.status(403).json({ error: 'Пересланное сообщение изменить нельзя' });
     if (isBlockedPair(me, other.id)) return res.status(403).json({ error: BLOCKED_CHAT_MESSAGE });
 
     // У сообщения с вложением подпись можно и убрать: фото остаётся сообщением.

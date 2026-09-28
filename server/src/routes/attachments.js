@@ -51,6 +51,13 @@ router.get('/dm/:id', (req, res) => {
   send(res, row);
 });
 
+/** Канал открыт всем, кто вошёл, — и его вложения тоже. */
+router.get('/channel/:id', (req, res) => {
+  const id = intParam(req.params.id);
+  if (!id) return res.status(404).json({ error: NOT_FOUND });
+  send(res, db.prepare(`SELECT ${COLUMNS} FROM channel_posts m WHERE m.id = ?`).get(id));
+});
+
 router.get('/chat/:id', (req, res) => {
   const id = intParam(req.params.id);
   if (!id) return res.status(404).json({ error: NOT_FOUND });

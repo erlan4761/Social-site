@@ -19,6 +19,7 @@ import { router as reportRoutes } from './routes/reports.js';
 import { router as searchRoutes } from './routes/search.js';
 import { router as bookmarkRoutes } from './routes/bookmarks.js';
 import { router as attachmentRoutes } from './routes/attachments.js';
+import { router as channelRoutes } from './routes/channels.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -82,12 +83,17 @@ const blockLimit = rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 30
 app.put('/api/users/:username/block', blockLimit);
 app.delete('/api/users/:username/block', blockLimit);
 
+// Канал — редкий жест, как групповой чат; публикации и комментарии — по мерке
+// сообщений: без лимита комментарии под чужой публикацией стали бы рассылкой.
+app.post('/api/channels', rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 10 }));
+app.post('/api/channels/*splat', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 30 }));
+
 // Всё, что меняет переписку, кроме самой отправки: правки, удаления, реакции,
 // «печатает…», отметки прочтения. Потолок щедрый — «печатает…» уходит раз в
 // три секунды, прочтение — на каждое новое сообщение, — но скрипт, который
 // правит или реагирует без остановки, в него упрётся.
 const conversationLimit = rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 120 });
-for (const path of ['/api/messages/*splat', '/api/chats/*splat']) {
+for (const path of ['/api/messages/*splat', '/api/chats/*splat', '/api/channels/*splat']) {
   app.put(path, conversationLimit);
   app.patch(path, conversationLimit);
   app.delete(path, conversationLimit);
@@ -107,6 +113,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/bookmarks', bookmarkRoutes);
 app.use('/api/attachments', attachmentRoutes);
+app.use('/api/channels', channelRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Нет такого эндпоинта' }));
 

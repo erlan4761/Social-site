@@ -1852,5 +1852,144 @@ r = await lev(`/chats/${actChat}/messages/${chatPhoto.id}`, { method: 'DELETE' }
 raw = await kira.raw(chatPhoto.attachment.url);
 check('удалённое в чате — файл недоступен', r.status === 200 && raw.status === 404, `${r.status} ${raw.status}`);
 
+console.log('\n— каналы —');
+const chHandle = `plenka_${stamp}`;
+const chCreate = (client, payload) => client('/channels', { method: 'POST', body: JSON.stringify(payload) });
+
+r = await chCreate(kira, { title: 'Плёнка и свет', handle: `@${chHandle.toUpperCase()}`, description: 'Заметки о проявке' });
+const ch = r.body.channel;
+check('канал создан, адрес приведён к нижнему регистру без @', r.status === 201 && ch?.handle === chHandle, `${r.status} ${JSON.stringify(r.body)}`);
+check('владелец подписан сразу', ch?.subscribed === true && ch?.subscriberCount === 1 && ch?.iAmOwner === true, JSON.stringify(ch));
+r = await chCreate(lev, { title: 'Дубль', handle: chHandle });
+check('занятый адрес — 409', r.status === 409, `${r.status}`);
+r = await chCreate(lev, { title: 'Кривой', handle: '1abc' });
+check('адрес с цифры — 400', r.status === 400, `${r.status}`);
+r = await chCreate(lev, { title: 'Кривой', handle: 'search' });
+check('адрес search зарезервирован — 400', r.status === 400, `${r.status}`);
+r = await chCreate(lev, { title: '', handle: `empty_${stamp}` });
+check('пустое название — 400', r.status === 400, `${r.status}`);
+
+const chPost = (client, payload) =>
+  client(`/channels/${chHandle}/posts`, { method: 'POST', body: payload instanceof FormData ? payload : JSON.stringify(payload) });
+r = await chPost(kira, { body: 'Первая публикация: как не засветить плёнку при зарядке бачка.' });
+const p1 = r.body.post;
+check('владелец публикует', r.status === 201 && p1?.body.startsWith('Первая') && p1.views === 0, `${r.status} ${JSON.stringify(r.body)}`);
+r = await chPost(lev, { body: 'чужая публикация' });
+check('не владелец публиковать не может — 403', r.status === 403, `${r.status}`);
+
+r = await lev(`/channels/search?q=${encodeURIComponent('ПЛЁНКА')}`);
+check('поиск находит канал по названию без учёта регистра и ё', r.body.channels?.some((c) => c.handle === chHandle), JSON.stringify(r.body.channels?.map((c) => c.handle)));
+r = await lev(`/channels/search?q=${encodeURIComponent('@' + chHandle.slice(0, 8))}`);
+check('и по адресу с @', r.body.channels?.some((c) => c.handle === chHandle), JSON.stringify(r.body.channels?.map((c) => c.handle)));
+
+r = await lev(`/channels/${chHandle}`);
+check('канал открыт и неподписанному', r.status === 200 && r.body.channel?.subscribed === false, JSON.stringify(r.body));
+r = await guest(`/channels/${chHandle}`);
+check('гостю — 401', r.status === 401, `${r.status}`);
+r = await lev(`/channels/nety_takogo_${stamp}`);
+check('несуществующий канал — 404', r.status === 404, `${r.status}`);
+
+r = await lev(`/channels/${chHandle}/subscription`, { method: 'PUT' });
+check('подписка', r.status === 200 && r.body.channel?.subscribed === true && r.body.channel.subscriberCount === 2, JSON.stringify(r.body.channel));
+r = await lev(`/channels/${chHandle}/subscription`, { method: 'PUT' });
+check('повторная подписка ничего не удваивает', r.body.channel?.subscriberCount === 2, JSON.stringify(r.body.channel));
+r = await lev('/channels');
+let levCh = r.body.channels?.find((c) => c.handle === chHandle);
+check('подписка начинается без старого «непрочитанного»', levCh?.unread === 0, JSON.stringify(levCh));
+
+r = await chPost(kira, withFile(PNG, 'бачок.png', 'image/png', { body: 'Вот бачок' }));
+const p2 = r.body.post;
+check('публикация с фото', r.status === 201 && p2?.attachment?.url === `/api/attachments/channel/${p2?.id}`, `${r.status} ${JSON.stringify(r.body)}`);
+raw = await yan.raw(p2.attachment.url);
+check('вложение канала видно любому вошедшему', raw.status === 200, `${raw.status}`);
+raw = await guest.raw(p2.attachment.url);
+check('гостю — 401', raw.status === 401, `${raw.status}`);
+
+r = await lev('/channels');
+levCh = r.body.channels?.find((c) => c.handle === chHandle);
+check('новая публикация — непрочитанная у подписчика', levCh?.unread === 1 && levCh.lastPost?.id === p2.id, JSON.stringify(levCh));
+r = await lev('/badges');
+check('и в общем счётчике', r.body.channels >= 1, JSON.stringify(r.body));
+r = await kira('/channels');
+check('у владельца своё не непрочитанное', r.body.channels?.find((c) => c.handle === chHandle)?.unread === 0, JSON.stringify(r.body.channels));
+await lev(`/channels/${chHandle}/read`, { method: 'PUT' });
+r = await lev('/channels');
+check('прочитано — счётчик обнулён', r.body.channels?.find((c) => c.handle === chHandle)?.unread === 0, JSON.stringify(r.body.channels));
+
+// Просмотры — по одному на человека.
+await lev(`/channels/${chHandle}/posts`);
+await lev(`/channels/${chHandle}/posts`);
+r = await mia(`/channels/${chHandle}/posts`);
+const viewed = r.body.posts?.find((p) => p.id === p1.id);
+check("просмотры считают людей, а не обновления", viewed?.views === 2, JSON.stringify(viewed));
+
+// Реакции.
+r = await lev(`/channels/${chHandle}/posts/${p1.id}/reaction`, { method: 'PUT', body: JSON.stringify({ emoji: '🔥' }) });
+check('реакция на публикацию', r.status === 200 && JSON.stringify(r.body.post?.reactions) === JSON.stringify([{ emoji: '🔥', count: 1, mine: true }]), `${r.status} ${JSON.stringify(r.body.post?.reactions)}`);
+r = await mia(`/channels/${chHandle}/posts/${p1.id}/reaction`, { method: 'PUT', body: JSON.stringify({ emoji: '🔥' }) });
+check('вторая такая же — счётчик 2', r.body.post?.reactions?.[0]?.count === 2, JSON.stringify(r.body.post?.reactions));
+
+// Правка и удаление — владелец.
+r = await lev(`/channels/${chHandle}/posts/${p1.id}`, { method: 'PATCH', body: JSON.stringify({ body: 'подмена' }) });
+check('не владелец не правит — 403', r.status === 403, `${r.status}`);
+r = await kira(`/channels/${chHandle}/posts/${p1.id}`, { method: 'PATCH', body: JSON.stringify({ body: 'Первая публикация: как не засветить плёнку.' }) });
+check('владелец правит, пометка «изменено»', r.status === 200 && r.body.post?.editedAt && r.body.post.views === 2, JSON.stringify(r.body.post));
+
+// Комментарии.
+const comment = (client, postId, body) =>
+  client(`/channels/${chHandle}/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
+r = await comment(lev, p1.id, 'А если бачок пластиковый?');
+const c1 = r.body.comment;
+check('комментарий', r.status === 201 && c1?.author?.username === userLe, `${r.status} ${JSON.stringify(r.body)}`);
+r = await comment(mia, p1.id, 'Тогда так же, только без спешки.');
+const c2 = r.body.comment;
+r = await comment(mia, p1.id, '  ');
+check('пустой комментарий — 400', r.status === 400, `${r.status}`);
+r = await yan(`/channels/${chHandle}/posts/${p1.id}/comments`);
+check('ветка — старые сверху, у публикации счётчик', r.body.comments?.map((c) => c.id).join() === `${c1.id},${c2.id}` && r.body.post?.commentCount === 2, JSON.stringify(r.body));
+r = await lev(`/channels/${chHandle}/posts/${p1.id}/comments/${c2.id}`, { method: 'DELETE' });
+check('чужой комментарий удалить нельзя — 403', r.status === 403, `${r.status}`);
+
+await lev(`/users/${userMi}/block`, { method: 'PUT' });
+r = await lev(`/channels/${chHandle}/posts/${p1.id}/comments`);
+check('при блокировке её комментарии не видны', r.body.comments?.every((c) => c.author.username !== userMi) && r.body.post?.commentCount === 1, JSON.stringify(r.body));
+check('и её реакция не считается', r.body.post?.reactions?.[0]?.count === 1, JSON.stringify(r.body.post?.reactions));
+await lev(`/users/${userMi}/block`, { method: 'DELETE' });
+
+await kira(`/users/${userY}/block`, { method: 'PUT' });
+r = await comment(yan, p1.id, 'меня заблокировали');
+check('заблокированный владельцем не комментирует — 403', r.status === 403, `${r.status}`);
+r = await yan(`/channels/${chHandle}/posts/${p1.id}/comments`);
+check('и видит это заранее — canComment: false', r.body.canComment === false, JSON.stringify(r.body.canComment));
+await kira(`/users/${userY}/block`, { method: 'DELETE' });
+
+r = await kira(`/channels/${chHandle}/posts/${p1.id}/comments/${c2.id}`, { method: 'DELETE' });
+check('владелец канала удаляет любой комментарий', r.status === 200, `${r.status}`);
+
+// Пересылка из канала.
+r = await dmSend(lev, userMi, { forward: { from: 'channel', id: p2.id } });
+check('пересылка публикации в ЛС — «из канала», с копией фото', r.status === 201 && r.body.message?.forwardedFrom?.kind === 'channel' && r.body.message.forwardedFrom.handle === chHandle && r.body.message.attachment?.kind === 'image', `${r.status} ${JSON.stringify(r.body.message)}`);
+const fromChannel = r.body.message;
+r = await chatSend(mia, { forward: { from: 'dm', id: fromChannel.id } });
+check('пересылка пересланного из канала указывает на канал', r.status === 201 && r.body.message?.forwardedFrom?.kind === 'channel', `${r.status} ${JSON.stringify(r.body.message?.forwardedFrom)}`);
+r = await lev(`/messages/${userMi}/${fromChannel.id}`, { method: 'PATCH', body: JSON.stringify({ body: 'правлю канал' }) });
+check('пересланное из канала не правится — 403', r.status === 403, `${r.status}`);
+r = await dmSend(lev, userMi, { forward: { from: 'channel', id: 999999999 } });
+check('несуществующая публикация — 404', r.status === 404, `${r.status}`);
+
+// Отписка и удаление.
+r = await kira(`/channels/${chHandle}/subscription`, { method: 'DELETE' });
+check('владелец не отписывается от своего — 400', r.status === 400, `${r.status}`);
+r = await lev(`/channels/${chHandle}/subscription`, { method: 'DELETE' });
+check('отписка', r.status === 200 && r.body.channel?.subscribed === false && r.body.channel.subscriberCount === 1, JSON.stringify(r.body.channel));
+r = await lev(`/channels/${chHandle}`, { method: 'DELETE' });
+check('чужой канал не удалить — 403', r.status === 403, `${r.status}`);
+r = await kira(`/channels/${chHandle}`, { method: 'DELETE' });
+raw = await lev.raw(p2.attachment.url);
+check('канал удалён вместе с файлами', r.status === 200 && raw.status === 404, `${r.status} ${raw.status}`);
+r = await mia(`/messages/${userLe}`);
+const orphanFwd = r.body.messages?.find((m) => m.id === fromChannel.id);
+check('пересланное осталось, подпись канала пропала, фото живо', orphanFwd && orphanFwd.forwardedFrom === null && orphanFwd.attachment, JSON.stringify(orphanFwd));
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

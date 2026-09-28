@@ -25,6 +25,7 @@ const QUOTE_LEN = 120;
 const TABLES = {
   dm: { messages: 'messages', reactions: 'message_reactions', author: 'from_id' },
   chat: { messages: 'chat_messages', reactions: 'chat_message_reactions', author: 'author_id' },
+  channel: { messages: 'channel_posts', reactions: 'channel_post_reactions', author: 'author_id' },
 };
 
 /** `IN (…)` из списка id: именованные параметры, ни одного числа в тексте SQL. */
@@ -109,15 +110,24 @@ export function decorate(kind, messages, { viewerId, scope, scopeParams }) {
 /** Общие поля сообщения из строки с `reply_to_id`, `edited_at` и `fwd_*`. */
 export const extraFields = (row) => ({
   editedAt: row.edited_at ?? null,
-  forwardedFrom: row.fwd_username
-    ? { username: row.fwd_username, displayName: row.fwd_display_name }
-    : null,
+  // «Переслано от человека» или «переслано из канала» — подпись ведёт туда,
+  // откуда слова на самом деле. Удалили канал или ушёл человек — подписи нет.
+  forwardedFrom: row.fwd_channel_handle
+    ? { kind: 'channel', handle: row.fwd_channel_handle, title: row.fwd_channel_title }
+    : row.fwd_username
+      ? { kind: 'user', username: row.fwd_username, displayName: row.fwd_display_name }
+      : null,
   replyToId: row.reply_to_id ?? null,
 });
 
-/** Колонки и JOIN автора оригинала для выборки с `extraFields`. */
-export const FWD_COLUMNS = 'f.username AS fwd_username, f.display_name AS fwd_display_name';
-export const fwdJoin = (alias) => `LEFT JOIN users f ON f.id = ${alias}.fwd_user_id`;
+/** Колонки и JOIN источника пересылки для выборки с `extraFields`. */
+export const FWD_COLUMNS =
+  'f.username AS fwd_username, f.display_name AS fwd_display_name, fc.handle AS fwd_channel_handle, fc.title AS fwd_channel_title';
+export const fwdJoin = (alias) =>
+  `LEFT JOIN users f ON f.id = ${alias}.fwd_user_id LEFT JOIN channels fc ON fc.id = ${alias}.fwd_channel_id`;
+
+/** Пересланное не правится: это чужие слова — человека или канала. */
+export const isForwarded = (row) => row.fwd_user_id != null || row.fwd_channel_id != null;
 
 /* ─ Вложения ───────────────────────────────────────────────────────────── */
 
@@ -261,30 +271,43 @@ export function assertEditable(authorId, createdAt, viewerId) {
 /**
  * Что пересылается. Источник проверяется глазами пересылающего: из ЛС — только
  * из своей пары, из чата — только где он участник и не от заблокированного.
- * Чужое и несуществующее неразличимы (404), как везде в проекте. Пересылка
- * пересланного указывает на первоисточник — так делает и Телеграм.
+ * Публикацию канала переслать может любой: канал открыт всем. Чужое и
+ * несуществующее неразличимы (404), как везде в проекте. Пересылка
+ * пересланного указывает на первоисточник — человека или канал, как в Телеграме.
  */
 export function forwardSource(input, viewerId) {
   if (input == null) return null;
   const id = Number(input.id);
-  if (!['dm', 'chat'].includes(input.from) || !Number.isSafeInteger(id) || id <= 0) {
+  if (!['dm', 'chat', 'channel'].includes(input.from) || !Number.isSafeInteger(id) || id <= 0) {
     throw bad('Некорректная пересылка');
   }
 
-  const row =
-    input.from === 'dm'
-      ? db.prepare(`
-          SELECT m.body, m.from_id AS author, m.fwd_user_id, ${ATTACH_COLUMNS} FROM messages m
-          WHERE m.id = :id AND (m.from_id = :viewerId OR m.to_id = :viewerId)
-        `).get({ id, viewerId })
-      : db.prepare(`
-          SELECT m.body, m.author_id AS author, m.fwd_user_id, ${ATTACH_COLUMNS} FROM chat_messages m
-          JOIN chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = :viewerId
-          WHERE m.id = :id AND ${blockPairSql('m.author_id')}
-        `).get({ id, viewerId });
+  const sql = {
+    dm: `
+      SELECT m.body, m.from_id AS author, m.fwd_user_id, m.fwd_channel_id, ${ATTACH_COLUMNS} FROM messages m
+      WHERE m.id = :id AND (m.from_id = :viewerId OR m.to_id = :viewerId)`,
+    chat: `
+      SELECT m.body, m.author_id AS author, m.fwd_user_id, m.fwd_channel_id, ${ATTACH_COLUMNS} FROM chat_messages m
+      JOIN chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = :viewerId
+      WHERE m.id = :id AND ${blockPairSql('m.author_id')}`,
+    // Автор публикации — канал, а не человек: подпись будет «из канала».
+    channel: `
+      SELECT m.body, NULL AS author, NULL AS fwd_user_id, m.channel_id AS fwd_channel_id, ${ATTACH_COLUMNS}
+      FROM channel_posts m WHERE m.id = :id`,
+  }[input.from];
 
+  // node:sqlite не прощает лишних именованных параметров, а публикации канала
+  // смотрящий не нужен: канал открыт всем, кто вошёл.
+  const row = db.prepare(sql).get(input.from === 'channel' ? { id } : { id, viewerId });
   if (!row) throw new HttpError(404, 'Сообщение для пересылки не найдено');
-  return { body: row.body, fwdUserId: row.fwd_user_id ?? row.author, attachment: attachmentFromRow(row) };
+
+  const fromChannel = row.fwd_channel_id != null;
+  return {
+    body: row.body,
+    fwdUserId: fromChannel ? null : row.fwd_user_id ?? row.author,
+    fwdChannelId: fromChannel ? row.fwd_channel_id : null,
+    attachment: attachmentFromRow(row),
+  };
 }
 
 /* ─ «Печатает…» ─────────────────────────────────────────────────────────
