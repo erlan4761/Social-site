@@ -185,6 +185,9 @@ ensureColumn('users', 'email', 'TEXT');
 // не мешает старым аккаунтам без почты (их могло быть сколько угодно до
 // миграции) — уникальность требуется только когда email реально задан.
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)');
+// Когда человек последний раз что-то запрашивал у сервера — отсюда «в сети» и
+// «был(а) 5 минут назад» в переписке. Пишется в loadUser не чаще раза в минуту.
+ensureColumn('users', 'last_seen_at', 'TEXT');
 ensureColumn('posts', 'media_path', 'TEXT');
 ensureColumn('posts', 'media_type', 'TEXT');
 ensureColumn('posts', 'media_mime', 'TEXT');

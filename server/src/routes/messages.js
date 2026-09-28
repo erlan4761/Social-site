@@ -25,11 +25,17 @@ const serialize = (row) => ({
   readAt: row.read_at,
 });
 
-const person = (row) => ({
+/**
+ * `lastSeenAt` — только вне блокировки: заблокированный не должен узнавать,
+ * когда человек заходил, и заблокировавший тоже — правило симметрично, как и
+ * всё остальное в блокировках.
+ */
+const person = (row, { blocked = false } = {}) => ({
   id: row.id,
   username: row.username,
   displayName: row.display_name,
   avatarUrl: publicUrl('avatar', row.avatar_path),
+  lastSeenAt: blocked ? null : row.last_seen_at ?? null,
 });
 
 // Один и тот же текст в обе стороны. Если заблокированному ответить «вас
@@ -41,7 +47,7 @@ const unreadTotal = (userId) =>
   db.prepare('SELECT COUNT(*) AS c FROM messages WHERE to_id = ? AND read_at IS NULL').get(userId).c;
 
 function findUser(username) {
-  return db.prepare('SELECT id, username, display_name, avatar_path FROM users WHERE username = ?')
+  return db.prepare('SELECT id, username, display_name, avatar_path, last_seen_at FROM users WHERE username = ?')
     .get(String(username).toLowerCase());
 }
 
@@ -59,7 +65,7 @@ router.get('/', (req, res) => {
       SELECT other_id, MAX(id) AS last_id FROM mine GROUP BY other_id
     )
     SELECT
-      u.id, u.username, u.display_name, u.avatar_path,
+      u.id, u.username, u.display_name, u.avatar_path, u.last_seen_at,
       m.id AS msg_id, m.body, m.created_at, m.from_id, m.to_id, m.read_at,
       (SELECT COUNT(*) FROM messages x
        WHERE x.to_id = :me AND x.from_id = u.id AND x.read_at IS NULL) AS unread,
@@ -75,7 +81,7 @@ router.get('/', (req, res) => {
     // «дальше не пишем», а не «этого разговора не было». Флаг нужен клиенту,
     // чтобы показать плашку вместо формы ответа.
     conversations: rows.map((row) => ({
-      user: person(row),
+      user: person(row, { blocked: Boolean(row.blocked) }),
       unread: row.unread,
       blocked: Boolean(row.blocked),
       lastMessage: serialize({ ...row, id: row.msg_id }),
@@ -109,12 +115,13 @@ router.get('/:username', (req, res) => {
 
   const hasMore = rows.length > PAGE_SIZE;
   const page = rows.slice(0, PAGE_SIZE);
+  const blocked = isBlockedPair(req.user.id, other.id);
 
   res.json({
-    user: person(other),
+    user: person(other, { blocked }),
     messages: page.map(serialize).reverse(),
     nextCursor: hasMore ? page.at(-1).id : null,
-    blocked: isBlockedPair(req.user.id, other.id),
+    blocked,
   });
 });
 

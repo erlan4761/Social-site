@@ -44,6 +44,24 @@ export function setSessionCookie(res, session) {
   });
 }
 
+/** Не чаще раза в минуту на человека: loadUser стоит перед каждым запросом,
+ *  включая статику и опрос счётчиков, и запись на каждый из них — это запись
+ *  на каждый клик. Минутная точность для «был(а) в сети» — с запасом. */
+const SEEN_EVERY_MS = 60_000;
+const touchSeen = db.prepare(`
+  UPDATE users SET last_seen_at = :now
+  WHERE id = :id AND (last_seen_at IS NULL OR last_seen_at < :stale)
+`);
+
+function touchLastSeen(userId) {
+  const now = Date.now();
+  touchSeen.run({
+    id: userId,
+    now: new Date(now).toISOString(),
+    stale: new Date(now - SEEN_EVERY_MS).toISOString(),
+  });
+}
+
 /** Populates req.user when a valid, unexpired session cookie is present. */
 export function loadUser(req, _res, next) {
   req.user = null;
@@ -58,6 +76,7 @@ export function loadUser(req, _res, next) {
     if (row && new Date(row.expires_at) > new Date()) {
       req.user = publicUser(row);
       req.sessionToken = token;
+      touchLastSeen(row.id);
     } else if (row) {
       destroySession(token);
     }

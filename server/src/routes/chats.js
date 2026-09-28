@@ -42,6 +42,13 @@ const person = (row) => ({
   avatarUrl: publicUrl('avatar', row.avatar_path),
 });
 
+/** Участник с отметкой «в сети» — как собеседник в ЛС: кому-то из пары в
+ *  блокировке время последнего визита не показывается. */
+const member = (row, viewerId) => ({
+  ...person(row),
+  lastSeenAt: row.id !== viewerId && isBlockedPair(viewerId, row.id) ? null : row.last_seen_at ?? null,
+});
+
 const MESSAGE_SELECT = `
   SELECT m.id, m.chat_id, m.body, m.created_at,
          u.id AS author_id, u.username AS author_username,
@@ -94,7 +101,7 @@ function memberChat(rawId, viewerId) {
  */
 function chatMembers(chatId) {
   return db.prepare(`
-    SELECT u.id, u.username, u.display_name, u.avatar_path
+    SELECT u.id, u.username, u.display_name, u.avatar_path, u.last_seen_at
     FROM chat_members cm JOIN users u ON u.id = cm.user_id
     WHERE cm.chat_id = ?
     ORDER BY cm.joined_at, u.id
@@ -108,7 +115,7 @@ const serializeChat = (chat, viewerId) => {
     title: chat.title,
     ownerId: chat.owner_id,
     createdAt: chat.created_at,
-    members: members.map(person),
+    members: members.map((row) => member(row, viewerId)),
     memberCount: members.length,
     iAmOwner: chat.owner_id === viewerId,
   };
@@ -127,6 +134,18 @@ function unreadIn(chatId, viewerId, lastReadId) {
       AND m.author_id <> :viewerId
       AND ${blockPairSql('m.author_id')}
   `).get({ chatId, lastReadId, viewerId }).c;
+}
+
+/**
+ * Самая дальняя ватерлиния среди остальных участников: своё сообщение с id не
+ * больше неё кто-то уже прочитал — две галочки, как в группах Телеграма. Кто
+ * именно прочитал, не раскрывается: ватерлиния на это и не отвечает.
+ */
+function othersReadUpTo(chatId, viewerId) {
+  return db.prepare(`
+    SELECT COALESCE(MAX(last_read_id), 0) AS top
+    FROM chat_members WHERE chat_id = ? AND user_id <> ?
+  `).get(chatId, viewerId).top;
 }
 
 /** Последнее сообщение, видимое смотрящему, — для превью в списке чатов. */
@@ -163,6 +182,7 @@ router.get('/', (req, res) => {
       ...serializeChat(row, me),
       unread: unreadIn(row.id, me, row.last_read_id),
       lastMessage,
+      readUpTo: othersReadUpTo(row.id, me),
       // Только для сортировки, наружу не уходит: пустой чат должен стоять по
       // времени создания, иначе новый чат оказался бы в самом низу списка.
       sortKey: lastMessage ? lastMessage.createdAt : row.created_at,
@@ -317,6 +337,7 @@ router.get('/:id/messages', (req, res) => {
     chat: serializeChat(chat, me),
     messages: page.map(serializeMessage).reverse(),
     nextCursor: hasMore ? page.at(-1).id : null,
+    readUpTo: othersReadUpTo(chat.id, me),
   });
 });
 

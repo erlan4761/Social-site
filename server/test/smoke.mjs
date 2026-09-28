@@ -1520,5 +1520,64 @@ check('снятая во время блокировки не воскресла
 r = await gal('/bookmarks');
 check('у автора записей чужие закладки по-прежнему не видны', idsOf(r).length === 0, JSON.stringify(idsOf(r)));
 
+console.log('\n— в сети и галочки прочтения —');
+const vera = makeClient();
+const yan = makeClient();
+const userV = `vera_${stamp}`;
+const userY = `yan_${stamp}`;
+await vera('/auth/register', { method: 'POST', body: JSON.stringify({ username: userV, displayName: 'Вера', email: `${userV}@example.test`, password: 'parol12345' }) });
+await yan('/auth/register', { method: 'POST', body: JSON.stringify({ username: userY, displayName: 'Ян', email: `${userY}@example.test`, password: 'parol12345' }) });
+
+// Свежесть: запрос с сессией только что прошёл, значит «был в сети» — секунды
+// назад. Пять минут — запас на медленную машину, а не допуск логики.
+const fresh = (iso) => typeof iso === 'string' && Date.now() - Date.parse(iso) < 5 * 60_000;
+
+await vera(`/messages/${userY}`, { method: 'POST', body: JSON.stringify({ body: 'Ян, привет!' }) });
+r = await yan(`/messages/${userV}`);
+check('в переписке есть время визита собеседника', fresh(r.body.user?.lastSeenAt), JSON.stringify(r.body.user));
+r = await yan('/messages');
+check('и в списке диалогов тоже', fresh(r.body.conversations?.[0]?.user?.lastSeenAt), JSON.stringify(r.body.conversations?.[0]?.user));
+// `guest`, а не `anon`: тот к этому месту уже входил в аккаунт в проверках
+// сброса пароля и анонимом больше не является (см. README, «Тесты»).
+r = await guest(`/messages/${userV}`);
+check('аноним время визита не получает (401)', r.status === 401, `${r.status}`);
+
+r = await yan(`/users/${userV}/block`, { method: 'PUT' });
+check('Ян заблокировал Веру', r.status === 200, JSON.stringify(r.body));
+r = await vera(`/messages/${userY}`);
+check('заблокированная не видит, когда Ян был в сети', r.body.user && r.body.user.lastSeenAt === null, JSON.stringify(r.body.user));
+r = await yan(`/messages/${userV}`);
+check('и заблокировавший не видит — правило симметрично', r.body.user && r.body.user.lastSeenAt === null, JSON.stringify(r.body.user));
+r = await yan('/messages');
+check('в списке диалогов при блокировке тоже пусто', r.body.conversations?.[0]?.user?.lastSeenAt === null, JSON.stringify(r.body.conversations?.[0]?.user));
+await yan(`/users/${userV}/block`, { method: 'DELETE' });
+r = await vera(`/messages/${userY}`);
+check('после разблокировки время визита вернулось', fresh(r.body.user?.lastSeenAt), JSON.stringify(r.body.user));
+
+r = await vera('/chats', { method: 'POST', body: JSON.stringify({ title: 'Галочки', members: [userY] }) });
+check('чат для галочек создан', r.status === 201, JSON.stringify(r.body));
+const tickChat = r.body.chat.id;
+r = await vera(`/chats/${tickChat}/messages`, { method: 'POST', body: JSON.stringify({ body: 'Кто прочитал?' }) });
+const tickMsg = r.body.message.id;
+r = await vera(`/chats/${tickChat}/messages`);
+check('пока никто не прочитал — readUpTo ниже сообщения', typeof r.body.readUpTo === 'number' && r.body.readUpTo < tickMsg, JSON.stringify(r.body.readUpTo));
+check('у участников есть время визита', r.body.chat?.members?.every((m) => fresh(m.lastSeenAt)), JSON.stringify(r.body.chat?.members));
+await yan(`/chats/${tickChat}/read`, { method: 'PUT' });
+r = await vera(`/chats/${tickChat}/messages`);
+check('после прочтения Яном — readUpTo дошёл до сообщения', r.body.readUpTo >= tickMsg, `${r.body.readUpTo} vs ${tickMsg}`);
+r = await vera('/chats');
+const tickSummary = r.body.chats?.find((ch) => ch.id === tickChat);
+check('readUpTo есть и в списке чатов', tickSummary?.readUpTo >= tickMsg, JSON.stringify(tickSummary?.readUpTo));
+// Своя ватерлиния в readUpTo не входит: иначе своё сообщение считалось бы
+// прочитанным сразу после отправки, ведь автор его, разумеется, видел.
+r = await yan(`/chats/${tickChat}/messages`);
+check('у Яна своя ватерлиния не считается чужим прочтением', r.body.readUpTo < tickMsg, `${r.body.readUpTo} vs ${tickMsg}`);
+
+await yan(`/users/${userV}/block`, { method: 'PUT' });
+r = await yan(`/chats/${tickChat}/messages`);
+const veraInChat = r.body.chat?.members?.find((m) => m.username === userV);
+check('в чате при блокировке время визита скрыто', veraInChat && veraInChat.lastSeenAt === null, JSON.stringify(veraInChat));
+await yan(`/users/${userV}/block`, { method: 'DELETE' });
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
