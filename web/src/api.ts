@@ -154,7 +154,7 @@ export type ChannelPost = {
   reactions: Reaction[];
 };
 
-export type ChannelSummary = Channel & { unread: number; lastPost: ChannelPost | null };
+export type ChannelSummary = Channel & ChatPrefs & { unread: number; lastPost: ChannelPost | null };
 
 export type ChannelComment = { id: number; body: string; createdAt: string; author: Author };
 
@@ -170,7 +170,11 @@ export type Message = MessageExtras & {
   readAt: string | null;
 };
 
-export type Conversation = {
+/** Настройки чата в списке — у каждого свои: закреплён ли и приглушён ли. */
+export type ChatPrefs = { pinnedAt: string | null; muted: boolean };
+export type PrefKind = 'dm' | 'chat' | 'channel';
+
+export type Conversation = ChatPrefs & {
   user: Person;
   unread: number;
   lastMessage: Message;
@@ -228,7 +232,7 @@ export type ChatMessage = MessageExtras & {
   author: Author;
 };
 
-export type ChatSummary = Chat & {
+export type ChatSummary = Chat & ChatPrefs & {
   unread: number;
   lastMessage: ChatMessage | null;
   /** Самая дальняя отметка прочтения среди остальных участников: своё
@@ -566,6 +570,13 @@ const realApi = {
   // ─ Каналы ───────────────────────────────────────────────────────────────
 
   channels: () => request<{ channels: ChannelSummary[]; unreadTotal: number }>('/channels'),
+
+  /** Закрепить чат или выключить уведомления. target — логин, номер чата или адрес канала. */
+  setPref: (kind: PrefKind, target: string | number, input: { pinned?: boolean; muted?: boolean }) =>
+    request<{ pinned: boolean; muted: boolean }>(`/prefs/${kind}/${encodeURIComponent(String(target))}`, {
+      method: 'PUT',
+      body: body(input),
+    }),
 
   searchChannels: (q: string) =>
     request<{ channels: Channel[] }>(`/channels/search?q=${encodeURIComponent(q)}`),

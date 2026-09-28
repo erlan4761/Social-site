@@ -11,7 +11,7 @@
 import type {
   ArchiveMonth, Attachment, AttachmentInput, Author, Badges, Channel, ChannelComment, ChannelPost, ChannelSummary, ForwardedFrom, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
   Conversation, ForwardRef, ForwardTarget, Media, Message, Notification as NotificationItem,
-  NotificationKind, Page, Person, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
+  NotificationKind, Page, Person, PrefKind, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
 } from '../api';
 import { ApiError } from '../api';
 
@@ -125,6 +125,9 @@ let channelPosts: DbChannelPost[] = [];
 let channelViews: { postId: number; userId: number }[] = [];
 let postReactions: DbReaction[] = [];
 let channelComments: DbChannelComment[] = [];
+/** Настройки чатов в списке — как таблица chat_prefs на сервере. */
+type DbPref = { userId: number; kind: PrefKind; targetId: number; pinnedAt: string | null; muted: boolean };
+let prefs: DbPref[] = [];
 /** «Печатает…»: ключ переписки|id человека → до какого момента. Как на
  *  сервере, живёт только в памяти и гаснет сам. */
 const typingUntil = new Map<string, number>();
@@ -209,6 +212,7 @@ function seed() {
   channelPosts = [];
   channelViews = [];
   postReactions = [];
+  prefs = [];
   channelComments = [];
   typingUntil.clear();
   nextId = 1;
@@ -430,6 +434,13 @@ function seed() {
   sub(dev, marina, d1.id);
   sub(dev, oleg, d1.id);
   saw(d1, demo, marina, oleg);
+
+  prefs.push(
+    { userId: demo.id, kind: 'dm', targetId: marina.id, pinnedAt: ago(days(3)), muted: false },
+    { userId: demo.id, kind: 'dm', targetId: oleg.id, pinnedAt: null, muted: true },
+  );
+  // Событие от приглушённого Олега в «Событиях» не появилось бы — убираем.
+  notifications = notifications.filter((n) => !(n.kind === 'message' && n.actorId === oleg.id));
 
   meId = demo.id;
 }
@@ -746,6 +757,21 @@ type NotifyInput = {
  * живут здесь, а не размазаны по методам: себе не уведомляем, заблокированной
  * паре не уведомляем, лайк и подписка идемпотентны, сообщения схлопываются.
  */
+const prefOf = (userId: number, kind: PrefKind, targetId: number) =>
+  prefs.find((x) => x.userId === userId && x.kind === kind && x.targetId === targetId);
+const mutedFor = (userId: number, kind: PrefKind, targetId: number | null) =>
+  targetId != null && Boolean(prefOf(userId, kind, targetId)?.muted);
+const prefFields = (userId: number, kind: PrefKind, targetId: number) => {
+  const x = prefOf(userId, kind, targetId);
+  return { pinnedAt: x?.pinnedAt ?? null, muted: Boolean(x?.muted) };
+};
+/** Общий счётчик ЛС — без приглушённых собеседников. */
+const dmUnreadTotal = (userId: number) =>
+  messages.filter((m) => m.toId === userId && !m.readAt && !mutedFor(userId, 'dm', m.fromId)).length;
+const dropPrefs = (kind: PrefKind, targetId: number, userId?: number) => {
+  prefs = prefs.filter((x) => !(x.kind === kind && x.targetId === targetId && (userId == null || x.userId === userId)));
+};
+
 function notify(input: NotifyInput) {
   const { userId, actorId, kind } = input;
   const post = input.postId ?? null;
@@ -754,6 +780,9 @@ function notify(input: NotifyInput) {
 
   if (userId === actorId) return;
   if (blockedPair(userId, actorId)) return;
+  // Приглушённая переписка событий не создаёт.
+  if (kind === 'message' && mutedFor(userId, 'dm', actorId)) return;
+  if (kind === 'chat_message' && mutedFor(userId, 'chat', chat)) return;
 
   const sameObject = (n: DbNotification) =>
     n.userId === userId && n.actorId === actorId && n.kind === kind
@@ -1290,13 +1319,14 @@ export const mockApi = rejectInsteadOfThrow({
           // История не удаляется и диалог из списка не исчезает — меняется
           // только возможность отвечать.
           blocked: blockedPair(u.id, otherId),
+          ...prefFields(u.id, 'dm', otherId),
         };
       })
       .sort((a, b) => b.lastMessage.id - a.lastMessage.id);
 
     return tick({
       conversations: list,
-      unreadTotal: messages.filter((m) => m.toId === u.id && !m.readAt).length,
+      unreadTotal: dmUnreadTotal(u.id),
     });
   },
 
@@ -1410,7 +1440,7 @@ export const mockApi = rejectInsteadOfThrow({
     markNotificationsRead({ userId: u.id, kind: 'message', actorId: other!.id });
     return tick({
       ok: true as const,
-      unreadTotal: messages.filter((m) => m.toId === u.id && !m.readAt).length,
+      unreadTotal: dmUnreadTotal(u.id),
     });
   },
 
@@ -1449,12 +1479,14 @@ export const mockApi = rejectInsteadOfThrow({
   badges: (): Promise<Badges> => {
     const u = requireMe()!;
     return tick({
-      messages: messages.filter((m) => m.toId === u.id && !m.readAt).length,
+      messages: dmUnreadTotal(u.id),
       chats: chatMembers
         .filter((m) => m.userId === u.id)
+        .filter((m) => !mutedFor(u.id, 'chat', m.chatId))
         .reduce((sum, m) => sum + chatUnread(m.chatId, u.id), 0),
       channels: channelSubs
         .filter((s) => s.userId === u.id)
+        .filter((s) => !mutedFor(u.id, 'channel', s.channelId))
         .reduce((sum, s) => sum + channelUnread(s), 0),
       notifications: unreadNotifications(u.id),
     });
@@ -1683,6 +1715,7 @@ export const mockApi = rejectInsteadOfThrow({
           unread: chatUnread(c.id, u.id),
           lastMessage: last ? toChatMessage(last) : null,
           readUpTo: othersReadUpTo(c.id, u.id),
+          ...prefFields(u.id, 'chat', c.id),
         };
       })
       // Чат без сообщений встаёт по своему созданию, иначе только что
@@ -1742,6 +1775,7 @@ export const mockApi = rejectInsteadOfThrow({
     const { u, chat } = requireChat(chatId);
     if (chat.ownerId !== u.id) fail(403, 'Удалить чат может только владелец');
     chats = chats.filter((c) => c.id !== chat.id);
+    dropPrefs('chat', chat.id);
     chatMembers = chatMembers.filter((m) => m.chatId !== chat.id);
     chatMessages = chatMessages.filter((m) => m.chatId !== chat.id);
     notifications = notifications.filter((n) => n.chatId !== chat.id);
@@ -1873,12 +1907,14 @@ export const mockApi = rejectInsteadOfThrow({
     if (!leaving && chat.ownerId !== u.id) fail(403, 'Удалять участников может только владелец');
 
     chatMembers = chatMembers.filter((m) => !(m.chatId === chat.id && m.userId === person!.id));
+    dropPrefs('chat', chat.id, person!.id);
     // Ушедшему события об этом чате больше некуда вести.
     notifications = notifications.filter((n) => !(n.userId === person!.id && n.chatId === chat.id));
 
     const rest = membersOf(chat.id);
     if (rest.length === 0) {
       chats = chats.filter((c) => c.id !== chat.id);
+      dropPrefs('chat', chat.id);
       chatMessages = chatMessages.filter((m) => m.chatId !== chat.id);
       notifications = notifications.filter((n) => n.chatId !== chat.id);
     } else if (chat.ownerId === person!.id) {
@@ -1899,7 +1935,10 @@ export const mockApi = rejectInsteadOfThrow({
       .map((s) => {
         const c = channels.find((x) => x.id === s.channelId)!;
         const last = postsOf(c.id).at(-1) ?? null;
-        return { ...toChannel(c), unread: channelUnread(s), lastPost: last ? toChannelPost(last) : null };
+        return {
+          ...toChannel(c), unread: channelUnread(s), lastPost: last ? toChannelPost(last) : null,
+          ...prefFields(u.id, 'channel', c.id),
+        };
       })
       .sort((a, b) => (b.lastPost?.createdAt ?? b.createdAt).localeCompare(a.lastPost?.createdAt ?? a.createdAt));
     return tick({ channels: list, unreadTotal: list.reduce((sum, c) => sum + c.unread, 0) });
@@ -1953,6 +1992,7 @@ export const mockApi = rejectInsteadOfThrow({
     if (c.ownerId !== u.id) fail(403, 'Удалить канал может только владелец');
     const ids = new Set(postsOf(c.id).map((p) => p.id));
     channels = channels.filter((x) => x.id !== c.id);
+    dropPrefs('channel', c.id);
     channelSubs = channelSubs.filter((s) => s.channelId !== c.id);
     channelPosts = channelPosts.filter((p) => p.channelId !== c.id);
     channelViews = channelViews.filter((v) => !ids.has(v.postId));
@@ -1970,6 +2010,7 @@ export const mockApi = rejectInsteadOfThrow({
     } else {
       if (c.ownerId === u.id) fail(400, 'Владелец не может отписаться от своего канала');
       channelSubs = channelSubs.filter((s) => !(s.channelId === c.id && s.userId === u.id));
+      dropPrefs('channel', c.id, u.id);
     }
     return tick({ channel: toChannel(c) });
   },
@@ -2072,5 +2113,35 @@ export const mockApi = rejectInsteadOfThrow({
     if (comment!.authorId !== u.id && c.ownerId !== u.id) fail(403, 'Удалить можно только свой комментарий');
     channelComments = channelComments.filter((x) => x.id !== commentId);
     return tick({ ok: true as const });
+  },
+
+  // ─ Настройки чатов ────────────────────────────────────────────────────
+
+  setPref: (kind: PrefKind, target: string | number, input: { pinned?: boolean; muted?: boolean }) => {
+    const u = requireMe()!;
+    let targetId: number | null = null;
+    if (kind === 'dm') {
+      const other = byName(String(target));
+      targetId = other && other.id !== u.id ? other.id : null;
+    } else if (kind === 'chat') {
+      targetId = memberRow(Number(target), u.id) ? Number(target) : null;
+    } else {
+      const c = channelBy(String(target));
+      targetId = c && subOf(c.id, u.id) ? c.id : null;
+    }
+    if (targetId == null) fail(404, 'Чат не найден');
+
+    const current = prefOf(u.id, kind, targetId!);
+    if (input.pinned && !current?.pinnedAt && prefs.filter((x) => x.userId === u.id && x.pinnedAt).length >= 5) {
+      fail(400, 'Закрепить можно не больше 5 чатов');
+    }
+    const pinnedAt = input.pinned === undefined
+      ? current?.pinnedAt ?? null
+      : input.pinned ? current?.pinnedAt ?? new Date().toISOString() : null;
+    const muted = input.muted === undefined ? Boolean(current?.muted) : input.muted;
+
+    prefs = prefs.filter((x) => x !== current);
+    if (pinnedAt || muted) prefs.push({ userId: u.id, kind, targetId: targetId!, pinnedAt, muted });
+    return tick({ pinned: Boolean(pinnedAt), muted });
   },
 });

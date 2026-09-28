@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet, useMatch, useNavigate } from 'react-router-dom';
 import {
   api, ApiError, type Author, type Channel, type ChannelSummary, type ChatSummary, type Conversation,
@@ -52,7 +52,15 @@ function rows(conversations: Conversation[], chats: ChatSummary[], channels: Cha
     name: c.title,
     item: c,
   }));
-  return [...dm, ...group, ...channel].sort((a, b) => b.at.localeCompare(a.at));
+  // Закреплённые — наверху, в том порядке, в каком их закрепляли; остальные —
+  // по свежести, как всегда.
+  return [...dm, ...group, ...channel].sort((a, b) => {
+    const pa = a.item.pinnedAt;
+    const pb = b.item.pinnedAt;
+    if (pa && pb) return pa.localeCompare(pb);
+    if (pa || pb) return pa ? -1 : 1;
+    return b.at.localeCompare(a.at);
+  });
 }
 
 const fold = (s: string) => s.toLocaleLowerCase('ru').replace(/ё/g, 'е');
@@ -77,6 +85,8 @@ export function Messenger() {
   const [people, setPeople] = useState<Author[]>([]);
   const [foundChannels, setFoundChannels] = useState<Channel[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [rowMenu, setRowMenu] = useState<{ row: Row; x: number; y: number } | null>(null);
+  const press = useRef<number | null>(null);
 
   const load = useCallback(() => {
     // allSettled: три независимых списка, падение одного — не повод прятать остальные.
@@ -161,6 +171,29 @@ export function Messenger() {
   );
   const strangers = people.filter((p) => p.id !== user?.id && !known.has(p.id));
   const newChannels = foundChannels.filter((c) => !c.subscribed);
+
+  /** Меню строки: правый клик, клавиша меню или долгое нажатие на телефоне. */
+  function openRowMenu(row: Row, x: number, y: number, el: HTMLElement) {
+    // С клавиатуры координаты нулевые — ставим меню у самой строки.
+    if (x === 0 && y === 0) {
+      const r = el.getBoundingClientRect();
+      x = r.left + 24;
+      y = r.bottom;
+    }
+    setRowMenu({ row, x, y });
+  }
+
+  async function applyPref(row: Row, change: { pinned?: boolean; muted?: boolean }) {
+    setRowMenu(null);
+    const target = row.kind === 'dm' ? row.item.user.username : row.kind === 'chat' ? row.item.id : row.item.handle;
+    try {
+      await api.setPref(row.kind, target, change);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не получилось');
+    }
+    refreshList();
+  }
 
   function go(path: string) {
     setQuery('');
@@ -250,7 +283,22 @@ export function Messenger() {
                 )}
                 <ul className="dialogs">
                   {shown.map((row) => (
-                    <li key={row.key}>
+                    <li
+                      key={row.key}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        openRowMenu(row, e.clientX, e.clientY, e.currentTarget);
+                      }}
+                      onPointerDown={(e) => {
+                        if (e.pointerType !== 'touch') return;
+                        const { clientX, clientY } = e;
+                        const el = e.currentTarget;
+                        press.current = window.setTimeout(() => openRowMenu(row, clientX, clientY, el), 450);
+                      }}
+                      onPointerUp={() => press.current != null && window.clearTimeout(press.current)}
+                      onPointerCancel={() => press.current != null && window.clearTimeout(press.current)}
+                      onPointerMove={() => press.current != null && window.clearTimeout(press.current)}
+                    >
                       {row.kind === 'dm' ? (
                         <DmRow c={row.item} meId={user?.id} />
                       ) : row.kind === 'chat' ? (
@@ -320,6 +368,15 @@ export function Messenger() {
         </section>
       </div>
 
+      {rowMenu && (
+        <RowMenu
+          state={rowMenu}
+          onClose={() => setRowMenu(null)}
+          onPin={(pinned) => void applyPref(rowMenu.row, { pinned })}
+          onMute={(muted) => void applyPref(rowMenu.row, { muted })}
+        />
+      )}
+
       {creating === 'chat' && <NewChatDialog onClose={() => setCreating(null)} />}
       {creating === 'channel' && (
         <NewChannelDialog
@@ -363,6 +420,7 @@ function DmRow({ c, meId }: { c: Conversation; meId?: number }) {
             {c.user.displayName}
             {online && <span className="sr-only">, в сети</span>}
           </span>
+          {c.muted && <MutedMark />}
           {/* Кто кого заблокировал — не сообщаем: пометка одинакова для обеих сторон. */}
           {c.blocked && <span className="dialog-flag">блокировка</span>}
           <span className="dialog-time">
@@ -375,12 +433,7 @@ function DmRow({ c, meId }: { c: Conversation; meId?: number }) {
             {mine && <span className="dialog-you">Вы: </span>}
             {previewText(c.lastMessage.body, c.lastMessage.attachment)}
           </span>
-          {c.unread > 0 && (
-            <span className="badge">
-              {c.unread}
-              <span className="sr-only"> непрочитанных</span>
-            </span>
-          )}
+          <RowTail unread={c.unread} muted={c.muted} pinned={Boolean(c.pinnedAt)} />
         </span>
       </span>
     </NavLink>
@@ -399,6 +452,7 @@ function ChatRow({ c, meId }: { c: ChatSummary; meId?: number }) {
       <span className="dialog-body">
         <span className="dialog-head">
           <span className="dialog-name">{c.title}</span>
+          {c.muted && <MutedMark />}
           <span className="dialog-time">
             {last && mine && <Ticks status={c.readUpTo >= last.id ? 'read' : 'sent'} />}
             <time dateTime={at}>{listTime(at)}</time>
@@ -415,12 +469,7 @@ function ChatRow({ c, meId }: { c: ChatSummary; meId?: number }) {
               `${c.memberCount} ${plural(c.memberCount, 'участник', 'участника', 'участников')}, сообщений пока нет`
             )}
           </span>
-          {c.unread > 0 && (
-            <span className="badge">
-              {c.unread}
-              <span className="sr-only"> непрочитанных</span>
-            </span>
-          )}
+          <RowTail unread={c.unread} muted={c.muted} pinned={Boolean(c.pinnedAt)} />
         </span>
       </span>
     </NavLink>
@@ -440,6 +489,7 @@ function ChannelRow({ c }: { c: ChannelSummary }) {
             {c.title}
             <span className="sr-only">, канал</span>
           </span>
+          {c.muted && <MutedMark />}
           <span className="dialog-time">
             <time dateTime={at}>{listTime(at)}</time>
           </span>
@@ -452,15 +502,94 @@ function ChannelRow({ c }: { c: ChannelSummary }) {
                 ? 'Ваш канал. Опубликуйте первую запись'
                 : 'Публикаций пока нет'}
           </span>
-          {c.unread > 0 && (
-            <span className="badge">
-              {c.unread}
-              <span className="sr-only"> непрочитанных</span>
-            </span>
-          )}
+          <RowTail unread={c.unread} muted={c.muted} pinned={Boolean(c.pinnedAt)} />
         </span>
       </span>
     </NavLink>
+  );
+}
+
+/** Приглушённый чат — перечёркнутый колокольчик рядом с именем. */
+function MutedMark() {
+  return (
+    <span className="dialog-muted" title="Уведомления выключены">
+      <Icon name="bell-off" size={14} />
+      <span className="sr-only">, без уведомлений</span>
+    </span>
+  );
+}
+
+/** Хвост строки: счётчик непрочитанного (серый у приглушённого) или булавка. */
+function RowTail({ unread, muted, pinned }: { unread: number; muted: boolean; pinned: boolean }) {
+  if (unread > 0) {
+    return (
+      <span className={muted ? 'badge muted' : 'badge'}>
+        {unread}
+        <span className="sr-only"> непрочитанных</span>
+      </span>
+    );
+  }
+  if (!pinned) return null;
+  return (
+    <span className="dialog-pin" title="Закреплён">
+      <Icon name="pin" size={15} />
+      <span className="sr-only">закреплён</span>
+    </span>
+  );
+}
+
+type RowMenuProps = {
+  state: { row: Row; x: number; y: number };
+  onClose: () => void;
+  onPin: (pinned: boolean) => void;
+  onMute: (muted: boolean) => void;
+};
+
+/** Меню строки списка: закрепить и выключить уведомления. Встаёт там, где
+ *  щёлкнули, и отодвигается от краёв окна, как меню сообщения. */
+function RowMenu({ state, onClose, onPin, onMute }: RowMenuProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: state.x, top: state.y });
+  const pinned = Boolean(state.row.item.pinnedAt);
+  const muted = state.row.item.muted;
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    setPos({
+      left: Math.max(8, Math.min(state.x, window.innerWidth - width - 8)),
+      top: state.y + height > window.innerHeight - 8 ? Math.max(8, state.y - height) : state.y,
+    });
+    el.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+  }, [state.x, state.y]);
+
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="msg-menu" ref={ref} role="menu" aria-label={`Чат «${state.row.name}»`} style={{ left: pos.left, top: pos.top }}>
+      <div className="msg-menu-list">
+        <button className="msg-menu-item" type="button" role="menuitem" onClick={() => onPin(!pinned)}>
+          <Icon name="pin" size={18} />
+          {pinned ? 'Открепить' : 'Закрепить'}
+        </button>
+        <button className="msg-menu-item" type="button" role="menuitem" onClick={() => onMute(!muted)}>
+          <Icon name={muted ? 'bell' : 'bell-off'} size={18} />
+          {muted ? 'Включить уведомления' : 'Выключить уведомления'}
+        </button>
+      </div>
+    </div>
   );
 }
 

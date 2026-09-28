@@ -215,6 +215,12 @@
 }
 
 .dialog-last.unread { color: var(--ink); }
+
+/* Приглушённый чат: колокольчик у имени и серый счётчик — непрочитанное
+   видно, но не зовёт, как в Телеграме. */
+.dialog-muted { display: inline-flex; flex: none; color: var(--ink-3); }
+.dialog-foot .badge.muted { background: var(--ink-3); color: var(--surface); }
+.dialog-pin { display: inline-flex; flex: none; color: var(--ink-3); transform: rotate(-12deg); }
 .dialog-you { color: var(--ink-3); }
 .dialog-foot .badge { margin-left: 0; }
 
