@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
-import { api, ApiError, type AttachmentInput, type Message, type Person } from '../api';
+import { api, ApiError, type AttachmentInput, type Message, type Person, type PinnedPreview } from '../api';
 import {
-  Composer, MessageList, PaneHead, PresenceAvatar, TypingDots, editable, mergeLatest, previewText,
+  Composer, MessageList, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
@@ -36,6 +36,8 @@ function ThreadView({ username }: { username: string }) {
   const [typing, setTyping] = useState(false);
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<Message | null>(null);
+  const [pinned, setPinned] = useState<PinnedPreview | null>(null);
+  const [jump, setJump] = useState<{ id: number; seq: number } | null>(null);
 
   /** Номер последнего своего изменения. Ответ опроса, ушедшего раньше него,
    *  не должен откатить только что поставленную реакцию или правку. */
@@ -64,6 +66,7 @@ function ThreadView({ username }: { username: string }) {
         setCursor(res.nextCursor);
         setBlocked(Boolean(res.blocked));
         setTyping(res.typing);
+        setPinned(res.pinned);
         // Всегда, а не только при непрочитанных: вместе с перепиской гаснет и
         // событие о ней в «Событиях».
         markRead();
@@ -92,6 +95,7 @@ function ThreadView({ username }: { username: string }) {
           setOther(res.user);
           setBlocked(Boolean(res.blocked));
           setTyping(res.typing);
+        setPinned(res.pinned);
           if (edits.current !== startedAt) return;
           setMessages((prev) => {
             const newest = prev.at(-1)?.id ?? 0;
@@ -106,6 +110,30 @@ function ThreadView({ username }: { username: string }) {
       clearInterval(timer);
     };
   }, [username, user?.id, markRead]);
+
+  /** Показать сообщение: догрузить ленту до него и прокрутить. */
+  async function reveal(id: number) {
+    try {
+      const res = await revealOlder(id, messages, cursor, async (c) => {
+        const page = await api.thread(username, c);
+        return { items: page.messages, nextCursor: page.nextCursor };
+      });
+      setMessages(res.list);
+      setCursor(res.cursor);
+      if (res.found) setJump({ id, seq: Date.now() });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось найти сообщение');
+    }
+  }
+
+  async function togglePin(id: number) {
+    if (pinned?.id === id) {
+      await api.unpinMessage(username);
+      setPinned(null);
+    } else {
+      setPinned((await api.pinMessage(username, id)).pinned);
+    }
+  }
 
   async function loadOlder() {
     if (cursor == null || loadingMore) return;
@@ -187,6 +215,9 @@ function ThreadView({ username }: { username: string }) {
         case 'forward':
           setForwarding(msg);
           break;
+        case 'pin':
+          await togglePin(msg.id);
+          break;
         case 'react':
           put((await api.reactMessage(username, msg.id, action.emoji)).message);
           break;
@@ -267,6 +298,14 @@ function ThreadView({ username }: { username: string }) {
         <header className="pane-head" />
       )}
 
+      {pinned && (
+        <PinnedBar
+          pinned={pinned}
+          onOpen={() => void reveal(pinned.id)}
+          onUnpin={blocked ? undefined : () => void api.unpinMessage(username).then(() => setPinned(null)).catch(() => undefined)}
+        />
+      )}
+
       <MessageList
         items={items}
         loading={loading}
@@ -274,6 +313,9 @@ function ThreadView({ username }: { username: string }) {
         loadingMore={loadingMore}
         onLoadOlder={() => void loadOlder()}
         onAction={(action, item) => void act(action, item)}
+        actions={{ pin: !blocked }}
+        pinnedId={pinned?.id ?? null}
+        jump={jump}
         readOnly={blocked}
         empty={
           <>

@@ -11,7 +11,7 @@
 import type {
   ArchiveMonth, Attachment, AttachmentInput, Author, Badges, Channel, ChannelComment, ChannelPost, ChannelSummary, ForwardedFrom, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
   Conversation, ForwardRef, ForwardTarget, Media, Message, Notification as NotificationItem,
-  NotificationKind, Page, Person, PrefKind, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
+  NotificationKind, Page, Person, PinnedPreview, PrefKind, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
 } from '../api';
 import { ApiError } from '../api';
 
@@ -128,6 +128,9 @@ let channelComments: DbChannelComment[] = [];
 /** Настройки чатов в списке — как таблица chat_prefs на сервере. */
 type DbPref = { userId: number; kind: PrefKind; targetId: number; pinnedAt: string | null; muted: boolean };
 let prefs: DbPref[] = [];
+/** Закреплённое сообщение — одно на переписку, как pinned_messages на сервере. */
+type DbPin = { kind: PrefKind; scope: string; messageId: number };
+let pins: DbPin[] = [];
 /** «Печатает…»: ключ переписки|id человека → до какого момента. Как на
  *  сервере, живёт только в памяти и гаснет сам. */
 const typingUntil = new Map<string, number>();
@@ -213,6 +216,7 @@ function seed() {
   channelViews = [];
   postReactions = [];
   prefs = [];
+  pins = [];
   channelComments = [];
   typingUntil.clear();
   nextId = 1;
@@ -346,6 +350,7 @@ function seed() {
   };
 
   const invite = say(nina, 'Проявляем в субботу у меня? Бачок на две плёнки есть, проявителя хватит на четыре.', 70);
+  pins.push({ kind: 'chat', scope: String(room.id), messageId: invite.id });
   const tank = say(nina, 'Вот он, кстати.', 68);
   tank.attachment = {
     url: gradient('#3b7a9c', '#e08a4a', 720, 480, 'бачок и две плёнки'),
@@ -429,6 +434,7 @@ function seed() {
   );
 
   const dev = channel(demo, 'chronika_dev', 'Хроника изнутри', 'Как устроен этот сайт: решения, ошибки и то, что пришлось переделывать.', days(10));
+  pins.push({ kind: 'channel', scope: String(notes.id), messageId: n1.id });
   const d1 = publish(dev, 'Здесь пишу о том, как устроена «Хроника» изнутри. Первое: сообщения ходят опросом раз в три секунды, без WebSocket, — и этого хватает.', days(9));
   channelSubs.find((s) => s.channelId === dev.id && s.userId === demo.id)!.lastReadId = d1.id;
   sub(dev, marina, d1.id);
@@ -679,6 +685,19 @@ function requirePairMessage(username: string, messageId: number) {
   const m = pairThread(u.id, other!.id).find((x) => x.id === messageId);
   if (!m) fail(404, 'Сообщение не найдено');
   return { u, other: other!, m: m! };
+}
+
+const pinScope = (a: number, b: number) => `${Math.min(a, b)}-${Math.max(a, b)}`;
+const pinnedOf = (kind: PrefKind, scope: string | number) => pins.find((x) => x.kind === kind && x.scope === String(scope));
+const setPin = (kind: PrefKind, scope: string | number, messageId: number | null) => {
+  pins = pins.filter((x) => !(x.kind === kind && x.scope === String(scope)));
+  if (messageId != null) pins.push({ kind, scope: String(scope), messageId });
+};
+/** Закреплённое глазами смотрящего: не нашлось среди видимых — полосы нет. */
+function pinPreview(kind: PrefKind, scope: string | number, visible: { id: number; body: string; attachment: Attachment | null }[]): PinnedPreview | null {
+  const pin = pinnedOf(kind, scope);
+  const m = pin ? visible.find((x) => x.id === pin.messageId) : undefined;
+  return m ? { id: m.id, body: m.body || attachmentLabelOf(m.attachment), attachmentKind: m.attachment?.kind ?? null } : null;
 }
 
 const dmKey = (a: number, b: number) => `dm:${Math.min(a, b)}-${Math.max(a, b)}`;
@@ -1349,6 +1368,7 @@ export const mockApi = rejectInsteadOfThrow({
       nextCursor: list.length > CHAT_PAGE ? page.at(-1)!.id : null,
       blocked: blockedPair(u.id, other!.id),
       typing: !blockedPair(u.id, other!.id) && isTyping(dmKey(u.id, other!.id), other!.id),
+      pinned: pinPreview('dm', pinScope(u.id, other!.id), pairThread(u.id, other!.id)),
     });
   },
 
@@ -1403,6 +1423,7 @@ export const mockApi = rejectInsteadOfThrow({
     const { u, m } = requirePairMessage(username, messageId);
     if (m.fromId !== u.id) fail(403, 'Удалить можно только своё сообщение');
     messages = messages.filter((x) => x.id !== m.id);
+    if (pinnedOf('dm', pinScope(m.fromId, m.toId))?.messageId === m.id) setPin('dm', pinScope(m.fromId, m.toId), null);
     dmReactions = dmReactions.filter((r) => r.messageId !== m.id);
     return tick({ ok: true as const });
   },
@@ -1799,6 +1820,7 @@ export const mockApi = rejectInsteadOfThrow({
       typing: membersOf(chat.id)
         .filter((m) => m.userId !== u.id && !hidden(m.userId) && isTyping(`chat:${chat.id}`, m.userId))
         .map((m) => ({ id: m.userId, displayName: byId(m.userId)!.displayName })),
+      pinned: pinPreview('chat', chat.id, visibleChatMessages(chat.id)),
     });
   },
 
@@ -1850,6 +1872,7 @@ export const mockApi = rejectInsteadOfThrow({
     // Своё — автор, любое — владелец чата, как админ группы.
     if (m.authorId !== u.id && chat.ownerId !== u.id) fail(403, 'Удалить можно только своё сообщение');
     chatMessages = chatMessages.filter((x) => x.id !== m.id);
+    if (pinnedOf('chat', chat.id)?.messageId === m.id) setPin('chat', chat.id, null);
     chatReactions = chatReactions.filter((r) => r.messageId !== m.id);
     return tick({ ok: true as const });
   },
@@ -2035,6 +2058,7 @@ export const mockApi = rejectInsteadOfThrow({
       channel: toChannel(c),
       posts: page.map(toChannelPost),
       nextCursor: list.length > 20 ? page[0].id : null,
+      pinned: pinPreview('channel', c.id, postsOf(c.id)),
     });
   },
 
@@ -2070,6 +2094,7 @@ export const mockApi = rejectInsteadOfThrow({
     const { c } = requireOwner(handle);
     const post = requirePost(c.id, postId);
     channelPosts = channelPosts.filter((p) => p.id !== post.id);
+    if (pinnedOf('channel', c.id)?.messageId === post.id) setPin('channel', c.id, null);
     channelComments = channelComments.filter((x) => x.postId !== post.id);
     postReactions = postReactions.filter((r) => r.messageId !== post.id);
     return tick({ ok: true as const });
@@ -2116,6 +2141,49 @@ export const mockApi = rejectInsteadOfThrow({
   },
 
   // ─ Настройки чатов ────────────────────────────────────────────────────
+
+  pinMessage: (username: string, messageId: number) => {
+    const { u, other, m } = requirePairMessage(username, messageId);
+    if (blockedPair(u.id, other.id)) fail(403, 'Переписка с этим пользователем недоступна');
+    setPin('dm', pinScope(u.id, other.id), m.id);
+    return tick({ pinned: pinPreview('dm', pinScope(u.id, other.id), pairThread(u.id, other.id)) });
+  },
+
+  unpinMessage: (username: string) => {
+    const u = requireMe()!;
+    const other = byName(username);
+    if (!other) fail(404, 'Пользователь не найден');
+    setPin('dm', pinScope(u.id, other!.id), null);
+    return tick({ ok: true as const });
+  },
+
+  pinChatMessage: (chatId: number, messageId: number) => {
+    const { u, chat } = requireChat(chatId);
+    if (chat.ownerId !== u.id) fail(403, 'Закреплять сообщения может только владелец чата');
+    const m = requireChatMessage(chat.id, messageId);
+    setPin('chat', chat.id, m.id);
+    return tick({ pinned: pinPreview('chat', chat.id, visibleChatMessages(chat.id)) });
+  },
+
+  unpinChatMessage: (chatId: number) => {
+    const { u, chat } = requireChat(chatId);
+    if (chat.ownerId !== u.id) fail(403, 'Откреплять сообщения может только владелец чата');
+    setPin('chat', chat.id, null);
+    return tick({ ok: true as const });
+  },
+
+  pinPost: (handle: string, postId: number) => {
+    const { c } = requireOwner(handle);
+    const post = requirePost(c.id, postId);
+    setPin('channel', c.id, post.id);
+    return tick({ pinned: pinPreview('channel', c.id, postsOf(c.id)) });
+  },
+
+  unpinPost: (handle: string) => {
+    const { c } = requireOwner(handle);
+    setPin('channel', c.id, null);
+    return tick({ ok: true as const });
+  },
 
   setPref: (kind: PrefKind, target: string | number, input: { pinned?: boolean; muted?: boolean }) => {
     const u = requireMe()!;

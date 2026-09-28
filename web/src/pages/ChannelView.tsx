@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
-import { api, ApiError, type AttachmentInput, type Channel, type ChannelPost } from '../api';
+import { api, ApiError, type AttachmentInput, type Channel, type ChannelPost, type PinnedPreview } from '../api';
 import {
-  Composer, MessageList, PaneHead, editable, mergeLatest, previewText,
+  Composer, MessageList, PaneHead, PinnedBar, editable, mergeLatest, previewText, revealOlder,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
@@ -38,6 +38,8 @@ function ChannelPane({ handle }: { handle: string }) {
   const [gone, setGone] = useState<string | null>(null);
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<ChannelPost | null>(null);
+  const [pinned, setPinned] = useState<PinnedPreview | null>(null);
+  const [jump, setJump] = useState<{ id: number; seq: number } | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   /** Номер последнего своего изменения — см. Thread.tsx. */
@@ -58,6 +60,7 @@ function ChannelPane({ handle }: { handle: string }) {
       .then((res) => {
         if (cancelled) return;
         setChannel(res.channel);
+        setPinned(res.pinned);
         setPosts(res.posts);
         setCursor(res.nextCursor);
         markRead(res.channel);
@@ -83,6 +86,7 @@ function ChannelPane({ handle }: { handle: string }) {
         .then((res) => {
           if (cancelled) return;
           setChannel(res.channel);
+          setPinned(res.pinned);
           if (edits.current !== startedAt) return;
           setPosts((prev) => {
             const newest = prev.at(-1)?.id ?? 0;
@@ -111,6 +115,29 @@ function ChannelPane({ handle }: { handle: string }) {
       setError(err instanceof ApiError ? err.message : 'Не удалось загрузить более старые');
     } finally {
       setLoadingMore(false);
+    }
+  }
+
+  async function reveal(id: number) {
+    try {
+      const res = await revealOlder(id, posts, cursor, async (c) => {
+        const page = await api.channelPosts(handle, c);
+        return { items: page.posts, nextCursor: page.nextCursor };
+      });
+      setPosts(res.list);
+      setCursor(res.cursor);
+      if (res.found) setJump({ id, seq: Date.now() });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось найти публикацию');
+    }
+  }
+
+  async function togglePin(id: number) {
+    if (pinned?.id === id) {
+      await api.unpinPost(handle);
+      setPinned(null);
+    } else {
+      setPinned((await api.pinPost(handle, id)).pinned);
     }
   }
 
@@ -163,6 +190,9 @@ function ChannelPane({ handle }: { handle: string }) {
           break;
         case 'forward':
           setForwarding(post);
+          break;
+        case 'pin':
+          await togglePin(post.id);
           break;
         case 'react':
           put((await api.reactPost(handle, post.id, action.emoji)).post);
@@ -253,6 +283,14 @@ function ChannelPane({ handle }: { handle: string }) {
         }
       />
 
+      {pinned && (
+        <PinnedBar
+          pinned={pinned}
+          onOpen={() => void reveal(pinned.id)}
+          onUnpin={owner ? () => void api.unpinPost(handle).then(() => setPinned(null)).catch(() => undefined) : undefined}
+        />
+      )}
+
       {channel && infoOpen && (
         <ChannelInfo
           channel={channel}
@@ -276,7 +314,9 @@ function ChannelPane({ handle }: { handle: string }) {
         loadingMore={loadingMore}
         onLoadOlder={() => void loadOlder()}
         onAction={(action, item) => void act(action, item)}
-        actions={{ reply: false }}
+        actions={{ reply: false, pin: owner }}
+        pinnedId={pinned?.id ?? null}
+        jump={jump}
         variant="channel"
         empty={
           owner ? (

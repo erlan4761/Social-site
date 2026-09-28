@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
-import { api, ApiError, type AttachmentInput, type Chat, type ChatMessage } from '../api';
+import { api, ApiError, type AttachmentInput, type Chat, type ChatMessage, type PinnedPreview } from '../api';
 import {
-  Composer, MessageList, PaneHead, PresenceAvatar, TypingDots, editable, mergeLatest, previewText, typingLabel,
+  Composer, MessageList, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText, typingLabel,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
@@ -55,6 +55,8 @@ function ChatView({ idParam }: { idParam: string }) {
   const [typing, setTyping] = useState<string[]>([]);
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
+  const [pinned, setPinned] = useState<PinnedPreview | null>(null);
+  const [jump, setJump] = useState<{ id: number; seq: number } | null>(null);
   /** Номер последнего своего изменения — см. Thread.tsx. */
   const edits = useRef(0);
 
@@ -81,6 +83,7 @@ function ChatView({ idParam }: { idParam: string }) {
         setReadUpTo(res.readUpTo);
         setCursor(res.nextCursor);
         setTyping(res.typing.map((t) => t.displayName));
+        setPinned(res.pinned);
         markRead();
       })
       .catch((err) => {
@@ -108,6 +111,7 @@ function ChatView({ idParam }: { idParam: string }) {
           setChat(res.chat);
           setReadUpTo(res.readUpTo);
           setTyping(res.typing.map((t) => t.displayName));
+          setPinned(res.pinned);
           if (edits.current !== startedAt) return;
           setMessages((prev) => {
             const newest = prev.at(-1)?.id ?? 0;
@@ -125,6 +129,29 @@ function ChatView({ idParam }: { idParam: string }) {
       clearInterval(timer);
     };
   }, [chatId, valid, gone, user?.id, markRead]);
+
+  async function reveal(id: number) {
+    try {
+      const res = await revealOlder(id, messages, cursor, async (c) => {
+        const page = await api.chatMessages(chatId, c);
+        return { items: page.messages, nextCursor: page.nextCursor };
+      });
+      setMessages(res.list);
+      setCursor(res.cursor);
+      if (res.found) setJump({ id, seq: Date.now() });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось найти сообщение');
+    }
+  }
+
+  async function togglePin(id: number) {
+    if (pinned?.id === id) {
+      await api.unpinChatMessage(chatId);
+      setPinned(null);
+    } else {
+      setPinned((await api.pinChatMessage(chatId, id)).pinned);
+    }
+  }
 
   async function loadOlder() {
     if (cursor == null || loadingMore) return;
@@ -197,6 +224,9 @@ function ChatView({ idParam }: { idParam: string }) {
           break;
         case 'forward':
           setForwarding(msg);
+          break;
+        case 'pin':
+          await togglePin(msg.id);
           break;
         case 'react':
           put((await api.reactChatMessage(chatId, msg.id, action.emoji)).message);
@@ -379,6 +409,14 @@ function ChatView({ idParam }: { idParam: string }) {
         }
       />
 
+      {pinned && (
+        <PinnedBar
+          pinned={pinned}
+          onOpen={() => void reveal(pinned.id)}
+          onUnpin={chat?.iAmOwner ? () => void api.unpinChatMessage(chatId).then(() => setPinned(null)).catch(() => undefined) : undefined}
+        />
+      )}
+
       {chat && membersOpen && (
         <section className="pane-panel members" aria-label="Участники чата">
           {panelError && <p className="error">{panelError}</p>}
@@ -476,6 +514,10 @@ function ChatView({ idParam }: { idParam: string }) {
         loadingMore={loadingMore}
         onLoadOlder={() => void loadOlder()}
         onAction={(action, item) => void act(action, item)}
+        // Закреплять в группе — владельцу, как админу в Телеграме.
+        actions={{ pin: Boolean(chat?.iAmOwner) }}
+        pinnedId={pinned?.id ?? null}
+        jump={jump}
         empty={
           <>
             <strong>Здесь пока пусто.</strong>

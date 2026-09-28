@@ -2,7 +2,8 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  REACTIONS, type Attachment, type AttachmentInput, type Author, type ForwardedFrom, type Quote, type Reaction,
+  REACTIONS, type Attachment, type AttachmentInput, type Author, type ForwardedFrom, type PinnedPreview, type Quote,
+  type Reaction,
 } from '../api';
 import { clockTime, dayKey, dayLabel, fullDate, isOnline, plural } from '../time';
 import { canRecord, mmss, useVoiceRecorder } from '../voice';
@@ -260,8 +261,10 @@ export type BubbleItem = {
 
 /** Какие действия есть в меню. У публикации канала нет «Ответить», у
  *  комментария — ни реакций, ни пересылки. */
-export type ListActions = { reply?: boolean; react?: boolean; forward?: boolean };
-const ALL_ACTIONS: Required<ListActions> = { reply: true, react: true, forward: true };
+export type ListActions = { reply?: boolean; react?: boolean; forward?: boolean; pin?: boolean };
+/** Закреплять вправе не все (в группе и канале — владелец), поэтому «pin»
+ *  включается явно, а остальное есть по умолчанию. */
+const ALL_ACTIONS: Required<ListActions> = { reply: true, react: true, forward: true, pin: false };
 
 export type MessageAction =
   | { type: 'reply' }
@@ -269,6 +272,7 @@ export type MessageAction =
   | { type: 'delete' }
   | { type: 'forward' }
   | { type: 'copy' }
+  | { type: 'pin' }
   | { type: 'react'; emoji: string | null };
 
 /** Реплики одного человека подряд и без долгой паузы собираются в серию:
@@ -321,6 +325,10 @@ type ListProps = {
   actions?: ListActions;
   /** Канал: публикации шире и без хвостов «своё/чужое». */
   variant?: 'chat' | 'channel';
+  /** Какое сообщение закреплено — в меню у него «Открепить». */
+  pinnedId?: number | null;
+  /** Команда страницы «покажи это сообщение»: новое seq — новый переход. */
+  jump?: { id: number; seq: number } | null;
 };
 
 type MenuState = { item: BubbleItem; x: number; y: number } | null;
@@ -341,6 +349,8 @@ export function MessageList({
   readOnly = false,
   actions,
   variant = 'chat',
+  pinnedId = null,
+  jump = null,
 }: ListProps) {
   const can = { ...ALL_ACTIONS, ...actions };
   const box = useRef<HTMLDivElement>(null);
@@ -402,6 +412,14 @@ export function MessageList({
     setFlash(id);
     window.setTimeout(() => setFlash((f) => (f === id ? null : f)), 1400);
   }
+
+  // Переход по команде страницы — к закреплённому или найденному сообщению.
+  // Страница сама догружает старые, пока сообщение не окажется в ленте.
+  const jumpSeq = jump?.seq;
+  useEffect(() => {
+    if (jump) jumpTo(jump.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpSeq]);
 
   function openAt(item: BubbleItem, x: number, y: number) {
     setMenu({ item, x, y });
@@ -618,6 +636,7 @@ export function MessageList({
           state={menu}
           readOnly={readOnly}
           can={can}
+          pinned={menu.item.id === pinnedId}
           onClose={() => setMenu(null)}
           onAction={(action) => {
             const item = menu.item;
@@ -664,6 +683,8 @@ type MenuProps = {
   state: NonNullable<MenuState>;
   readOnly: boolean;
   can: Required<ListActions>;
+  /** Это сообщение закреплено — пункт меню «Открепить». */
+  pinned: boolean;
   onClose: () => void;
   onAction: (action: MessageAction) => void;
 };
@@ -673,7 +694,7 @@ type MenuProps = {
  * там, где щёлкнули, и отодвигается от краёв окна. Esc и щелчок мимо —
  * закрыть; стрелки ходят по пунктам.
  */
-function MessageMenu({ state, readOnly, can, onClose, onAction }: MenuProps) {
+function MessageMenu({ state, readOnly, can, pinned, onClose, onAction }: MenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: state.x, top: state.y });
   const { item } = state;
@@ -760,6 +781,11 @@ function MessageMenu({ state, readOnly, can, onClose, onAction }: MenuProps) {
             Переслать
           </MenuItem>
         )}
+        {can.pin && !readOnly && (
+          <MenuItem icon="pin" onClick={() => onAction({ type: 'pin' })}>
+            {pinned ? 'Открепить' : 'Закрепить'}
+          </MenuItem>
+        )}
         {item.canEdit && !readOnly && (
           <MenuItem icon="edit" onClick={() => onAction({ type: 'edit' })}>
             Изменить
@@ -781,7 +807,7 @@ function MenuItem({
   onClick,
   children,
 }: {
-  icon: 'reply' | 'copy' | 'forward' | 'edit' | 'trash';
+  icon: 'reply' | 'copy' | 'forward' | 'edit' | 'trash' | 'pin';
   danger?: boolean;
   onClick: () => void;
   children: ReactNode;
@@ -1094,6 +1120,56 @@ export function Composer({
       )}
     </div>
   );
+}
+
+/* ─ Закреплённое сообщение ───────────────────────────────────────────── */
+
+type PinnedBarProps = {
+  pinned: PinnedPreview;
+  onOpen: () => void;
+  /** Нет — значит, откреплять этому человеку нельзя (группа, канал). */
+  onUnpin?: () => void;
+};
+
+/** Полоса под шапкой, как в Телеграме: по нажатию лента едет к сообщению. */
+export function PinnedBar({ pinned, onOpen, onUnpin }: PinnedBarProps) {
+  return (
+    <div className="pinned-bar">
+      <button className="pinned-open" type="button" onClick={onOpen}>
+        <span className="pinned-text">
+          <strong>Закреплённое сообщение</strong>
+          <span>{pinned.body}</span>
+        </span>
+      </button>
+      {onUnpin && (
+        <button className="icon-btn" type="button" aria-label="Открепить" title="Открепить" onClick={onUnpin}>
+          <Icon name="close" size={18} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Показать сообщение, которого может не быть в ленте: догружает страницы
+ * вверх, пока не найдёт, и возвращает новую ленту и курсор. Общая для ЛС,
+ * групп и каналов — различается только то, как грузить страницу.
+ */
+export async function revealOlder<T extends { id: number }>(
+  id: number,
+  list: T[],
+  cursor: number | null,
+  loadPage: (cursor: number) => Promise<{ items: T[]; nextCursor: number | null }>,
+): Promise<{ list: T[]; cursor: number | null; found: boolean }> {
+  let items = list;
+  let next = cursor;
+  // Потолок в двадцать страниц — не повод висеть бесконечно на удалённом.
+  for (let i = 0; i < 20 && !items.some((m) => m.id === id) && next != null; i += 1) {
+    const page = await loadPage(next);
+    items = [...page.items, ...items];
+    next = page.nextCursor;
+  }
+  return { list: items, cursor: next, found: items.some((m) => m.id === id) };
 }
 
 /* ─ Шапка переписки ───────────────────────────────────────────────────── */

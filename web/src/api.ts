@@ -123,6 +123,9 @@ export type MessageExtras = {
 /** Откуда пересылается сообщение. */
 export type ForwardRef = { from: 'dm' | 'chat' | 'channel'; id: number };
 
+/** Закреплённое сообщение переписки — для полосы под шапкой. */
+export type PinnedPreview = { id: number; body: string; attachmentKind: AttachmentKind | null };
+
 /** Откуда пересланное: от человека или из канала — подпись ведёт туда. */
 export type ForwardedFrom =
   | { kind: 'user'; username: string; displayName: string }
@@ -365,6 +368,7 @@ const realApi = {
       blocked?: boolean;
       /** Собеседник набирает сообщение прямо сейчас. */
       typing: boolean;
+      pinned: PinnedPreview | null;
     }>(
       `/messages/${encodeURIComponent(username)}${qs}`,
     );
@@ -392,6 +396,12 @@ const realApi = {
     request<{ ok: true }>(`/messages/${encodeURIComponent(username)}/${id}`, { method: 'DELETE' }),
 
   /** `null` — снять свою реакцию. */
+  pinMessage: (username: string, id: number) =>
+    request<{ pinned: PinnedPreview | null }>(`/messages/${encodeURIComponent(username)}/${id}/pin`, { method: 'PUT' }),
+
+  unpinMessage: (username: string) =>
+    request<{ ok: true }>(`/messages/${encodeURIComponent(username)}/pin`, { method: 'DELETE' }),
+
   reactMessage: (username: string, id: number, emoji: string | null) =>
     request<{ message: Message }>(`/messages/${encodeURIComponent(username)}/${id}/reaction`, {
       method: emoji ? 'PUT' : 'DELETE',
@@ -533,6 +543,7 @@ const realApi = {
       readUpTo: number;
       /** Кто из остальных участников набирает сообщение прямо сейчас. */
       typing: { id: number; displayName: string }[];
+      pinned: PinnedPreview | null;
     }>(
       `/chats/${id}/messages${qs}`,
     );
@@ -558,6 +569,11 @@ const realApi = {
 
   deleteChatMessage: (chatId: number, id: number) =>
     request<{ ok: true }>(`/chats/${chatId}/messages/${id}`, { method: 'DELETE' }),
+
+  pinChatMessage: (chatId: number, id: number) =>
+    request<{ pinned: PinnedPreview | null }>(`/chats/${chatId}/messages/${id}/pin`, { method: 'PUT' }),
+
+  unpinChatMessage: (chatId: number) => request<{ ok: true }>(`/chats/${chatId}/pin`, { method: 'DELETE' }),
 
   reactChatMessage: (chatId: number, id: number, emoji: string | null) =>
     request<{ message: ChatMessage }>(`/chats/${chatId}/messages/${id}/reaction`, {
@@ -601,7 +617,7 @@ const realApi = {
     request<{ ok: true }>(`/channels/${encodeURIComponent(handle)}/read`, { method: 'PUT' }),
 
   channelPosts: (handle: string, cursor?: number | null) =>
-    request<{ channel: Channel; posts: ChannelPost[]; nextCursor: number | null }>(
+    request<{ channel: Channel; posts: ChannelPost[]; nextCursor: number | null; pinned: PinnedPreview | null }>(
       `/channels/${encodeURIComponent(handle)}/posts${cursor != null ? `?cursor=${cursor}` : ''}`,
     ),
 
@@ -620,6 +636,12 @@ const realApi = {
 
   deleteChannelPost: (handle: string, id: number) =>
     request<{ ok: true }>(`/channels/${encodeURIComponent(handle)}/posts/${id}`, { method: 'DELETE' }),
+
+  pinPost: (handle: string, id: number) =>
+    request<{ pinned: PinnedPreview | null }>(`/channels/${encodeURIComponent(handle)}/posts/${id}/pin`, { method: 'PUT' }),
+
+  unpinPost: (handle: string) =>
+    request<{ ok: true }>(`/channels/${encodeURIComponent(handle)}/pin`, { method: 'DELETE' }),
 
   reactPost: (handle: string, id: number, emoji: string | null) =>
     request<{ post: ChannelPost }>(`/channels/${encodeURIComponent(handle)}/posts/${id}/reaction`, {

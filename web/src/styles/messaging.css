@@ -361,6 +361,43 @@ a.pane-who:hover { background: var(--surface-2); }
 
 .pane-actions { display: flex; gap: var(--s-1); flex: none; }
 
+/* Закреплённое сообщение — полоса под шапкой с акцентной чертой слева. */
+.pinned-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex: none;
+  padding: 0.3125rem var(--s-3) 0.3125rem var(--s-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.pinned-open {
+  flex: 1;
+  min-width: 0;
+  padding: 0.125rem 0 0.125rem var(--s-3);
+  border: 0;
+  border-left: 2px solid var(--accent);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pinned-text { display: grid; min-width: 0; }
+.pinned-text strong { font-size: var(--t-micro); color: var(--accent); }
+
+.pinned-text span {
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pinned-open:hover .pinned-text span { color: var(--ink); }
+
 /* Панель участников раскрывается под шапкой, поверх начала ленты, и
    прокручивается сама — длинный состав не выталкивает поле ввода. */
 .pane-panel {
