@@ -38,7 +38,7 @@ grep -nE "#[0-9a-fA-F]{3,8}" web/src/styles/*.css | grep -v tokens.css   # пу�
 | 5 | `feed.css` | `.rail*`, композер, `.attach-*`, `.post-*`, `.act`, `.feed-tab*`, ветка комментариев (`.thread`, `.comment-*`) | FE-03 |
 | 6 | `profile.css` | `.profile-*`, `.avatar-*`, `.blocked*`, `.archive*`, `.period-*` | FE-04 |
 | 7 | `discovery.css` | `.search-*`, `.people-*`, `.event*` | FE-05 |
-| 8 | `messaging.css` | `.dialog*`, `.thread-page/top/who`, `.bubble*`, `.chat-*`, `.members*`, `.member-search*` | FE-07 |
+| 8 | `messaging.css` | `.messenger*`, `.list-*`, `.dialog*`, `.pane*`, `.msgs*`, `.bubble*`, `.composer*`, `.presence*`, `.members*`, `.member-search*` | FE-07 |
 | 9 | `overlays.css` | `.sheet*`, `.choice*`, `.auth*`, `.demo-banner` | FE-06 |
 
 **Правило принадлежности.** Правило, нужное двум экранам сразу, живёт в
@@ -46,8 +46,9 @@ grep -nE "#[0-9a-fA-F]{3,8}" web/src/styles/*.css | grep -v tokens.css   # пу�
 переопределяют.
 
 **Ловушка имён.** `.thread` и `.comment-*` (feed.css) — это ветка комментариев
-под записью. `.thread-page`, `.thread-top`, `.thread-who` (messaging.css) — это
-личная переписка. Слово одно, экраны разные.
+под записью, к переписке отношения не имеет. Открытая переписка в мессенджере —
+`.pane*` (messaging.css): имя выбрано другое как раз затем, чтобы два «треда»
+не путались.
 
 ---
 

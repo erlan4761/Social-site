@@ -18,6 +18,10 @@ export type User = {
 
 export type Author = { id: number; username: string; displayName: string; avatarUrl: string | null };
 
+/** Человек в переписке: плюс время последнего визита для «в сети». `null` —
+ *  не заходил после появления этой отметки или пара в блокировке. */
+export type Person = Author & { lastSeenAt: string | null };
+
 export type MediaKind = 'image' | 'video' | 'audio';
 
 export type Media = {
@@ -64,7 +68,7 @@ export type Message = {
 };
 
 export type Conversation = {
-  user: Author;
+  user: Person;
   unread: number;
   lastMessage: Message;
   /** Пара в блокировке: история видна, форма ответа заменяется плашкой. */
@@ -108,7 +112,7 @@ export type Chat = {
   title: string;
   ownerId: number;
   createdAt: string;
-  members: Author[];
+  members: Person[];
   memberCount: number;
   iAmOwner: boolean;
 };
@@ -124,6 +128,9 @@ export type ChatMessage = {
 export type ChatSummary = Chat & {
   unread: number;
   lastMessage: ChatMessage | null;
+  /** Самая дальняя отметка прочтения среди остальных участников: своё
+   *  сообщение с id не больше неё кто-то уже прочитал. */
+  readUpTo: number;
 };
 
 export class ApiError extends Error {
@@ -244,7 +251,7 @@ const realApi = {
   // но форма ответа заменяется плашкой.
   thread: (username: string, cursor?: number | null) => {
     const qs = cursor != null ? `?cursor=${cursor}` : '';
-    return request<{ user: Author; messages: Message[]; nextCursor: number | null; blocked?: boolean }>(
+    return request<{ user: Person; messages: Message[]; nextCursor: number | null; blocked?: boolean }>(
       `/messages/${encodeURIComponent(username)}${qs}`,
     );
   },
@@ -368,7 +375,7 @@ const realApi = {
 
   chatMessages: (id: number, cursor?: number | null) => {
     const qs = cursor != null ? `?cursor=${cursor}` : '';
-    return request<{ chat: Chat; messages: ChatMessage[]; nextCursor: number | null }>(
+    return request<{ chat: Chat; messages: ChatMessage[]; nextCursor: number | null; readUpTo: number }>(
       `/chats/${id}/messages${qs}`,
     );
   },

@@ -9,7 +9,7 @@ import {
 } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useMatch, useNavigate } from 'react-router-dom';
 import { Icon, type IconName } from './Icon';
 import { Monogram } from './Monogram';
 import { SearchBox } from './SearchBox';
@@ -226,6 +226,12 @@ export function Shell() {
   const wide = useMedia(WIDE);
   const phone = useMedia(PHONE);
   const [asideSlot, setAsideSlot] = useState<HTMLElement | null>(null);
+  // Мессенджер забирает себе всю ширину справа от навигации: две его колонки
+  // и есть содержимое экрана. Открытая переписка на телефоне — весь экран,
+  // без шапки и таб-бара, как в любом мессенджере.
+  const messenger = useMatch('/messages/*') != null;
+  const conversation = useMatch('/messages/:first/*') != null;
+  const fullscreenChat = phone && conversation;
 
   const items: NavItem[] = [
     { to: '/', end: true, label: 'Лента', icon: 'feed' },
@@ -256,8 +262,8 @@ export function Shell() {
         Перейти к содержимому
       </a>
 
-      <div className="shell">
-        {!wide && (
+      <div className={messenger ? (conversation ? 'shell messenger-mode in-conversation' : 'shell messenger-mode') : 'shell'}>
+        {!wide && !fullscreenChat && (
           <header className="topbar">
             <Link className="wordmark" to="/">
               хроника
@@ -328,7 +334,7 @@ export function Shell() {
           </AsideSlotContext.Provider>
         </main>
 
-        {wide && user && (
+        {wide && user && !messenger && (
           <aside className="aside" aria-label="О вас">
             <div className="aside-card me">
               <Link className="me-head" to={`/u/${user.username}`}>
@@ -385,7 +391,7 @@ export function Shell() {
           </aside>
         )}
 
-        {phone && (
+        {phone && !fullscreenChat && (
           <nav className="tabbar" aria-label="Основные разделы">
             {items.map((item) => (
               <NavLink

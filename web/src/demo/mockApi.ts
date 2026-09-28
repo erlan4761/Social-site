@@ -11,7 +11,7 @@
 import type {
   ArchiveMonth, Author, Badges, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
   Conversation, Media, Message, Notification as NotificationItem, NotificationKind, Page,
-  Post, ReportReason, ReportTargetType, User,
+  Person, Post, ReportReason, ReportTargetType, User,
 } from '../api';
 import { ApiError } from '../api';
 
@@ -24,6 +24,11 @@ type DbUser = {
   createdAt: string;
   email: string;
   password: string;
+  /** Последний визит — для «в сети» и «был(а) … назад» в переписке. */
+  lastSeenAt: string | null;
+  /** Персонаж витрины, который «всегда в сети»: иначе через пару минут
+   *  после открытия витрины зелёная точка у него погасла бы. */
+  alwaysOnline?: boolean;
 };
 
 type DbPost = {
@@ -138,6 +143,7 @@ function seed() {
     const u: DbUser = {
       id: id(), username, displayName, bio, avatarUrl: avatar,
       createdAt: ago(days(280)), email: `${username}@example.test`, password: 'parol12345',
+      lastSeenAt: null,
     };
     users.push(u);
     return u;
@@ -147,6 +153,11 @@ function seed() {
   const marina = make('marina', 'Марина Штольц', 'Читаю больше, чем успеваю обдумывать.', gradient('#8265ba', '#3b7a9c', 256, 256));
   const oleg = make('oleg_k', 'Олег Кузьмин', 'Чиню станки старше себя.', gradient('#ad5f34', '#488048', 256, 256));
   const nina = make('nina', 'Нина Барто', 'Поля, плёнка, проявка на кухне.', null);
+
+  // Три разных «в сети», чтобы в витрине было видно все подписи сразу.
+  marina.alwaysOnline = true;
+  oleg.lastSeenAt = ago(25);
+  nina.lastSeenAt = ago(days(1) + 180);
 
   const post = (author: DbUser, body: string, minutes: number, media: Media | null = null) => {
     const p: DbPost = { id: id(), authorId: author.id, body, createdAt: ago(minutes), media };
@@ -291,6 +302,18 @@ const requireMe = () => me() ?? fail(401, 'Требуется вход в акк
 
 const author = (u: DbUser): Author => ({
   id: u.id, username: u.username, displayName: u.displayName, avatarUrl: u.avatarUrl,
+});
+
+/** Сам смотрящий в витрине всегда «сейчас» — отдельного учёта визитов здесь
+ *  нет, и так он совпадает с тем, что делает loadUser на сервере. */
+const seenAt = (u: DbUser) =>
+  u.alwaysOnline || u.id === meId ? new Date().toISOString() : u.lastSeenAt;
+
+/** Человек в переписке. Время визита скрыто для пары в блокировке — в обе
+ *  стороны, как на сервере. */
+const person = (u: DbUser): Person => ({
+  ...author(u),
+  lastSeenAt: meId != null && u.id !== meId && blockedPair(meId, u.id) ? null : seenAt(u),
 });
 
 /**
@@ -502,7 +525,7 @@ const toChatMessage = (m: DbChatMessage): ChatMessage => ({
 });
 
 const toChat = (c: DbChat): Chat => {
-  const members = membersOf(c.id).map((m) => author(byId(m.userId)!));
+  const members = membersOf(c.id).map((m) => person(byId(m.userId)!));
   return {
     id: c.id,
     title: c.title,
@@ -513,6 +536,12 @@ const toChat = (c: DbChat): Chat => {
     iAmOwner: c.ownerId === meId,
   };
 };
+
+/** Самая дальняя ватерлиния среди остальных участников — две галочки у своих. */
+const othersReadUpTo = (chatId: number, userId: number) =>
+  chatMembers
+    .filter((m) => m.chatId === chatId && m.userId !== userId)
+    .reduce((top, m) => Math.max(top, m.lastReadId), 0);
 
 const chatUnread = (chatId: number, userId: number) => {
   const seen = memberRow(chatId, userId)?.lastReadId ?? 0;
@@ -549,7 +578,28 @@ type SearchPage = { posts: Post[]; nextCursor: number | null; query: string };
 const CHAT_PAGE = 30;
 const BODY_MAX = 1000;
 
-export const mockApi = {
+/**
+ * Ошибка метода витрины — отклонённый промис, как у настоящего api, а не
+ * исключение в момент вызова. Методы проверяют ввод через `fail()` ещё до
+ * `tick()`, и без этой обёртки `api.x().catch(...)` на экране не срабатывал
+ * бы вовсе: исключение вылетало раньше, чем появлялся промис, и роняло
+ * страницу целиком (так было со ссылкой на несуществующий чат).
+ */
+function rejectInsteadOfThrow<T extends object>(methods: T): T {
+  const wrapped: Record<string, unknown> = {};
+  for (const [name, fn] of Object.entries(methods)) {
+    wrapped[name] = (...args: unknown[]) => {
+      try {
+        return (fn as (...a: unknown[]) => unknown)(...args);
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    };
+  }
+  return wrapped as T;
+}
+
+export const mockApi = rejectInsteadOfThrow({
   me: () => tick({ user: me() ? publicUser(me()!) : null }),
 
   register: (input: { username: string; displayName: string; email: string; password: string }) => {
@@ -567,6 +617,7 @@ export const mockApi = {
       id: id(), username,
       displayName: input.displayName.trim() || username,
       bio: '', avatarUrl: null, createdAt: new Date().toISOString(), email, password: input.password,
+      lastSeenAt: new Date().toISOString(),
     };
     users.push(u);
     meId = u.id;
@@ -832,7 +883,7 @@ export const mockApi = {
         const thread = mine.filter((m) => m.fromId === otherId || m.toId === otherId);
         const last = thread.reduce((a, b) => (a.id > b.id ? a : b));
         return {
-          user: author(byId(otherId)!),
+          user: person(byId(otherId)!),
           unread: messages.filter((m) => m.toId === u.id && m.fromId === otherId && !m.readAt).length,
           lastMessage: toMessage(last),
           // История не удаляется и диалог из списка не исчезает — меняется
@@ -862,7 +913,7 @@ export const mockApi = {
 
     const page = list.slice(0, CHAT_PAGE);
     return tick({
-      user: author(other!),
+      user: person(other!),
       messages: page.map(toMessage).reverse(),
       nextCursor: list.length > CHAT_PAGE ? page.at(-1)!.id : null,
       blocked: blockedPair(u.id, other!.id),
@@ -1171,6 +1222,7 @@ export const mockApi = {
           ...toChat(c),
           unread: chatUnread(c.id, u.id),
           lastMessage: last ? toChatMessage(last) : null,
+          readUpTo: othersReadUpTo(c.id, u.id),
         };
       })
       // Чат без сообщений встаёт по своему созданию, иначе только что
@@ -1237,7 +1289,7 @@ export const mockApi = {
   },
 
   chatMessages: (chatId: number, cursor?: number | null) => {
-    const { chat } = requireChat(chatId);
+    const { u, chat } = requireChat(chatId);
 
     let list = visibleChatMessages(chat.id);
     if (cursor != null) list = list.filter((m) => m.id < cursor);
@@ -1249,6 +1301,7 @@ export const mockApi = {
       chat: toChat(chat),
       messages: page.map(toChatMessage),
       nextCursor: list.length > CHAT_PAGE ? page[0].id : null,
+      readUpTo: othersReadUpTo(chat.id, u.id),
     });
   },
 
@@ -1326,4 +1379,4 @@ export const mockApi = {
 
     return leaving ? tick({ ok: true as const, left: true }) : tick({ ok: true as const });
   },
-};
+});

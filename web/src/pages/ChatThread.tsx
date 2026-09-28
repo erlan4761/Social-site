@@ -1,40 +1,46 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { api, ApiError, type Chat, type ChatMessage } from '../api';
+import { Composer, MessageList, PaneHead, PresenceAvatar, type BubbleItem } from '../components/Chat';
+import { Icon } from '../components/Icon';
 import { MemberSearch } from '../components/MemberSearch';
 import { Monogram } from '../components/Monogram';
 import { useSession } from '../session';
-import { fullDate, plural, timeAgo } from '../time';
+import { isOnline, plural } from '../time';
+import type { MessengerContext } from './Messenger';
 
-const LIMIT = 1000;
 const TITLE_LIMIT = 60;
 /** Потолок сервера: 21-й участник получает 400, и звать его незачем. */
 const MAX_MEMBERS = 20;
 /** Открытый чат — это ожидание ответа, тот же шаг, что в личной переписке. */
 const POLL_MS = 5_000;
 
+/** Пересоздаётся на каждый чат (`key`), как и личная переписка. */
 export function ChatThread() {
-  const { id: idParam = '' } = useParams();
+  const { id = '' } = useParams();
+  return <ChatView key={id} idParam={id} />;
+}
+
+function ChatView({ idParam }: { idParam: string }) {
   const chatId = Number.parseInt(idParam, 10);
   const valid = Number.isSafeInteger(chatId) && chatId > 0;
 
   const navigate = useNavigate();
   const { user, refreshBadges } = useSession();
+  const { refreshList } = useOutletContext<MessengerContext>();
 
   const [chat, setChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [readUpTo, setReadUpTo] = useState(0);
   const [cursor, setCursor] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(valid);
   const [loadingMore, setLoadingMore] = useState(false);
-  // Сообщение об ошибке отправки или подгрузки — страница при этом остаётся.
+  // Ошибка отправки или подгрузки — переписка при этом остаётся на экране.
   const [error, setError] = useState<string | null>(null);
   // Чат недоступен: удалён, вас в нём нет или номера такого не было. Сервер
-  // намеренно не различает эти случаи — для страницы это одно состояние.
-  const [gone, setGone] = useState<string | null>(null);
-
-  const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
+  // намеренно не различает эти случаи — для экрана это одно состояние.
+  const [gone, setGone] = useState<string | null>(valid ? null : 'Чат не найден');
 
   const [membersOpen, setMembersOpen] = useState(false);
   const [panelError, setPanelError] = useState<string | null>(null);
@@ -42,67 +48,53 @@ export function ChatThread() {
   const [renaming, setRenaming] = useState(false);
   const [draftTitle, setDraftTitle] = useState('');
 
-  const bottom = useRef<HTMLDivElement>(null);
-  const stick = useRef(true);
-
   const markRead = useCallback(() => {
     if (!valid) return;
     api
       .markChatRead(chatId)
-      .then(() => refreshBadges())
+      .then(() => {
+        refreshBadges();
+        refreshList();
+      })
       .catch(() => undefined);
-  }, [chatId, valid, refreshBadges]);
+  }, [chatId, valid, refreshBadges, refreshList]);
 
-  // Первая загрузка: показать переписку и погасить непрочитанное.
   useEffect(() => {
-    if (!valid) {
-      setLoading(false);
-      setGone('Чат не найден');
-      return;
-    }
-
+    if (!valid) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setGone(null);
-    setMembersOpen(false);
-    setRenaming(false);
-    stick.current = true;
-
     api
       .chatMessages(chatId)
       .then((res) => {
         if (cancelled) return;
         setChat(res.chat);
         setMessages(res.messages);
+        setReadUpTo(res.readUpTo);
         setCursor(res.nextCursor);
         markRead();
       })
       .catch((err) => {
-        if (cancelled) return;
-        setGone(err instanceof ApiError ? err.message : 'Не удалось открыть чат');
+        if (!cancelled) setGone(err instanceof ApiError ? err.message : 'Не удалось открыть чат');
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-
     return () => {
       cancelled = true;
     };
   }, [chatId, valid, markRead]);
 
-  // Опрос: без WebSocket реплика соседа иначе не появится сама. Заодно
-  // подтягивается состав и название — их мог поменять другой участник.
+  // Опрос: новые реплики, состав, название и отметка прочтения — всё это
+  // меняют другие участники.
   useEffect(() => {
     if (!valid || gone) return;
     let cancelled = false;
-
     const timer = setInterval(() => {
       api
         .chatMessages(chatId)
         .then((res) => {
           if (cancelled) return;
           setChat(res.chat);
+          setReadUpTo(res.readUpTo);
           setMessages((prev) => {
             const newest = prev.at(-1)?.id ?? 0;
             const fresh = res.messages.filter((m) => m.id > newest);
@@ -112,26 +104,19 @@ export function ChatThread() {
           });
         })
         .catch((err) => {
-          // Пока страница была открыта, чат могли удалить или вас из него
-          // убрать. Молча продолжать опрос бессмысленно.
+          // Пока экран был открыт, чат могли удалить или вас из него убрать.
           if (!cancelled && err instanceof ApiError && err.status === 404) setGone(err.message);
         });
     }, POLL_MS);
-
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
   }, [chatId, valid, gone, user?.id, markRead]);
 
-  useEffect(() => {
-    if (stick.current) bottom.current?.scrollIntoView({ block: 'end' });
-  }, [messages]);
-
   async function loadOlder() {
     if (cursor == null || loadingMore) return;
     setLoadingMore(true);
-    stick.current = false;
     try {
       const res = await api.chatMessages(chatId, cursor);
       setMessages((prev) => [...res.messages, ...prev]);
@@ -143,28 +128,22 @@ export function ChatThread() {
     }
   }
 
-  async function send(e?: FormEvent) {
-    e?.preventDefault();
-    const trimmed = text.trim();
-    if (!trimmed || trimmed.length > LIMIT || sending) return;
-
-    setSending(true);
+  async function send(text: string) {
     setError(null);
     try {
-      const res = await api.sendChatMessage(chatId, trimmed);
-      stick.current = true;
+      const res = await api.sendChatMessage(chatId, text);
       setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
-      setText('');
+      refreshList();
+      return true;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось отправить');
-    } finally {
-      setSending(false);
+      return false;
     }
   }
 
-  /** Уйти со страницы: после выхода и удаления чат отвечает 404, перечитывать
-   *  его незачем — сразу возвращаемся к списку. */
+  /** После выхода и удаления чат отвечает 404 — сразу возвращаемся к списку. */
   function leavePage() {
+    refreshList();
     refreshBadges();
     navigate('/messages');
   }
@@ -184,7 +163,6 @@ export function ChatThread() {
 
   async function removeMember(username: string, displayName: string) {
     if (!window.confirm(`Удалить ${displayName} из чата? Человек потеряет доступ к переписке.`)) return;
-
     setPanelBusy(true);
     setPanelError(null);
     try {
@@ -201,7 +179,6 @@ export function ChatThread() {
   async function leaveChat() {
     if (!user) return;
     if (!window.confirm('Выйти из чата? Переписка станет недоступна, вернуться можно только по приглашению.')) return;
-
     setPanelBusy(true);
     setPanelError(null);
     try {
@@ -215,7 +192,6 @@ export function ChatThread() {
 
   async function removeChat() {
     if (!window.confirm('Удалить чат целиком? Переписка исчезнет у всех участников, вернуть её нельзя.')) return;
-
     setPanelBusy(true);
     setPanelError(null);
     try {
@@ -231,13 +207,13 @@ export function ChatThread() {
     e.preventDefault();
     const name = draftTitle.trim();
     if (!name || panelBusy) return;
-
     setPanelBusy(true);
     setPanelError(null);
     try {
       const res = await api.renameChat(chatId, name);
       setChat(res.chat);
       setRenaming(false);
+      refreshList();
     } catch (err) {
       setPanelError(err instanceof ApiError ? err.message : 'Не удалось переименовать чат');
     } finally {
@@ -247,78 +223,75 @@ export function ChatThread() {
 
   if (gone) {
     return (
-      <div className="thread-page">
-        <header className="thread-top">
-          <Link className="btn ghost small" to="/messages">
-            Ко всем
-          </Link>
-        </header>
-        <div className="notice">
+      <div className="pane">
+        <PaneHead avatar={null} title="Чат недоступен" subtitle="" />
+        <div className="pane-empty">
           <p>
-            <strong>{gone}.</strong> Возможно, чат удалили или вас больше нет среди участников.
-            Переписка остальных при этом никуда не делась.
+            <strong>{gone}.</strong> Возможно, чат удалили или вас больше нет среди участников. Переписка
+            остальных при этом никуда не делась.
           </p>
+          <Link to="/messages">Ко всем чатам</Link>
         </div>
-        <p className="empty" style={{ marginLeft: 0 }}>
-          <Link to="/messages">Вернуться к сообщениям</Link>
-        </p>
       </div>
     );
   }
 
-  const left = LIMIT - text.length;
+  const items: BubbleItem[] = messages.map((m) => {
+    const mine = m.author.id === user?.id;
+    return {
+      id: m.id,
+      body: m.body,
+      createdAt: m.createdAt,
+      mine,
+      author: m.author,
+      status: mine ? (m.id <= readUpTo ? 'read' : 'sent') : undefined,
+    };
+  });
+
+  // «3 участника, 1 в сети» — себя в «в сети» не считаем: это и так понятно.
+  const onlineCount = chat ? chat.members.filter((m) => m.id !== user?.id && isOnline(m.lastSeenAt)).length : 0;
+  const subtitle = chat
+    ? `${chat.memberCount} ${plural(chat.memberCount, 'участник', 'участника', 'участников')}` +
+      (onlineCount > 0 ? `, ${onlineCount} в сети` : '')
+    : '';
 
   return (
-    <div className="thread-page">
-      <header className="thread-top">
-        <Link className="btn ghost small" to="/messages">
-          Ко всем
-        </Link>
-
-        {chat && (
-          <>
-            <div className="chat-who">
-              <Monogram username={chat.title} displayName={chat.title} size="sm" />
-              <span className="chat-who-text">
-                <h1 className="chat-title">{chat.title}</h1>
-                <span className="thread-handle">
-                  {chat.memberCount} {plural(chat.memberCount, 'участник', 'участника', 'участников')}
-                </span>
-              </span>
-            </div>
-
+    <div className="pane">
+      <PaneHead
+        avatar={chat ? <Monogram username={chat.title} displayName={chat.title} size="sm" /> : null}
+        title={chat?.title ?? ''}
+        subtitle={subtitle}
+        actions={
+          chat && (
             <button
-              className="btn ghost small chat-members-toggle"
+              className={membersOpen ? 'icon-btn on' : 'icon-btn'}
               type="button"
               aria-expanded={membersOpen}
+              aria-label="Участники"
+              title="Участники"
               onClick={() => {
                 setPanelError(null);
                 setMembersOpen((v) => !v);
               }}
             >
-              Участники
+              <Icon name="user" />
             </button>
-          </>
-        )}
-      </header>
+          )
+        }
+      />
 
       {chat && membersOpen && (
-        <section className="members" aria-label="Участники чата">
+        <section className="pane-panel members" aria-label="Участники чата">
           {panelError && <p className="error">{panelError}</p>}
 
           <ul className="members-list">
             {chat.members.map((m) => (
               <li key={m.id}>
-                <Link className="blocked-who members-who" to={`/u/${m.username}`}>
-                  <Monogram
-                    username={m.username}
-                    displayName={m.displayName}
-                    avatarUrl={m.avatarUrl}
-                    size="sm"
-                  />
+                <Link className="members-who" to={`/u/${m.username}`}>
+                  <PresenceAvatar person={m} size="sm" />
                   <span>
                     <strong>{m.displayName}</strong>
-                    <span className="blocked-handle">@{m.username}</span>
+                    <span className="members-handle">@{m.username}</span>
                   </span>
                 </Link>
 
@@ -364,12 +337,7 @@ export function ChatThread() {
                 <button className="btn small" type="submit" disabled={panelBusy || !draftTitle.trim()}>
                   Сохранить
                 </button>
-                <button
-                  className="btn ghost small"
-                  type="button"
-                  disabled={panelBusy}
-                  onClick={() => setRenaming(false)}
-                >
+                <button className="btn ghost small" type="button" disabled={panelBusy} onClick={() => setRenaming(false)}>
                   Отмена
                 </button>
               </div>
@@ -402,82 +370,23 @@ export function ChatThread() {
         </section>
       )}
 
-      <div className="chat">
-        {loading ? (
-          <p className="empty" style={{ marginLeft: 0 }}>Загружаю…</p>
-        ) : (
+      <MessageList
+        items={items}
+        loading={loading}
+        hasMore={cursor != null}
+        loadingMore={loadingMore}
+        onLoadOlder={() => void loadOlder()}
+        empty={
           <>
-            {cursor != null && (
-              <div className="chat-more">
-                <button
-                  className="btn ghost small"
-                  type="button"
-                  onClick={() => void loadOlder()}
-                  disabled={loadingMore}
-                >
-                  {loadingMore ? 'Загружаю…' : 'Показать более старые'}
-                </button>
-              </div>
-            )}
-
-            {messages.length === 0 && (
-              <p className="empty" style={{ marginLeft: 0 }}>
-                <strong>Здесь пока пусто.</strong>
-                Напишите первое сообщение — его увидят все участники.
-              </p>
-            )}
-
-            {messages.map((m, i) => {
-              const mine = m.author.id === user?.id;
-              // Подпись автора — только над первым сообщением подряд: в группе
-              // важно, кто говорит, но повторять имя у каждой реплики шумно.
-              const sameAsPrev = i > 0 && messages[i - 1].author.id === m.author.id;
-
-              return (
-                <div key={m.id} className={mine ? 'bubble mine' : 'bubble'}>
-                  {!mine && !sameAsPrev && (
-                    <Link className="bubble-author" to={`/u/${m.author.username}`}>
-                      {m.author.displayName}
-                    </Link>
-                  )}
-                  <p>{m.body}</p>
-                  <time dateTime={m.createdAt} title={fullDate(m.createdAt)}>
-                    {timeAgo(m.createdAt)}
-                  </time>
-                </div>
-              );
-            })}
-            <div ref={bottom} />
+            <strong>Здесь пока пусто.</strong>
+            Напишите первое сообщение — его увидят все участники.
           </>
-        )}
-      </div>
+        }
+      />
 
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error pane-error">{error}</p>}
 
-      <form className="chat-form" onSubmit={send}>
-        <label className="sr-only" htmlFor="chat-input">
-          Сообщение в чат
-        </label>
-        <textarea
-          id="chat-input"
-          rows={1}
-          value={text}
-          placeholder="Написать в чат…"
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-              e.preventDefault();
-              void send();
-            }
-          }}
-        />
-        <div className="chat-form-foot">
-          {left <= 120 && <span className={left < 0 ? 'counter over' : 'counter'}>{left}</span>}
-          <button className="btn" type="submit" disabled={!text.trim() || left < 0 || sending}>
-            {sending ? 'Отправляю…' : 'Отправить'}
-          </button>
-        </div>
-      </form>
+      <Composer placeholder="Сообщение в чат" onSend={send} autoFocus />
     </div>
   );
 }

@@ -7,7 +7,7 @@ import { Bookmarks } from './pages/Bookmarks';
 import { ChatThread } from './pages/ChatThread';
 import { Feed } from './pages/Feed';
 import { ForgotPassword } from './pages/ForgotPassword';
-import { Messages } from './pages/Messages';
+import { Messenger, MessengerEmpty } from './pages/Messenger';
 import { Notifications } from './pages/Notifications';
 import { PostPage } from './pages/PostPage';
 import { Profile } from './pages/Profile';
@@ -66,14 +66,19 @@ export function App() {
             <Route path="u/:username" element={<Profile />} />
             <Route path="p/:id" element={<PostPage />} />
             <Route path="notifications" element={<Notifications />} />
-            <Route path="messages" element={<Messages />} />
-            {/* Групповой чат объявлен раньше личной переписки: путь у него
-                длиннее (`messages/c/:id` против `messages/:username`), и
-                порядок закрепляет это намерение в коде. Человек с логином
-                «c» ничего не ломает — его диалог живёт на `/messages/c`,
-                это по-прежнему два сегмента, а не три. */}
-            <Route path="messages/c/:id" element={<ChatThread />} />
-            <Route path="messages/:username" element={<Thread />} />
+            {/* Мессенджер — список чатов и открытая переписка рядом, как в
+                Телеграме. Переписка вложена в него, поэтому список не
+                перерисовывается при переходе между чатами. */}
+            <Route path="messages" element={<Messenger />}>
+              <Route index element={<MessengerEmpty />} />
+              {/* Групповой чат объявлен раньше личной переписки: путь у него
+                  длиннее (`c/:id` против `:username`), и порядок закрепляет
+                  это намерение в коде. Человек с логином «c» ничего не
+                  ломает — его диалог живёт на `/messages/c`, это по-прежнему
+                  один сегмент, а не два. */}
+              <Route path="c/:id" element={<ChatThread />} />
+              <Route path=":username" element={<Thread />} />
+            </Route>
           </Route>
 
           <Route path="*" element={<NotFound />} />
