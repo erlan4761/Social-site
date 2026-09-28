@@ -58,7 +58,32 @@ export type Page = { posts: Post[]; nextCursor: number | null };
 /** Строка архива: `2026-09` и число записей, видимых **этому** смотрящему. */
 export type ArchiveMonth = { month: string; count: number };
 
-export type Message = {
+/** Набор реакций фиксирован — тот же список, что на сервере. */
+export const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'] as const;
+
+export type Reaction = { emoji: string; count: number; mine: boolean };
+
+/** Цитата в ответе. `deleted` — оригинал удалён или скрыт блокировкой: для
+ *  читающего это одно и то же «сообщение недоступно». */
+export type Quote =
+  | { id: number; author: { id: number; displayName: string }; body: string; deleted?: undefined }
+  | { id: number; deleted: true };
+
+/** Общее у сообщений ЛС и групп: правка, пересылка, ответ, реакции. */
+export type MessageExtras = {
+  editedAt: string | null;
+  forwardedFrom: { username: string; displayName: string } | null;
+  replyTo: Quote | null;
+  reactions: Reaction[];
+};
+
+/** Откуда пересылается сообщение. */
+export type ForwardRef = { from: 'dm' | 'chat'; id: number };
+
+/** Куда: в личную переписку по имени или в групповой чат по id. */
+export type ForwardTarget = { kind: 'dm'; username: string } | { kind: 'chat'; id: number };
+
+export type Message = MessageExtras & {
   id: number;
   body: string;
   createdAt: string;
@@ -117,7 +142,7 @@ export type Chat = {
   iAmOwner: boolean;
 };
 
-export type ChatMessage = {
+export type ChatMessage = MessageExtras & {
   id: number;
   chatId: number;
   body: string;
@@ -251,16 +276,54 @@ const realApi = {
   // но форма ответа заменяется плашкой.
   thread: (username: string, cursor?: number | null) => {
     const qs = cursor != null ? `?cursor=${cursor}` : '';
-    return request<{ user: Person; messages: Message[]; nextCursor: number | null; blocked?: boolean }>(
+    return request<{
+      user: Person;
+      messages: Message[];
+      nextCursor: number | null;
+      blocked?: boolean;
+      /** Собеседник набирает сообщение прямо сейчас. */
+      typing: boolean;
+    }>(
       `/messages/${encodeURIComponent(username)}${qs}`,
     );
   },
 
-  sendMessage: (username: string, text: string) =>
+  sendMessage: (username: string, text: string, replyTo?: number | null) =>
     request<{ message: Message }>(`/messages/${encodeURIComponent(username)}`, {
       method: 'POST',
+      body: body({ body: text, replyTo: replyTo ?? undefined }),
+    }),
+
+  editMessage: (username: string, id: number, text: string) =>
+    request<{ message: Message }>(`/messages/${encodeURIComponent(username)}/${id}`, {
+      method: 'PATCH',
       body: body({ body: text }),
     }),
+
+  deleteMessage: (username: string, id: number) =>
+    request<{ ok: true }>(`/messages/${encodeURIComponent(username)}/${id}`, { method: 'DELETE' }),
+
+  /** `null` — снять свою реакцию. */
+  reactMessage: (username: string, id: number, emoji: string | null) =>
+    request<{ message: Message }>(`/messages/${encodeURIComponent(username)}/${id}/reaction`, {
+      method: emoji ? 'PUT' : 'DELETE',
+      body: emoji ? body({ emoji }) : undefined,
+    }),
+
+  typing: (username: string) =>
+    request<{ ok: true }>(`/messages/${encodeURIComponent(username)}/typing`, { method: 'PUT' }),
+
+  /** Переслать сообщение в личную переписку или в чат. */
+  forward: (target: ForwardTarget, source: ForwardRef) =>
+    target.kind === 'dm'
+      ? request<{ message: Message }>(`/messages/${encodeURIComponent(target.username)}`, {
+          method: 'POST',
+          body: body({ forward: source }),
+        })
+      : request<{ message: ChatMessage }>(`/chats/${target.id}/messages`, {
+          method: 'POST',
+          body: body({ forward: source }),
+        }),
 
   markRead: (username: string) =>
     request<{ ok: true; unreadTotal: number }>(`/messages/${encodeURIComponent(username)}/read`, {
@@ -375,16 +438,40 @@ const realApi = {
 
   chatMessages: (id: number, cursor?: number | null) => {
     const qs = cursor != null ? `?cursor=${cursor}` : '';
-    return request<{ chat: Chat; messages: ChatMessage[]; nextCursor: number | null; readUpTo: number }>(
+    return request<{
+      chat: Chat;
+      messages: ChatMessage[];
+      nextCursor: number | null;
+      readUpTo: number;
+      /** Кто из остальных участников набирает сообщение прямо сейчас. */
+      typing: { id: number; displayName: string }[];
+    }>(
       `/chats/${id}/messages${qs}`,
     );
   },
 
-  sendChatMessage: (id: number, text: string) =>
+  sendChatMessage: (id: number, text: string, replyTo?: number | null) =>
     request<{ message: ChatMessage }>(`/chats/${id}/messages`, {
       method: 'POST',
+      body: body({ body: text, replyTo: replyTo ?? undefined }),
+    }),
+
+  editChatMessage: (chatId: number, id: number, text: string) =>
+    request<{ message: ChatMessage }>(`/chats/${chatId}/messages/${id}`, {
+      method: 'PATCH',
       body: body({ body: text }),
     }),
+
+  deleteChatMessage: (chatId: number, id: number) =>
+    request<{ ok: true }>(`/chats/${chatId}/messages/${id}`, { method: 'DELETE' }),
+
+  reactChatMessage: (chatId: number, id: number, emoji: string | null) =>
+    request<{ message: ChatMessage }>(`/chats/${chatId}/messages/${id}/reaction`, {
+      method: emoji ? 'PUT' : 'DELETE',
+      body: emoji ? body({ emoji }) : undefined,
+    }),
+
+  chatTyping: (id: number) => request<{ ok: true }>(`/chats/${id}/typing`, { method: 'PUT' }),
 
   markChatRead: (id: number) =>
     request<{ ok: true; unread: number }>(`/chats/${id}/read`, { method: 'PUT' }),

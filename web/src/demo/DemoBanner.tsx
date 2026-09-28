@@ -16,7 +16,11 @@ export function DemoBanner() {
     const el = ref.current;
     if (!el) return;
     const root = document.documentElement;
-    const observer = new ResizeObserver(() => root.style.setProperty('--banner-h', `${el.offsetHeight}px`));
+    // Вверх, а не offsetHeight: тот округляет до ближайшего, и лишние полпикселя
+    // дробной высоты давали бы прокрутку страницы на один пиксель.
+    const observer = new ResizeObserver(() =>
+      root.style.setProperty('--banner-h', `${Math.ceil(el.getBoundingClientRect().height)}px`),
+    );
     observer.observe(el);
     return () => {
       observer.disconnect();

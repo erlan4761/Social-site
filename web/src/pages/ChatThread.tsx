@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { api, ApiError, type Chat, type ChatMessage } from '../api';
-import { Composer, MessageList, PaneHead, PresenceAvatar, type BubbleItem } from '../components/Chat';
+import {
+  Composer, MessageList, PaneHead, PresenceAvatar, TypingDots, editable, mergeLatest, oneLine, typingLabel,
+  type BubbleItem, type ComposerMode, type MessageAction,
+} from '../components/Chat';
+import { ForwardDialog } from '../components/ForwardDialog';
 import { Icon } from '../components/Icon';
 import { MemberSearch } from '../components/MemberSearch';
 import { Monogram } from '../components/Monogram';
@@ -14,7 +18,7 @@ const TITLE_LIMIT = 60;
 /** Потолок сервера: 21-й участник получает 400, и звать его незачем. */
 const MAX_MEMBERS = 20;
 /** Открытый чат — это ожидание ответа, тот же шаг, что в личной переписке. */
-const POLL_MS = 5_000;
+const POLL_MS = 3_000;
 
 /** Пересоздаётся на каждый чат (`key`), как и личная переписка. */
 export function ChatThread() {
@@ -48,6 +52,12 @@ function ChatView({ idParam }: { idParam: string }) {
   const [renaming, setRenaming] = useState(false);
   const [draftTitle, setDraftTitle] = useState('');
 
+  const [typing, setTyping] = useState<string[]>([]);
+  const [mode, setMode] = useState<ComposerMode>(null);
+  const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
+  /** Номер последнего своего изменения — см. Thread.tsx. */
+  const edits = useRef(0);
+
   const markRead = useCallback(() => {
     if (!valid) return;
     api
@@ -70,6 +80,7 @@ function ChatView({ idParam }: { idParam: string }) {
         setMessages(res.messages);
         setReadUpTo(res.readUpTo);
         setCursor(res.nextCursor);
+        setTyping(res.typing.map((t) => t.displayName));
         markRead();
       })
       .catch((err) => {
@@ -89,18 +100,19 @@ function ChatView({ idParam }: { idParam: string }) {
     if (!valid || gone) return;
     let cancelled = false;
     const timer = setInterval(() => {
+      const startedAt = edits.current;
       api
         .chatMessages(chatId)
         .then((res) => {
           if (cancelled) return;
           setChat(res.chat);
           setReadUpTo(res.readUpTo);
+          setTyping(res.typing.map((t) => t.displayName));
+          if (edits.current !== startedAt) return;
           setMessages((prev) => {
             const newest = prev.at(-1)?.id ?? 0;
-            const fresh = res.messages.filter((m) => m.id > newest);
-            if (fresh.length === 0) return prev;
-            if (fresh.some((m) => m.author.id !== user?.id)) markRead();
-            return [...prev, ...fresh];
+            if (res.messages.some((m) => m.id > newest && m.author.id !== user?.id)) markRead();
+            return mergeLatest(prev, res.messages);
           });
         })
         .catch((err) => {
@@ -128,17 +140,71 @@ function ChatView({ idParam }: { idParam: string }) {
     }
   }
 
+  function put(updated: ChatMessage) {
+    edits.current += 1;
+    setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+  }
+
   async function send(text: string) {
     setError(null);
     try {
-      const res = await api.sendChatMessage(chatId, text);
-      setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
-      refreshList();
+      if (mode?.kind === 'edit') {
+        put((await api.editChatMessage(chatId, mode.id, text)).message);
+      } else {
+        const res = await api.sendChatMessage(chatId, text, mode?.kind === 'reply' ? mode.id : null);
+        edits.current += 1;
+        setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
+        refreshList();
+      }
+      setMode(null);
       return true;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось отправить');
       return false;
     }
+  }
+
+  async function act(action: MessageAction, item: BubbleItem) {
+    const msg = messages.find((m) => m.id === item.id);
+    if (!msg) return;
+    setError(null);
+
+    try {
+      switch (action.type) {
+        case 'reply':
+          setMode({ kind: 'reply', id: msg.id, who: msg.author.displayName, body: oneLine(msg.body) });
+          break;
+        case 'edit':
+          setMode({ kind: 'edit', id: msg.id, body: msg.body });
+          break;
+        case 'copy':
+          await navigator.clipboard.writeText(msg.body);
+          break;
+        case 'forward':
+          setForwarding(msg);
+          break;
+        case 'react':
+          put((await api.reactChatMessage(chatId, msg.id, action.emoji)).message);
+          break;
+        case 'delete': {
+          const others = msg.author.id !== user?.id;
+          if (!window.confirm(others ? `Удалить сообщение ${msg.author.displayName}? Оно исчезнет у всех участников.` : 'Удалить сообщение? Оно исчезнет у всех участников.')) return;
+          await api.deleteChatMessage(chatId, msg.id);
+          edits.current += 1;
+          setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+          if (mode?.id === msg.id) setMode(null);
+          refreshList();
+          break;
+        }
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не получилось');
+    }
+  }
+
+  function editLast() {
+    const last = [...messages].reverse().find((m) => m.author.id === user?.id && !m.forwardedFrom && editable(m.createdAt));
+    if (last) setMode({ kind: 'edit', id: last.id, body: last.body });
   }
 
   /** После выхода и удаления чат отвечает 404 — сразу возвращаемся к списку. */
@@ -245,6 +311,13 @@ function ChatView({ idParam }: { idParam: string }) {
       mine,
       author: m.author,
       status: mine ? (m.id <= readUpTo ? 'read' : 'sent') : undefined,
+      editedAt: m.editedAt,
+      forwardedFrom: m.forwardedFrom,
+      replyTo: m.replyTo,
+      reactions: m.reactions,
+      canEdit: mine && !m.forwardedFrom && editable(m.createdAt),
+      // Владелец чата удаляет любое сообщение — как админ группы.
+      canDelete: mine || Boolean(chat?.iAmOwner),
     };
   });
 
@@ -260,7 +333,17 @@ function ChatView({ idParam }: { idParam: string }) {
       <PaneHead
         avatar={chat ? <Monogram username={chat.title} displayName={chat.title} size="sm" /> : null}
         title={chat?.title ?? ''}
-        subtitle={subtitle}
+        subtitle={
+          typing.length > 0 ? (
+            <>
+              {typingLabel(typing)}
+              <TypingDots />
+            </>
+          ) : (
+            subtitle
+          )
+        }
+        live={typing.length > 0}
         actions={
           chat && (
             <button
@@ -376,6 +459,7 @@ function ChatView({ idParam }: { idParam: string }) {
         hasMore={cursor != null}
         loadingMore={loadingMore}
         onLoadOlder={() => void loadOlder()}
+        onAction={(action, item) => void act(action, item)}
         empty={
           <>
             <strong>Здесь пока пусто.</strong>
@@ -386,7 +470,23 @@ function ChatView({ idParam }: { idParam: string }) {
 
       {error && <p className="error pane-error">{error}</p>}
 
-      <Composer placeholder="Сообщение в чат" onSend={send} autoFocus />
+      <Composer
+        placeholder="Сообщение в чат"
+        onSend={send}
+        mode={mode}
+        onCancelMode={() => setMode(null)}
+        onEditLast={editLast}
+        onTyping={() => void api.chatTyping(chatId).catch(() => undefined)}
+        autoFocus
+      />
+
+      {forwarding && (
+        <ForwardDialog
+          source={{ from: 'chat', id: forwarding.id }}
+          preview={oneLine(forwarding.body)}
+          onClose={() => setForwarding(null)}
+        />
+      )}
     </div>
   );
 }

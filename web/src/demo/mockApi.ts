@@ -10,8 +10,8 @@
  */
 import type {
   ArchiveMonth, Author, Badges, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
-  Conversation, Media, Message, Notification as NotificationItem, NotificationKind, Page,
-  Person, Post, ReportReason, ReportTargetType, User,
+  Conversation, ForwardRef, ForwardTarget, Media, Message, Notification as NotificationItem,
+  NotificationKind, Page, Person, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
 } from '../api';
 import { ApiError } from '../api';
 
@@ -40,7 +40,11 @@ type DbPost = {
 };
 
 type DbComment = { id: number; postId: number; authorId: number; body: string; createdAt: string };
-type DbMessage = { id: number; fromId: number; toId: number; body: string; createdAt: string; readAt: string | null };
+/** Поля действий с сообщениями — как колонки reply_to_id, edited_at, fwd_user_id на сервере. */
+type DbExtras = { replyToId: number | null; editedAt: string | null; fwdUserId: number | null };
+type DbMessage = DbExtras & { id: number; fromId: number; toId: number; body: string; createdAt: string; readAt: string | null };
+/** Реакция: одна на человека на сообщение, как первичный ключ на сервере. */
+type DbReaction = { messageId: number; userId: number; emoji: string; createdAt: string };
 
 type DbNotification = {
   id: number;
@@ -75,7 +79,9 @@ type DbChat = { id: number; title: string; ownerId: number; createdAt: string };
 /** `lastReadId` — ватерлиния прочитанного, как в схеме сервера: в группе
  *  получателей много, и отметка на каждом сообщении стоила бы таблицы N×M. */
 type DbChatMember = { chatId: number; userId: number; joinedAt: string; lastReadId: number };
-type DbChatMessage = { id: number; chatId: number; authorId: number; body: string; createdAt: string };
+const NO_EXTRAS: DbExtras = { replyToId: null, editedAt: null, fwdUserId: null };
+
+type DbChatMessage = DbExtras & { id: number; chatId: number; authorId: number; body: string; createdAt: string };
 
 let users: DbUser[] = [];
 let posts: DbPost[] = [];
@@ -94,6 +100,11 @@ let reports: DbReport[] = [];
 let chats: DbChat[] = [];
 let chatMembers: DbChatMember[] = [];
 let chatMessages: DbChatMessage[] = [];
+let dmReactions: DbReaction[] = [];
+let chatReactions: DbReaction[] = [];
+/** «Печатает…»: ключ переписки|id человека → до какого момента. Как на
+ *  сервере, живёт только в памяти и гаснет сам. */
+const typingUntil = new Map<string, number>();
 let meId: number | null = null;
 let nextId = 1;
 
@@ -137,6 +148,9 @@ function seed() {
   chats = [];
   chatMembers = [];
   chatMessages = [];
+  dmReactions = [];
+  chatReactions = [];
+  typingUntil.clear();
   nextId = 1;
 
   const make = (username: string, displayName: string, bio: string, avatar: string | null): DbUser => {
@@ -225,15 +239,22 @@ function seed() {
     { followerId: oleg.id, followeeId: marina.id },
   );
 
-  const dm = (from: DbUser, to: DbUser, body: string, minutes: number, read = true) => {
-    messages.push({ id: id(), fromId: from.id, toId: to.id, body, createdAt: ago(minutes), readAt: read ? ago(minutes) : null });
+  const dm = (from: DbUser, to: DbUser, body: string, minutes: number, read = true, replyTo: DbMessage | null = null) => {
+    const m: DbMessage = {
+      id: id(), fromId: from.id, toId: to.id, body, createdAt: ago(minutes), readAt: read ? ago(minutes) : null,
+      ...NO_EXTRAS, replyToId: replyTo?.id ?? null,
+    };
+    messages.push(m);
+    return m;
   };
 
   dm(marina, demo, 'Слушай, ты был на той выставке в подвале на Гоголя?', 90);
   dm(demo, marina, 'Был, но не досмотрел — закрывались. Успел только первый зал.', 88);
   dm(marina, demo, 'Второй там и был весь смысл. Они его специально спрятали за лестницей.', 86);
-  dm(demo, marina, 'Тогда схожу ещё раз. В выходные?', 84);
-  dm(marina, demo, 'Давай в субботу до обеда, пока пусто.', 82);
+  const weekend = dm(demo, marina, 'Тогда схожу ещё раз. В выходные?', 84);
+  // Ответ с цитатой и реакция — чтобы в витрине всё это было видно сразу.
+  dm(marina, demo, 'Давай в субботу до обеда, пока пусто.', 82, true, weekend);
+  dmReactions.push({ messageId: weekend.id, userId: marina.id, emoji: '❤️', createdAt: ago(82) });
   dm(oleg, demo, 'Привет! Нашёл тот станок с фотографии — расскажу при встрече.', 30, false);
   dm(oleg, demo, 'И ещё: у тебя тот аккорд из поста — это Am7?', 25, false);
 
@@ -249,15 +270,22 @@ function seed() {
   join(nina, 75);
   join(marina, 74);
 
-  const say = (from: DbUser, body: string, minutes: number): DbChatMessage => {
-    const m: DbChatMessage = { id: id(), chatId: room.id, authorId: from.id, body, createdAt: ago(minutes) };
+  const say = (from: DbUser, body: string, minutes: number, replyTo: DbChatMessage | null = null): DbChatMessage => {
+    const m: DbChatMessage = {
+      id: id(), chatId: room.id, authorId: from.id, body, createdAt: ago(minutes), ...NO_EXTRAS, replyToId: replyTo?.id ?? null,
+    };
     chatMessages.push(m);
     return m;
   };
 
-  say(nina, 'Проявляем в субботу у меня? Бачок на две плёнки есть, проявителя хватит на четыре.', 70);
+  const invite = say(nina, 'Проявляем в субботу у меня? Бачок на две плёнки есть, проявителя хватит на четыре.', 70);
   const mine = say(demo, 'Давайте. Принесу вторую плёнку и таймер, а то в прошлый раз считали вслух.', 65);
-  const last = say(marina, 'Я приду с камерой деда — она пролежала на антресолях лет десять, надо проверить затвор.', 59);
+  const last = say(marina, 'Я приду с камерой деда — она пролежала на антресолях лет десять, надо проверить затвор.', 59, invite);
+  chatReactions.push(
+    { messageId: mine.id, userId: nina.id, emoji: '👍', createdAt: ago(64) },
+    { messageId: mine.id, userId: marina.id, emoji: '👍', createdAt: ago(60) },
+    { messageId: last.id, userId: nina.id, emoji: '🔥', createdAt: ago(58) },
+  );
 
   // Ватерлиния: у нас прочитано всё до своей реплики — реплика Марины остаётся
   // непрочитанной и даёт единицу в счётчике. У остальных прочитано всё, но по
@@ -397,9 +425,134 @@ const toComment = (c: DbComment): Comment => ({
   author: author(byId(c.authorId)!),
 });
 
+// ─ Действия с сообщениями: общее для ЛС и чатов ────────────────────────────
+
+const REACTION_SET: readonly string[] = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+const EDIT_WINDOW_MS = 48 * 60 * 60_000;
+const QUOTE_LEN = 120;
+const TYPING_TTL_MS = 6_000;
+
+/** Реакции сообщения глазами смотрящего: заблокированные не считаются. */
+function reactionsOf(list: DbReaction[], messageId: number): Reaction[] {
+  const out: Reaction[] = [];
+  for (const r of list.filter((x) => x.messageId === messageId && !hidden(x.userId)).sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    const same = out.find((x) => x.emoji === r.emoji);
+    if (same) {
+      same.count += 1;
+      same.mine ||= r.userId === meId;
+    } else {
+      out.push({ emoji: r.emoji, count: 1, mine: r.userId === meId });
+    }
+  }
+  return out;
+}
+
+/** Цитата: чего нет среди видимых сообщений той же переписки — «удалено». */
+function quoteOf(replyToId: number | null, visible: { id: number; body: string; authorId: number }[]): Quote | null {
+  if (replyToId == null) return null;
+  const m = visible.find((x) => x.id === replyToId);
+  if (!m) return { id: replyToId, deleted: true };
+  const a = byId(m.authorId)!;
+  return {
+    id: m.id,
+    author: { id: a.id, displayName: a.displayName },
+    body: m.body.length > QUOTE_LEN ? `${m.body.slice(0, QUOTE_LEN).trimEnd()}…` : m.body,
+  };
+}
+
+const forwardedOf = (fwdUserId: number | null) => {
+  const u = fwdUserId != null ? byId(fwdUserId) : undefined;
+  return u ? { username: u.username, displayName: u.displayName } : null;
+};
+
+const pairOf = (m: DbMessage) =>
+  messages.filter((x) => (x.fromId === m.fromId && x.toId === m.toId) || (x.fromId === m.toId && x.toId === m.fromId));
+
 const toMessage = (m: DbMessage): Message => ({
   id: m.id, body: m.body, createdAt: m.createdAt, fromId: m.fromId, toId: m.toId, readAt: m.readAt,
+  editedAt: m.editedAt,
+  forwardedFrom: forwardedOf(m.fwdUserId),
+  replyTo: quoteOf(m.replyToId, pairOf(m).map((x) => ({ id: x.id, body: x.body, authorId: x.fromId }))),
+  reactions: reactionsOf(dmReactions, m.id),
 });
+
+/** Правка: своё, не пересланное, в первые двое суток — те же правила, что на сервере. */
+function assertEditable(authorId: number, createdAt: string, fwdUserId: number | null, u: DbUser) {
+  if (authorId !== u.id) fail(403, 'Изменить можно только своё сообщение');
+  if (Date.now() - Date.parse(createdAt) > EDIT_WINDOW_MS) fail(403, 'Сообщение можно изменить только в течение 48 часов');
+  if (fwdUserId != null) fail(403, 'Пересланное сообщение изменить нельзя');
+}
+
+function setReaction(list: DbReaction[], messageId: number, userId: number, emoji: string | null) {
+  const at = list.findIndex((r) => r.messageId === messageId && r.userId === userId);
+  if (at >= 0) list.splice(at, 1);
+  if (emoji) {
+    if (!REACTION_SET.includes(emoji)) fail(400, 'Такой реакции нет');
+    list.push({ messageId, userId, emoji, createdAt: new Date().toISOString() });
+  }
+}
+
+const pairThread = (a: number, b: number) =>
+  messages.filter((m) => (m.fromId === a && m.toId === b) || (m.fromId === b && m.toId === a));
+
+/** Сообщение пары «я — собеседник» по id. Чужое и несуществующее — одно 404. */
+function requirePairMessage(username: string, messageId: number) {
+  const u = requireMe()!;
+  const other = byName(username);
+  if (!other) fail(404, 'Пользователь не найден');
+  const m = pairThread(u.id, other!.id).find((x) => x.id === messageId);
+  if (!m) fail(404, 'Сообщение не найдено');
+  return { u, other: other!, m: m! };
+}
+
+const dmKey = (a: number, b: number) => `dm:${Math.min(a, b)}-${Math.max(a, b)}`;
+const setTyping = (key: string, userId: number) => typingUntil.set(`${key}|${userId}`, Date.now() + TYPING_TTL_MS);
+const clearTyping = (key: string, userId: number) => typingUntil.delete(`${key}|${userId}`);
+const isTyping = (key: string, userId: number) => (typingUntil.get(`${key}|${userId}`) ?? 0) > Date.now();
+
+/** Источник пересылки глазами пересылающего; пересланное указывает на первоисточник. */
+function forwardSource(source: ForwardRef, u: DbUser) {
+  if (source.from === 'dm') {
+    const m = messages.find((x) => x.id === source.id && (x.fromId === u.id || x.toId === u.id));
+    if (!m) fail(404, 'Сообщение для пересылки не найдено');
+    return { body: m!.body, fwdUserId: m!.fwdUserId ?? m!.fromId };
+  }
+  const m = chatMessages.find((x) => x.id === source.id && memberRow(x.chatId, u.id) && !hidden(x.authorId));
+  if (!m) fail(404, 'Сообщение для пересылки не найдено');
+  return { body: m!.body, fwdUserId: m!.fwdUserId ?? m!.authorId };
+}
+
+// ─ Живая витрина ──────────────────────────────────────────────────────────
+
+/** Марина «всегда в сети» и отвечает: прочитает, попечатает, ответит. Так в
+ *  витрине видно галочки, «печатает…» и ответ, не заводя второй вкладки. */
+const MARINA_REPLIES = [
+  'Ага, поняла!',
+  'Звучит отлично.',
+  'Давай так и сделаем.',
+  'Хм, надо подумать. Напишу вечером.',
+  'Согласна 🙂',
+];
+
+function marinaAnswers(me: DbUser) {
+  const marina = byName('marina');
+  if (!marina || blockedPair(me.id, marina.id)) return;
+  const key = dmKey(me.id, marina.id);
+  window.setTimeout(() => {
+    for (const m of messages) if (m.fromId === me.id && m.toId === marina.id && !m.readAt) m.readAt = new Date().toISOString();
+    setTyping(key, marina.id);
+  }, 1_500);
+  window.setTimeout(() => {
+    clearTyping(key, marina.id);
+    if (blockedPair(me.id, marina.id)) return;
+    messages.push({
+      id: id(), fromId: marina.id, toId: me.id,
+      body: MARINA_REPLIES[Math.floor(Math.random() * MARINA_REPLIES.length)],
+      createdAt: new Date().toISOString(), readAt: null, ...NO_EXTRAS,
+    });
+    notify({ userId: me.id, actorId: marina.id, kind: 'message' });
+  }, 5_000);
+}
 
 // ─ Уведомления ──────────────────────────────────────────────────────────────
 
@@ -522,7 +675,18 @@ const visibleChatMessages = (chatId: number) =>
 
 const toChatMessage = (m: DbChatMessage): ChatMessage => ({
   id: m.id, chatId: m.chatId, body: m.body, createdAt: m.createdAt, author: author(byId(m.authorId)!),
+  editedAt: m.editedAt,
+  forwardedFrom: forwardedOf(m.fwdUserId),
+  replyTo: quoteOf(m.replyToId, visibleChatMessages(m.chatId)),
+  reactions: reactionsOf(chatReactions, m.id),
 });
+
+/** Сообщение чата, видимое смотрящему, или 404. */
+function requireChatMessage(chatId: number, messageId: number) {
+  const m = visibleChatMessages(chatId).find((x) => x.id === messageId);
+  if (!m) fail(404, 'Сообщение не найдено');
+  return m!;
+}
 
 const toChat = (c: DbChat): Chat => {
   const members = membersOf(c.id).map((m) => person(byId(m.userId)!));
@@ -917,10 +1081,11 @@ export const mockApi = rejectInsteadOfThrow({
       messages: page.map(toMessage).reverse(),
       nextCursor: list.length > CHAT_PAGE ? page.at(-1)!.id : null,
       blocked: blockedPair(u.id, other!.id),
+      typing: !blockedPair(u.id, other!.id) && isTyping(dmKey(u.id, other!.id), other!.id),
     });
   },
 
-  sendMessage: (username: string, text: string) => {
+  sendMessage: (username: string, text: string, replyTo?: number | null, forward?: ForwardRef) => {
     const u = requireMe()!;
     const other = byName(username);
     if (!other) fail(404, 'Пользователь не найден');
@@ -928,18 +1093,69 @@ export const mockApi = rejectInsteadOfThrow({
     // Текст одинаков в обе стороны намеренно: по формулировке нельзя понять,
     // кто кого заблокировал.
     if (blockedPair(u.id, other!.id)) fail(403, 'Переписка с этим пользователем недоступна');
-    const body = text.trim();
+
+    const src = forward ? forwardSource(forward, u) : null;
+    const body = src ? src.body : text.trim();
     if (!body) fail(400, '«сообщение»: минимум 1 символов');
     if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
+    if (!src && replyTo != null && !pairThread(u.id, other!.id).some((m) => m.id === replyTo)) {
+      fail(400, 'Сообщение, на которое вы отвечаете, не найдено');
+    }
 
     const m: DbMessage = {
       id: id(), fromId: u.id, toId: other!.id, body,
       createdAt: new Date().toISOString(), readAt: null,
+      replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null,
     };
     messages.push(m);
+    clearTyping(dmKey(u.id, other!.id), u.id);
     notify({ userId: other!.id, actorId: u.id, kind: 'message' });
+    if (other!.username === 'marina') marinaAnswers(u);
     return tick({ message: toMessage(m) });
   },
+
+  editMessage: (username: string, messageId: number, text: string) => {
+    const { u, other, m } = requirePairMessage(username, messageId);
+    assertEditable(m.fromId, m.createdAt, m.fwdUserId, u);
+    if (blockedPair(u.id, other.id)) fail(403, 'Переписка с этим пользователем недоступна');
+    const body = text.trim();
+    if (!body) fail(400, '«сообщение»: минимум 1 символов');
+    if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
+    if (body !== m.body) {
+      m.body = body;
+      m.editedAt = new Date().toISOString();
+    }
+    return tick({ message: toMessage(m) });
+  },
+
+  deleteMessage: (username: string, messageId: number) => {
+    const { u, m } = requirePairMessage(username, messageId);
+    if (m.fromId !== u.id) fail(403, 'Удалить можно только своё сообщение');
+    messages = messages.filter((x) => x.id !== m.id);
+    dmReactions = dmReactions.filter((r) => r.messageId !== m.id);
+    return tick({ ok: true as const });
+  },
+
+  reactMessage: (username: string, messageId: number, emoji: string | null) => {
+    const { u, other, m } = requirePairMessage(username, messageId);
+    if (emoji && blockedPair(u.id, other.id)) fail(403, 'Переписка с этим пользователем недоступна');
+    setReaction(dmReactions, m.id, u.id, emoji);
+    return tick({ message: toMessage(m) });
+  },
+
+  typing: (username: string) => {
+    const u = requireMe()!;
+    const other = byName(username);
+    if (!other) fail(404, 'Пользователь не найден');
+    if (other!.id !== u.id && !blockedPair(u.id, other!.id)) setTyping(dmKey(u.id, other!.id), u.id);
+    return tick({ ok: true as const });
+  },
+
+  /** Переслать — это та же отправка, только текст берётся из оригинала. */
+  forward: (target: ForwardTarget, source: ForwardRef): Promise<{ message: Message | ChatMessage }> =>
+    target.kind === 'dm'
+      ? mockApi.sendMessage(target.username, '', null, source)
+      : mockApi.sendChatMessage(target.id, '', null, source),
 
   markRead: (username: string) => {
     const u = requireMe()!;
@@ -1302,25 +1518,71 @@ export const mockApi = rejectInsteadOfThrow({
       messages: page.map(toChatMessage),
       nextCursor: list.length > CHAT_PAGE ? page[0].id : null,
       readUpTo: othersReadUpTo(chat.id, u.id),
+      typing: membersOf(chat.id)
+        .filter((m) => m.userId !== u.id && !hidden(m.userId) && isTyping(`chat:${chat.id}`, m.userId))
+        .map((m) => ({ id: m.userId, displayName: byId(m.userId)!.displayName })),
     });
   },
 
-  sendChatMessage: (chatId: number, text: string) => {
+  sendChatMessage: (chatId: number, text: string, replyTo?: number | null, forward?: ForwardRef) => {
     const { u, chat } = requireChat(chatId);
-    const body = text.trim();
+    const src = forward ? forwardSource(forward, u) : null;
+    const body = src ? src.body : text.trim();
     if (!body) fail(400, '«сообщение»: минимум 1 символов');
     if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
+    if (!src && replyTo != null && !visibleChatMessages(chat.id).some((m) => m.id === replyTo)) {
+      fail(400, 'Сообщение, на которое вы отвечаете, не найдено');
+    }
 
     const m: DbChatMessage = {
       id: id(), chatId: chat.id, authorId: u.id, body, createdAt: new Date().toISOString(),
+      replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null,
     };
     chatMessages.push(m);
+    clearTyping(`chat:${chat.id}`, u.id);
 
     for (const member of membersOf(chat.id)) {
       notify({ userId: member.userId, actorId: u.id, kind: 'chat_message', chatId: chat.id });
     }
 
     return tick({ message: toChatMessage(m) });
+  },
+
+  editChatMessage: (chatId: number, messageId: number, text: string) => {
+    const { u, chat } = requireChat(chatId);
+    const m = requireChatMessage(chat.id, messageId);
+    assertEditable(m.authorId, m.createdAt, m.fwdUserId, u);
+    const body = text.trim();
+    if (!body) fail(400, '«сообщение»: минимум 1 символов');
+    if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
+    if (body !== m.body) {
+      m.body = body;
+      m.editedAt = new Date().toISOString();
+    }
+    return tick({ message: toChatMessage(m) });
+  },
+
+  deleteChatMessage: (chatId: number, messageId: number) => {
+    const { u, chat } = requireChat(chatId);
+    const m = requireChatMessage(chat.id, messageId);
+    // Своё — автор, любое — владелец чата, как админ группы.
+    if (m.authorId !== u.id && chat.ownerId !== u.id) fail(403, 'Удалить можно только своё сообщение');
+    chatMessages = chatMessages.filter((x) => x.id !== m.id);
+    chatReactions = chatReactions.filter((r) => r.messageId !== m.id);
+    return tick({ ok: true as const });
+  },
+
+  reactChatMessage: (chatId: number, messageId: number, emoji: string | null) => {
+    const { u, chat } = requireChat(chatId);
+    const m = requireChatMessage(chat.id, messageId);
+    setReaction(chatReactions, m.id, u.id, emoji);
+    return tick({ message: toChatMessage(m) });
+  },
+
+  chatTyping: (chatId: number) => {
+    const { u, chat } = requireChat(chatId);
+    setTyping(`chat:${chat.id}`, u.id);
+    return tick({ ok: true as const });
   },
 
   markChatRead: (chatId: number) => {
