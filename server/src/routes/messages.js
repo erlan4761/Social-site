@@ -9,6 +9,7 @@ import {
   isTyping, readAttachment, replyIdOf, setTyping,
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
+import { dmUnreadTotal, prefFor, prefsOf } from '../prefs.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -69,8 +70,8 @@ const person = (row, { blocked = false } = {}) => ({
 const BLOCKED_CHAT_MESSAGE = 'Переписка с этим пользователем недоступна';
 const MESSAGE_NOT_FOUND = 'Сообщение не найдено';
 
-const unreadTotal = (userId) =>
-  db.prepare('SELECT COUNT(*) AS c FROM messages WHERE to_id = ? AND read_at IS NULL').get(userId).c;
+/** Общий счётчик непрочитанных ЛС — без приглушённых собеседников (см. prefs.js). */
+const unreadTotal = dmUnreadTotal;
 
 function findUser(username) {
   return db.prepare('SELECT id, username, display_name, avatar_path, last_seen_at FROM users WHERE username = ?')
@@ -117,11 +118,13 @@ router.get('/', (req, res) => {
     ORDER BY m.id DESC
   `).all({ me, viewerId: me });
 
+  const prefs = prefsOf(me, 'dm');
   res.json({
     // История не удаляется и диалог не исчезает из списка: блокировка — это
     // «дальше не пишем», а не «этого разговора не было». Флаг нужен клиенту,
     // чтобы показать плашку вместо формы ответа.
     conversations: rows.map((row) => {
+      const pref = prefFor(prefs, row.id);
       // Превью в списке: цитата и реакции там не показываются, запросы за ними не нужны.
       const { replyToId, ...last } = serialize({ ...row, id: row.msg_id });
       return {
@@ -129,6 +132,8 @@ router.get('/', (req, res) => {
         unread: row.unread,
         blocked: Boolean(row.blocked),
         lastMessage: { ...last, replyTo: null, reactions: [] },
+        pinnedAt: pref.pinnedAt,
+        muted: pref.muted,
       };
     }),
     unreadTotal: unreadTotal(me),

@@ -7,6 +7,7 @@ import {
   ATTACH_COLUMNS, ATTACH_INSERT_COLUMNS, assertEditable, attachmentOf, attachmentUpload, attachmentValues,
   dropAttachment, emojiOf, reactionsFor, readAttachment,
 } from '../messageExtras.js';
+import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -141,7 +142,9 @@ router.get('/', (req, res) => {
     JOIN channel_subscribers s ON s.channel_id = c.id AND s.user_id = ?
   `).all(me);
 
+  const prefs = prefsOf(me, 'channel');
   const channels = rows.map((c) => {
+    const pref = prefFor(prefs, c.id);
     const last = db.prepare(`${POST_SELECT} WHERE m.channel_id = :channelId ORDER BY m.id DESC LIMIT 1`)
       .get({ channelId: c.id, viewerId: me });
     return {
@@ -149,6 +152,8 @@ router.get('/', (req, res) => {
       // Своё — не «непрочитанное»: владелец свои публикации и так видел.
       unread: c.owner_id === me ? 0 : unreadIn(c.id, c.last_read_id),
       lastPost: last ? onePost(last, me) : null,
+      pinnedAt: pref.pinnedAt,
+      muted: pref.muted,
     };
   });
   channels.sort((a, b) =>
@@ -234,6 +239,7 @@ router.delete('/:handle', (req, res) => {
   const files = channelAttachments(channel.id);
   db.prepare('DELETE FROM channels WHERE id = ?').run(channel.id);
   files.forEach(dropAttachment);
+  dropPrefs({ kind: 'channel', targetId: channel.id });
   res.json({ ok: true });
 });
 
@@ -260,6 +266,7 @@ router.delete('/:handle/subscription', (req, res) => {
     return res.status(400).json({ error: 'Владелец не может отписаться от своего канала' });
   }
   db.prepare('DELETE FROM channel_subscribers WHERE channel_id = ? AND user_id = ?').run(channel.id, req.user.id);
+  dropPrefs({ userId: req.user.id, kind: 'channel', targetId: channel.id });
   res.json({ channel: serializeChannel(channel, req.user.id) });
 });
 

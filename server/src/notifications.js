@@ -1,6 +1,7 @@
 import { db, nowIso } from './db.js';
 import { isBlockedPair } from './blocks.js';
 import { publicUrl } from './media.js';
+import { isMuted } from './prefs.js';
 
 export const NOTIFICATION_KINDS = ['like', 'comment', 'follow', 'message', 'chat_message', 'chat_invite'];
 
@@ -57,6 +58,11 @@ export function notify({ userId, actorId, kind, postId = null, commentId = null,
 
   // Заблокировать — значит перестать получать от человека что-либо.
   if (isBlockedPair(user, actor)) return null;
+
+  // Приглушённая переписка событий не создаёт — ради этого её и приглушают.
+  // Приглашение в чат — не переписка, его приглушить нельзя.
+  if (kind === 'message' && isMuted(user, 'dm', actor)) return null;
+  if (kind === 'chat_message' && isMuted(user, 'chat', asId(chatId))) return null;
 
   const params = {
     userId: user,

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db, nowIso } from '../db.js';
 import { requireAuth } from '../auth.js';
 import { blockPairSql } from '../blocks.js';
+import { dmUnreadTotal, notMutedSql } from '../prefs.js';
 import {
   NOTIFICATION_SELECT,
   markNotificationsRead,
@@ -84,9 +85,9 @@ badgesRouter.use(requireAuth);
 badgesRouter.get('/', (req, res) => {
   const me = req.user.id;
 
-  const messages = db
-    .prepare('SELECT COUNT(*) AS c FROM messages WHERE to_id = ? AND read_at IS NULL')
-    .get(me).c;
+  // Приглушённые чаты в общие счётчики не попадают — ни здесь, ни ниже:
+  // их непрочитанное видно только в самом списке чатов, серым.
+  const messages = dmUnreadTotal(me);
 
   // Непрочитанное в групповых чатах — по ватерлинии last_read_id. Свои
   // сообщения не считаются, а сообщения тех, с кем смотрящий в блокировке,
@@ -98,6 +99,7 @@ badgesRouter.get('/', (req, res) => {
     WHERE cm.user_id = :viewerId
       AND m.author_id <> :viewerId
       AND ${blockPairSql('m.author_id')}
+      AND ${notMutedSql('chat', 'cm.user_id', 'cm.chat_id')}
   `).get({ viewerId: me }).c;
 
   // Непрочитанные публикации в каналах, на которые подписан, — кроме своих
@@ -107,7 +109,7 @@ badgesRouter.get('/', (req, res) => {
     FROM channel_subscribers s
     JOIN channels c ON c.id = s.channel_id AND c.owner_id <> s.user_id
     JOIN channel_posts p ON p.channel_id = s.channel_id AND p.id > s.last_read_id
-    WHERE s.user_id = ?
+    WHERE s.user_id = ? AND ${notMutedSql('channel', 's.user_id', 's.channel_id')}
   `).get(me).c;
 
   res.json({ messages, chats, channels, notifications: unreadCount(me) });

@@ -1991,5 +1991,100 @@ r = await mia(`/messages/${userLe}`);
 const orphanFwd = r.body.messages?.find((m) => m.id === fromChannel.id);
 check('пересланное осталось, подпись канала пропала, фото живо', orphanFwd && orphanFwd.forwardedFrom === null && orphanFwd.attachment, JSON.stringify(orphanFwd));
 
+console.log('\n— закреплённые и приглушённые чаты —');
+const pref = (client, kind, target, body) =>
+  client(`/prefs/${kind}/${target}`, { method: 'PUT', body: JSON.stringify(body) });
+const badges = async (client) => (await client('/badges')).body;
+const unreadEvents = async (client) => (await client('/notifications')).body.unread;
+
+r = await pref(lev, 'dm', userKi, { pinned: true });
+check('закрепить личку', r.status === 200 && r.body.pinned === true && r.body.muted === false, `${r.status} ${JSON.stringify(r.body)}`);
+r = await lev('/messages');
+const levKira = r.body.conversations?.find((c) => c.user.username === userKi);
+check('в списке у неё время закрепления', typeof levKira?.pinnedAt === 'string' && levKira.muted === false, JSON.stringify(levKira));
+const pinnedOnce = levKira.pinnedAt;
+await pref(lev, 'dm', userKi, { pinned: true });
+r = await lev('/messages');
+check('повторное «закрепить» не сдвигает порядок', r.body.conversations?.find((c) => c.user.username === userKi)?.pinnedAt === pinnedOnce, 'сдвинулось');
+
+// Приглушённая личка: непрочитанное есть, но не в общем счётчике и без событий.
+r = await pref(mia, 'dm', userLe, { muted: true });
+check('приглушить личку', r.body.muted === true && r.body.pinned === false, JSON.stringify(r.body));
+let before = await badges(mia);
+let eventsBefore = await unreadEvents(mia);
+await dmSend(lev, userMi, { body: 'Это приглушено' });
+let after = await badges(mia);
+check('приглушённая личка не растит общий счётчик', after.messages === before.messages, `${before.messages} → ${after.messages}`);
+check('и не создаёт событий', (await unreadEvents(mia)) === eventsBefore, 'событие появилось');
+r = await mia('/messages');
+const miaLev = r.body.conversations?.find((c) => c.user.username === userLe);
+check('в самом списке непрочитанное видно, с пометкой muted', miaLev?.unread >= 1 && miaLev.muted === true, JSON.stringify(miaLev));
+r = await mia(`/messages/${userLe}/read`, { method: 'PUT' });
+check('unreadTotal после прочтения тоже без приглушённых', typeof r.body.unreadTotal === 'number', JSON.stringify(r.body));
+await pref(mia, 'dm', userLe, { muted: false });
+before = await badges(mia);
+await dmSend(lev, userMi, { body: 'А это уже слышно' });
+after = await badges(mia);
+check('включили звук — снова в счётчике', after.messages === before.messages + 1, `${before.messages} → ${after.messages}`);
+await mia(`/messages/${userLe}/read`, { method: 'PUT' });
+
+// Групповой чат.
+await pref(lev, 'chat', actChat, { muted: true });
+before = await badges(lev);
+eventsBefore = await unreadEvents(lev);
+await chatSend(mia, { body: 'В приглушённый чат' });
+after = await badges(lev);
+check('приглушённый чат не растит счётчик', after.chats === before.chats, `${before.chats} → ${after.chats}`);
+check('и не создаёт событий', (await unreadEvents(lev)) === eventsBefore, 'событие появилось');
+r = await lev('/chats');
+const levAct = r.body.chats?.find((c) => c.id === actChat);
+check('в списке чатов — unread и muted', levAct?.unread >= 1 && levAct.muted === true, JSON.stringify({ unread: levAct?.unread, muted: levAct?.muted }));
+
+// Канал.
+const prefHandle = `prefs_${stamp}`;
+await chCreate(kira, { title: 'Для настроек', handle: prefHandle });
+await lev(`/channels/${prefHandle}/subscription`, { method: 'PUT' });
+await pref(lev, 'channel', prefHandle, { muted: true });
+before = await badges(lev);
+await kira(`/channels/${prefHandle}/posts`, { method: 'POST', body: JSON.stringify({ body: 'Тихая публикация' }) });
+after = await badges(lev);
+check('приглушённый канал не растит счётчик', after.channels === before.channels, `${before.channels} → ${after.channels}`);
+r = await lev('/channels');
+check('в списке каналов — muted', r.body.channels?.find((c) => c.handle === prefHandle)?.muted === true, JSON.stringify(r.body.channels?.map((c) => [c.handle, c.muted])));
+
+// Доступ и ввод.
+r = await pref(yan, 'chat', actChat, { pinned: true });
+check('чужой чат — 404', r.status === 404, `${r.status}`);
+r = await pref(yan, 'channel', prefHandle, { pinned: true });
+check('канал без подписки — 404', r.status === 404, `${r.status}`);
+r = await pref(lev, 'dm', userLe, { pinned: true });
+check('сам себе — 404', r.status === 404, `${r.status}`);
+r = await pref(lev, 'group', actChat, { pinned: true });
+check('неизвестный вид — 404', r.status === 404, `${r.status}`);
+r = await pref(lev, 'dm', userKi, { pinned: 'yes' });
+check('не булево — 400', r.status === 400, `${r.status}`);
+
+// Лимит — пять закреплённых.
+for (const name of [userMi, userY, userV, userA]) await pref(lev, 'dm', name, { pinned: true });
+r = await pref(lev, 'chat', actChat, { pinned: true });
+check('шестой закреплённый — 400', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
+await pref(lev, 'dm', userA, { pinned: false });
+r = await pref(lev, 'chat', actChat, { pinned: true });
+check('открепили один — место освободилось', r.status === 200 && r.body.pinned === true && r.body.muted === true, `${r.status} ${JSON.stringify(r.body)}`);
+
+// Ушёл из чата — настройки не висят в лимите.
+await pref(mia, 'chat', actChat, { pinned: true });
+const miaId = (await mia('/auth/me')).body.user.id;
+await mia(`/chats/${actChat}/members/${userMi}`, { method: 'DELETE' });
+{
+  const rdb = new DatabaseSync(process.env.DB_PATH, { readOnly: true });
+  try {
+    const left = rdb.prepare("SELECT COUNT(*) AS c FROM chat_prefs WHERE user_id = ? AND kind = 'chat' AND target_id = ?").get(miaId, actChat).c;
+    check('после выхода из чата его настройки удалены', left === 0, `${left}`);
+  } finally {
+    rdb.close();
+  }
+}
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

@@ -259,6 +259,25 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_channel_comments ON channel_comments(post_id, id);
 `);
 
+/* ─ Настройки чатов в списке ────────────────────────────────────────────
+ * Закреплён ли чат наверху списка и выключены ли у него уведомления — у
+ * каждого человека свои. Одна таблица на все три вида переписки: kind —
+ * dm | chat | channel, target_id — собеседник, чат или канал. Внешнего ключа
+ * на target_id нет (он указывает в три разные таблицы), поэтому строки
+ * убираются руками там, где человек теряет доступ: выход из чата, отписка,
+ * удаление чата или канала (см. prefs.js).
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_prefs (
+    user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind      TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    pinned_at TEXT,
+    muted     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, kind, target_id)
+  );
+`);
+
 // Действия с сообщениями — одинаково для ЛС и групп (см. messageExtras.js).
 // reply_to_id без внешнего ключа намеренно: ответ переживает удаление того, на
 // что отвечал, и показывает «сообщение удалено», а не исчезает вместе с ним.

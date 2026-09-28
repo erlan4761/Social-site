@@ -9,6 +9,7 @@ import {
   forwardSource, fwdJoin, isForwarded, isTyping, readAttachment, replyIdOf, setTyping,
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
+import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -204,13 +205,17 @@ router.get('/', (req, res) => {
     JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = ?
   `).all(me);
 
+  const prefs = prefsOf(me, 'chat');
   const chats = rows.map((row) => {
     const lastMessage = lastVisibleMessage(row.id, me);
+    const pref = prefFor(prefs, row.id);
     return {
       ...serializeChat(row, me),
       unread: unreadIn(row.id, me, row.last_read_id),
       lastMessage,
       readUpTo: othersReadUpTo(row.id, me),
+      pinnedAt: pref.pinnedAt,
+      muted: pref.muted,
       // Только для сортировки, наружу не уходит: пустой чат должен стоять по
       // времени создания, иначе новый чат оказался бы в самом низу списка.
       sortKey: lastMessage ? lastMessage.createdAt : row.created_at,
@@ -340,6 +345,7 @@ router.delete('/:id', (req, res) => {
   const files = chatAttachments(chat.id);
   db.prepare('DELETE FROM chats WHERE id = ?').run(chat.id);
   files.forEach(dropAttachment);
+  dropPrefs({ kind: 'chat', targetId: chat.id });
   res.json({ ok: true });
 });
 
@@ -610,6 +616,8 @@ router.delete('/:id/members/:username', (req, res, next) => {
     db.exec('BEGIN');
     try {
       db.prepare('DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?').run(chat.id, target.id);
+      // Закреплённый у ушедшего чат не должен занимать место в его лимите.
+      dropPrefs({ userId: target.id, kind: 'chat', targetId: chat.id });
 
       // Ушедший не должен остаться с непрочитанными событиями о чате, который
       // теперь отвечает ему 404: это была бы битая ссылка в ленте событий.
@@ -626,6 +634,7 @@ router.delete('/:id/members/:username', (req, res, next) => {
         // уходят каскадом, файлы вложений — после COMMIT.
         orphaned = chatAttachments(chat.id);
         db.prepare('DELETE FROM chats WHERE id = ?').run(chat.id);
+        dropPrefs({ kind: 'chat', targetId: chat.id });
       } else if (chat.owner_id === target.id) {
         // Владение переходит старейшему участнику: чат без владельца нельзя
         // было бы ни переименовать, ни удалить.
