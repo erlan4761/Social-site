@@ -3,7 +3,7 @@ import multer from 'multer';
 import { db, nowIso } from '../db.js';
 import { requireAuth } from '../auth.js';
 import { blockPairSql, isBlockedPair } from '../blocks.js';
-import { deleteUpload, publicUrl, storeUpload } from '../media.js';
+import { deleteUpload, fileName, publicUrl, storeUpload } from '../media.js';
 import { dropNotification, notify } from '../notifications.js';
 import * as v from '../validate.js';
 
@@ -206,7 +206,7 @@ router.post('/', requireAuth, mediaUpload.single('media'), async (req, res, next
       stored = await storeUpload(req.file.buffer, { allowedKinds: ['image', 'video', 'audio'], into: 'media' });
     }
 
-    const originalName = hasMedia ? v.str(req.file.originalname ?? '', 'имя файла', { max: 200 }) : null;
+    const originalName = hasMedia ? v.str(fileName(req.file.originalname), 'имя файла', { max: 200 }) : null;
 
     const info = db.prepare(`
       INSERT INTO posts (author_id, body, media_path, media_type, media_mime, media_name, created_at)

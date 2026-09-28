@@ -4,8 +4,9 @@ import { requireAuth } from '../auth.js';
 import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { publicUrl } from '../media.js';
 import {
-  FWD_COLUMNS, assertEditable, clearTyping, decorate, dmKey, emojiOf, extraFields, forwardSource,
-  fwdJoin, isTyping, replyIdOf, setTyping,
+  ATTACH_INSERT_COLUMNS, FWD_COLUMNS, assertEditable, attachmentOf, attachmentUpload, attachmentValues,
+  clearTyping, copyAttachment, decorate, dmKey, dropAttachment, emojiOf, extraFields, forwardSource, fwdJoin,
+  isTyping, readAttachment, replyIdOf, setTyping,
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
 import * as v from '../validate.js';
@@ -33,6 +34,7 @@ const serialize = (row) => ({
   fromId: row.from_id,
   toId: row.to_id,
   readAt: row.read_at,
+  attachment: attachmentOf('dm', row),
   ...extraFields(row),
 });
 
@@ -105,6 +107,7 @@ router.get('/', (req, res) => {
     SELECT
       u.id, u.username, u.display_name, u.avatar_path, u.last_seen_at,
       m.id AS msg_id, m.body, m.created_at, m.from_id, m.to_id, m.read_at, m.edited_at,
+      m.attach_path, m.attach_kind, m.attach_mime, m.attach_name, m.attach_size, m.attach_duration, m.attach_wave,
       (SELECT COUNT(*) FROM messages x
        WHERE x.to_id = :me AND x.from_id = u.id AND x.read_at IS NULL) AS unread,
       NOT ${blockPairSql('u.id')} AS blocked
@@ -169,11 +172,13 @@ router.get('/:username', (req, res) => {
 });
 
 /**
- * Отправка. Три вида: обычное сообщение, ответ (`replyTo` — id сообщения этой
- * же пары) и пересылка (`forward: {from: 'dm'|'chat', id}` — текст берётся из
- * оригинала, своё `body` при этом не нужно).
+ * Отправка. Обычное сообщение, ответ (`replyTo` — id сообщения этой же пары),
+ * пересылка (`forward: {from: 'dm'|'chat', id}` — текст и вложение берутся из
+ * оригинала) и сообщение с вложением: multipart, файл в поле `file`, подпись в
+ * `body` необязательна. Голосовое — тот же файл с `voice=1`, `duration` и `wave`.
  */
-router.post('/:username', (req, res, next) => {
+router.post('/:username', attachmentUpload.single('file'), async (req, res, next) => {
+  let attachment = null;
   try {
     const other = otherOr404(req, res);
     if (!other) return;
@@ -183,18 +188,24 @@ router.post('/:username', (req, res, next) => {
       return res.status(403).json({ error: BLOCKED_CHAT_MESSAGE });
     }
 
-    const forward = forwardSource(req.body?.forward, me);
-    const body = forward ? forward.body : v.str(req.body?.body, 'сообщение', { min: 1, max: MAX_LEN });
+    const forward = req.file ? null : forwardSource(req.body?.forward, me);
+    const body = forward
+      ? forward.body
+      : v.str(req.body?.body ?? '', 'сообщение', { min: req.file ? 0 : 1, max: MAX_LEN });
 
     const replyTo = forward ? null : replyIdOf(req.body?.replyTo);
     if (replyTo != null && !pairMessage(replyTo, me, other.id)) {
       return res.status(400).json({ error: 'Сообщение, на которое вы отвечаете, не найдено' });
     }
 
+    // Файл — последним: всё, что может отказать без него, уже проверено, и
+    // на диск не попадёт вложение к сообщению, которого не будет.
+    attachment = forward ? await copyAttachment(forward.attachment) : await readAttachment(req.file, req.body);
+
     const info = db.prepare(`
-      INSERT INTO messages (from_id, to_id, body, created_at, reply_to_id, fwd_user_id)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(me, other.id, body, nowIso(), replyTo, forward?.fwdUserId ?? null);
+      INSERT INTO messages (from_id, to_id, body, created_at, reply_to_id, fwd_user_id, ${ATTACH_INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(me, other.id, body, nowIso(), replyTo, forward?.fwdUserId ?? null, ...attachmentValues(attachment));
 
     clearTyping(dmKey(me, other.id), me);
 
@@ -206,6 +217,8 @@ router.post('/:username', (req, res, next) => {
     const row = db.prepare(`${MESSAGE_SELECT} WHERE m.id = ?`).get(Number(info.lastInsertRowid));
     res.status(201).json({ message: full(row, me, other.id) });
   } catch (err) {
+    // Файл уже на диске, а строки нет — сироту не оставляем.
+    if (attachment) dropAttachment(attachment.path);
     next(err);
   }
 });
@@ -250,7 +263,8 @@ router.patch('/:username/:id', (req, res, next) => {
     if (msg.fwd_user_id != null) return res.status(403).json({ error: 'Пересланное сообщение изменить нельзя' });
     if (isBlockedPair(me, other.id)) return res.status(403).json({ error: BLOCKED_CHAT_MESSAGE });
 
-    const body = v.str(req.body?.body, 'сообщение', { min: 1, max: MAX_LEN });
+    // У сообщения с вложением подпись можно и убрать: фото остаётся сообщением.
+    const body = v.str(req.body?.body ?? '', 'сообщение', { min: msg.attach_path ? 0 : 1, max: MAX_LEN });
     // Тот же текст — не правка: пометка «изменено» без изменений только путала бы.
     if (body !== msg.body) {
       db.prepare('UPDATE messages SET body = ?, edited_at = ? WHERE id = ?').run(body, nowIso(), msg.id);
@@ -279,6 +293,7 @@ router.delete('/:username/:id', (req, res) => {
   if (msg.from_id !== me) return res.status(403).json({ error: 'Удалить можно только своё сообщение' });
 
   db.prepare('DELETE FROM messages WHERE id = ?').run(msg.id);
+  dropAttachment(msg.attach_path);
   res.json({ ok: true });
 });
 

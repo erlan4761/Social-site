@@ -1,6 +1,8 @@
+import multer from 'multer';
 import { db } from './db.js';
 import { blockPairSql } from './blocks.js';
-import { HttpError, bad } from './validate.js';
+import { copyUpload, deleteUpload, fileName, storeUpload } from './media.js';
+import { HttpError, bad, str } from './validate.js';
 
 /**
  * Действия с сообщениями, общие для личной переписки и групповых чатов:
@@ -74,16 +76,19 @@ export function quotesFor(kind, replyIds, scope, scopeParams) {
 
   const params = { ...scopeParams };
   const rows = db.prepare(`
-    SELECT m.id, m.body, u.id AS author_id, u.display_name
+    SELECT m.id, m.body, m.attach_kind, m.attach_name, u.id AS author_id, u.display_name
     FROM ${TABLES[kind].messages} m JOIN users u ON u.id = m.${TABLES[kind].author}
     WHERE m.id IN (${inList(ids, params)}) AND ${scope}
   `).all(params);
 
   for (const row of rows) {
+    // Ответ на фото без подписи цитирует не пустоту, а «Фото».
+    const text = row.body || attachmentLabel(row.attach_kind, row.attach_name);
     out.set(row.id, {
       id: row.id,
       author: { id: row.author_id, displayName: row.display_name },
-      body: row.body.length > QUOTE_LEN ? `${row.body.slice(0, QUOTE_LEN).trimEnd()}…` : row.body,
+      body: text.length > QUOTE_LEN ? `${text.slice(0, QUOTE_LEN).trimEnd()}…` : text,
+      attachmentKind: row.attach_kind ?? null,
     });
   }
   for (const id of ids) if (!out.has(id)) out.set(id, { id, deleted: true });
@@ -113,6 +118,121 @@ export const extraFields = (row) => ({
 /** Колонки и JOIN автора оригинала для выборки с `extraFields`. */
 export const FWD_COLUMNS = 'f.username AS fwd_username, f.display_name AS fwd_display_name';
 export const fwdJoin = (alias) => `LEFT JOIN users f ON f.id = ${alias}.fwd_user_id`;
+
+/* ─ Вложения ───────────────────────────────────────────────────────────── */
+
+/** Файл в памяти до проверки сигнатуры: на диск попадает только то, что
+ *  опознано по содержимому. Потолок — как у записей в ленте. */
+export const attachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 40 * 1024 * 1024, files: 1 },
+});
+
+/** Голосовое — до пяти минут, как запись в браузере и рассчитана. */
+export const VOICE_MAX_S = 300;
+
+/** Колонки вложения для выборок с явным списком полей. */
+export const ATTACH_COLUMNS =
+  'm.attach_path, m.attach_kind, m.attach_mime, m.attach_name, m.attach_size, m.attach_duration, m.attach_wave';
+
+/**
+ * Вложение в ответе API. Ссылка ведёт не в /uploads, а на /api/attachments:
+ * файл отдаётся только тому, кто видит само сообщение.
+ */
+export function attachmentOf(kind, row) {
+  if (!row.attach_path) return null;
+  return {
+    url: `/api/attachments/${kind}/${row.id}`,
+    kind: row.attach_kind,
+    mime: row.attach_mime,
+    name: row.attach_name ?? null,
+    size: row.attach_size ?? null,
+    duration: row.attach_duration ?? null,
+    wave: row.attach_wave ?? null,
+  };
+}
+
+/** Подпись вложения там, где его самого не видно: цитата, превью в списке. */
+export function attachmentLabel(kind, name) {
+  switch (kind) {
+    case 'image': return 'Фото';
+    case 'video': return 'Видео';
+    case 'voice': return 'Голосовое сообщение';
+    case 'audio': return name || 'Аудио';
+    case 'file': return name || 'Файл';
+    default: return '';
+  }
+}
+
+/**
+ * Принимает вложение из multipart-запроса и кладёт его в закрытый каталог.
+ * Тип решает содержимое, а не имя и не заявленный MIME. Поля голосового
+ * проверяются ДО записи на диск: иначе отказ оставил бы файл-сироту.
+ */
+export async function readAttachment(file, fields = {}) {
+  if (!file) return null;
+
+  const voice = fields.voice === '1' || fields.voice === 'true';
+  let duration = null;
+  let wave = null;
+  if (voice) {
+    duration = Number(fields.duration);
+    if (!Number.isInteger(duration) || duration < 1 || duration > VOICE_MAX_S) {
+      throw bad(`Длительность голосового — от 1 до ${VOICE_MAX_S} секунд`);
+    }
+    // «Волна» — до 64 столбиков высотой 0–9, строкой цифр: столько, сколько
+    // нужно нарисовать, и ничего, что можно было бы вставить в чужой интерфейс.
+    wave = fields.wave ? String(fields.wave) : null;
+    if (wave != null && !/^[0-9]{1,64}$/.test(wave)) throw bad('Некорректная форма голосового');
+  }
+
+  const name = voice ? null : str(fileName(file.originalname), 'имя файла', { max: 200 }) || null;
+
+  // Голосовое записывает браузер: Chrome и Firefox — в WebM или Ogg, Safari —
+  // в MP4. Контейнер WebM и MP4 по сигнатуре — «видео», поэтому для голосового
+  // допустимы и они, а тип переписывается на audio/*.
+  const stored = await storeUpload(file.buffer, {
+    allowedKinds: voice ? ['audio', 'video'] : ['image', 'video', 'audio', 'file'],
+    into: 'attachment',
+  });
+
+  return {
+    path: stored.filename,
+    kind: voice ? 'voice' : stored.kind,
+    mime: voice ? stored.mime.replace(/^video\//, 'audio/') : stored.mime,
+    name,
+    size: file.size,
+    duration,
+    wave,
+  };
+}
+
+/** Пересылка вложения — копия файла: оригинал могут удалить, пересланное остаётся. */
+export async function copyAttachment(att) {
+  if (!att) return null;
+  return { ...att, path: await copyUpload('attachment', att.path) };
+}
+
+/** Порядок значений для INSERT (…, attach_path, …, attach_wave). */
+export const attachmentValues = (att) => [
+  att?.path ?? null, att?.kind ?? null, att?.mime ?? null, att?.name ?? null,
+  att?.size ?? null, att?.duration ?? null, att?.wave ?? null,
+];
+
+export const ATTACH_INSERT_COLUMNS =
+  'attach_path, attach_kind, attach_mime, attach_name, attach_size, attach_duration, attach_wave';
+
+/** Файл удалённого сообщения удаляется вместе с ним — вложение без сообщения никому не нужно. */
+export const dropAttachment = (path) => deleteUpload('attachment', path);
+
+/** Вложение из строки сообщения — в той форме, что нужна для копии. */
+const attachmentFromRow = (row) =>
+  row.attach_path
+    ? {
+        path: row.attach_path, kind: row.attach_kind, mime: row.attach_mime, name: row.attach_name,
+        size: row.attach_size, duration: row.attach_duration, wave: row.attach_wave,
+      }
+    : null;
 
 /* ─ Проверки ввода ─────────────────────────────────────────────────────── */
 
@@ -154,17 +274,17 @@ export function forwardSource(input, viewerId) {
   const row =
     input.from === 'dm'
       ? db.prepare(`
-          SELECT body, from_id AS author, fwd_user_id FROM messages
-          WHERE id = :id AND (from_id = :viewerId OR to_id = :viewerId)
+          SELECT m.body, m.from_id AS author, m.fwd_user_id, ${ATTACH_COLUMNS} FROM messages m
+          WHERE m.id = :id AND (m.from_id = :viewerId OR m.to_id = :viewerId)
         `).get({ id, viewerId })
       : db.prepare(`
-          SELECT m.body, m.author_id AS author, m.fwd_user_id FROM chat_messages m
+          SELECT m.body, m.author_id AS author, m.fwd_user_id, ${ATTACH_COLUMNS} FROM chat_messages m
           JOIN chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = :viewerId
           WHERE m.id = :id AND ${blockPairSql('m.author_id')}
         `).get({ id, viewerId });
 
   if (!row) throw new HttpError(404, 'Сообщение для пересылки не найдено');
-  return { body: row.body, fwdUserId: row.fwd_user_id ?? row.author };
+  return { body: row.body, fwdUserId: row.fwd_user_id ?? row.author, attachment: attachmentFromRow(row) };
 }
 
 /* ─ «Печатает…» ─────────────────────────────────────────────────────────

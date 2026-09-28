@@ -18,6 +18,7 @@ import { router as notificationRoutes, badgesRouter } from './routes/notificatio
 import { router as reportRoutes } from './routes/reports.js';
 import { router as searchRoutes } from './routes/search.js';
 import { router as bookmarkRoutes } from './routes/bookmarks.js';
+import { router as attachmentRoutes } from './routes/attachments.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -105,6 +106,7 @@ app.use('/api/badges', badgesRouter);
 app.use('/api/reports', reportRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/bookmarks', bookmarkRoutes);
+app.use('/api/attachments', attachmentRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Нет такого эндпоинта' }));
 

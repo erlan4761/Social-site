@@ -42,7 +42,7 @@ const check = (name, ok, detail = '') => {
 
 function makeClient() {
   let cookie = '';
-  return async function call(path, init = {}) {
+  async function call(path, init = {}) {
     const res = await fetch(BASE + path, {
       ...init,
       headers: {
@@ -58,7 +58,11 @@ function makeClient() {
     }
     const body = await res.json().catch(() => ({}));
     return { status: res.status, body };
-  };
+  }
+  // Сырой GET с той же кукой — для файлов вложений: они отдаются не JSON'ом
+  // и только тому, кто видит сообщение.
+  call.raw = (path) => fetch(BASE.replace(/\/api$/, '') + path, { headers: cookie ? { Cookie: cookie } : {} });
+  return call;
 }
 
 const stamp = Date.now().toString(36).slice(-5);
@@ -398,6 +402,11 @@ check('тип медиа определён как image', r.body.post?.media?.t
 check('имя файла сохранено', r.body.post?.media?.name === 'photo.png', JSON.stringify(r.body.post?.media));
 const withImage = r.body.post.id;
 const mediaUrl = r.body.post.media.url;
+
+// multer читает имя файла как latin1: без переразбора «Закат.png» приходил
+// кракозябрами. Ошибка жила здесь незамеченной, пока её не поймал тест вложений.
+r = await a('/posts', { method: 'POST', body: upload(PNG_1PX, 'Закат над рекой.png', 'image/png', 'media') });
+check('русское имя файла в посте не искажено', r.body.post?.media?.name === 'Закат над рекой.png', JSON.stringify(r.body.post?.media));
 
 raw = await fetch(BASE.replace('/api', '') + mediaUrl);
 check('медиа отдаётся по ссылке', raw.status === 200, `${raw.status}`);
@@ -1745,6 +1754,103 @@ r = await dmSend(mia, userKi, { forward: { from: 'nowhere', id: 1 } });
 check('мусорная пересылка — 400', r.status === 400, `${r.status}`);
 r = await kira(`/chats/${actChat}/messages/${fwd1}`, { method: 'PATCH', body: JSON.stringify({ body: 'правлю чужие слова' }) });
 check('пересланное не правится — 403', r.status === 403, `${r.status}`);
+
+console.log('\n— вложения в переписке —');
+// Сигнатуры настоящие, содержимое — заполнитель: сервер решает по первым
+// байтам, а проигрывать или показывать эти файлы тест не собирается.
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(120, 7)]);
+const PDF = Buffer.from(`%PDF-1.4\n${'x'.repeat(120)}`);
+const WEBM = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(120, 3)]);
+const HTML = Buffer.from(`<html><body><script>alert(1)</script>${' '.repeat(80)}</body></html>`);
+
+function withFile(buf, name, type, fields = {}) {
+  const fd = new FormData();
+  fd.append('file', new Blob([buf], { type }), name);
+  for (const [k, val] of Object.entries(fields)) fd.append(k, String(val));
+  return fd;
+}
+const dmPost = (client, to, fd) => client(`/messages/${to}`, { method: 'POST', body: fd });
+const chatPost = (client, chatId, fd) => client(`/chats/${chatId}/messages`, { method: 'POST', body: fd });
+
+r = await dmPost(kira, userLe, withFile(PNG, 'закат.png', 'image/png', { body: 'Смотри, что вышло' }));
+const photoMsg = r.body.message;
+check('фото с подписью отправлено', r.status === 201 && photoMsg?.attachment?.kind === 'image' && photoMsg.body === 'Смотри, что вышло', `${r.status} ${JSON.stringify(r.body)}`);
+check('ссылка ведёт на /api/attachments, а не в открытый /uploads', photoMsg?.attachment?.url === `/api/attachments/dm/${photoMsg?.id}`, JSON.stringify(photoMsg?.attachment));
+
+raw = await lev.raw(photoMsg.attachment.url);
+let bytes = Buffer.from(await raw.arrayBuffer());
+check('собеседник получает файл', raw.status === 200 && bytes.equals(PNG), `${raw.status} ${bytes.length}`);
+check('тип — по содержимому, показ — на месте', raw.headers.get('content-type')?.startsWith('image/png') && raw.headers.get('content-disposition')?.startsWith('inline'), `${raw.headers.get('content-type')} ${raw.headers.get('content-disposition')}`);
+check('кеш только частный', raw.headers.get('cache-control')?.includes('private'), raw.headers.get('cache-control'));
+raw = await mia.raw(photoMsg.attachment.url);
+check('посторонний файл не получает — 404', raw.status === 404, `${raw.status}`);
+raw = await guest.raw(photoMsg.attachment.url);
+check('гость — 401', raw.status === 401, `${raw.status}`);
+
+r = await dmPost(kira, userLe, withFile(PNG, 'без подписи.png', 'image/png'));
+const bare = r.body.message;
+check('фото без подписи — можно', r.status === 201 && bare?.body === '' && bare?.attachment, `${r.status} ${JSON.stringify(r.body)}`);
+r = await kira(`/messages/${userLe}`, { method: 'POST', body: new FormData() });
+check('ни текста, ни файла — 400', r.status === 400, `${r.status}`);
+r = await dmPost(kira, userLe, withFile(HTML, 'photo.png', 'image/png'));
+check('HTML под видом картинки — 400', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
+
+r = await dmSend(lev, userKi, { body: 'А это что?', replyTo: bare.id });
+check('ответ на фото без подписи цитирует «Фото»', r.status === 201 && r.body.message?.replyTo?.body === 'Фото', `${r.status} ${JSON.stringify(r.body.message?.replyTo)}`);
+
+r = await kira(`/messages/${userLe}/${photoMsg.id}`, { method: 'PATCH', body: JSON.stringify({ body: '' }) });
+check('подпись у фото можно убрать правкой', r.status === 200 && r.body.message?.body === '' && r.body.message?.editedAt, `${r.status} ${JSON.stringify(r.body)}`);
+
+r = await dmPost(kira, userLe, withFile(PDF, 'Договор аренды.pdf', 'application/pdf'));
+const docMsg = r.body.message;
+check('документ — вид file, русское имя цело', r.status === 201 && docMsg?.attachment?.kind === 'file' && docMsg.attachment.name === 'Договор аренды.pdf', `${r.status} ${JSON.stringify(docMsg?.attachment)}`);
+raw = await lev.raw(docMsg.attachment.url);
+check('документ отдаётся только скачиванием', raw.status === 200 && raw.headers.get('content-disposition') === `attachment; filename*=UTF-8''${encodeURIComponent('Договор аренды.pdf')}`, raw.headers.get('content-disposition'));
+r = await lev('/messages');
+const withKira = r.body.conversations?.find((c) => c.user.username === userKi);
+check('в списке диалогов у превью есть вложение', withKira?.lastMessage?.attachment?.kind === 'file', JSON.stringify(withKira?.lastMessage));
+
+// Голосовое.
+r = await dmPost(kira, userLe, withFile(WEBM, 'voice.webm', 'audio/webm', { voice: 1, duration: 4, wave: '0135797531' }));
+const voiceMsg = r.body.message;
+check('голосовое: вид voice, тип audio/webm, длительность и волна', r.status === 201 && voiceMsg?.attachment?.kind === 'voice' && voiceMsg.attachment.mime === 'audio/webm' && voiceMsg.attachment.duration === 4 && voiceMsg.attachment.wave === '0135797531', `${r.status} ${JSON.stringify(voiceMsg?.attachment)}`);
+check('у голосового нет имени файла', voiceMsg?.attachment?.name === null, JSON.stringify(voiceMsg?.attachment));
+r = await dmPost(kira, userLe, withFile(WEBM, 'v.webm', 'audio/webm', { voice: 1, duration: 0 }));
+check('голосовое нулевой длины — 400', r.status === 400, `${r.status}`);
+r = await dmPost(kira, userLe, withFile(WEBM, 'v.webm', 'audio/webm', { voice: 1, duration: 999 }));
+check('голосовое длиннее пяти минут — 400', r.status === 400, `${r.status}`);
+r = await dmPost(kira, userLe, withFile(WEBM, 'v.webm', 'audio/webm', { voice: 1, duration: 3, wave: '<b>' }));
+check('мусорная волна — 400', r.status === 400, `${r.status}`);
+r = await dmPost(kira, userLe, withFile(PNG, 'v.png', 'image/png', { voice: 1, duration: 3 }));
+check('картинка вместо голосового — 400', r.status === 400, `${r.status}`);
+
+// Пересылка и удаление.
+r = await chatSend(kira, { forward: { from: 'dm', id: bare.id } });
+const fwdPhoto = r.body.message;
+check('пересланное фото — со своим вложением в чате', r.status === 201 && fwdPhoto?.attachment?.url === `/api/attachments/chat/${fwdPhoto?.id}`, `${r.status} ${JSON.stringify(r.body)}`);
+raw = await mia.raw(fwdPhoto.attachment.url);
+check('участник чата видит пересланное фото', raw.status === 200, `${raw.status}`);
+r = await kira(`/messages/${userLe}/${bare.id}`, { method: 'DELETE' });
+raw = await lev.raw(bare.attachment.url);
+check('после удаления сообщения файл недоступен — 404', r.status === 200 && raw.status === 404, `${r.status} ${raw.status}`);
+raw = await mia.raw(fwdPhoto.attachment.url);
+check('а пересланная копия жива', raw.status === 200, `${raw.status}`);
+
+// Групповой чат.
+r = await chatPost(lev, actChat, withFile(PNG, 'стол.png', 'image/png', { body: 'Вот стол для проявки' }));
+const chatPhoto = r.body.message;
+check('фото в чат', r.status === 201 && chatPhoto?.attachment?.kind === 'image', `${r.status} ${JSON.stringify(r.body)}`);
+raw = await mia.raw(chatPhoto.attachment.url);
+check('участник чата получает файл', raw.status === 200, `${raw.status}`);
+raw = await yan.raw(chatPhoto.attachment.url);
+check('не участник — 404', raw.status === 404, `${raw.status}`);
+await mia(`/users/${userLe}/block`, { method: 'PUT' });
+raw = await mia.raw(chatPhoto.attachment.url);
+check('заблокировавшая автора файл не получает', raw.status === 404, `${raw.status}`);
+await mia(`/users/${userLe}/block`, { method: 'DELETE' });
+r = await lev(`/chats/${actChat}/messages/${chatPhoto.id}`, { method: 'DELETE' });
+raw = await kira.raw(chatPhoto.attachment.url);
+check('удалённое в чате — файл недоступен', r.status === 200 && raw.status === 404, `${r.status} ${raw.status}`);
 
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

@@ -196,6 +196,15 @@ for (const table of ['messages', 'chat_messages']) {
   ensureColumn(table, 'reply_to_id', 'INTEGER');
   ensureColumn(table, 'edited_at', 'TEXT');
   ensureColumn(table, 'fwd_user_id', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+  // Вложение — одно на сообщение, как и у записи. attach_kind: image | video |
+  // audio | voice | file; длительность и «волна» — только у голосовых.
+  ensureColumn(table, 'attach_path', 'TEXT');
+  ensureColumn(table, 'attach_kind', 'TEXT');
+  ensureColumn(table, 'attach_mime', 'TEXT');
+  ensureColumn(table, 'attach_name', 'TEXT');
+  ensureColumn(table, 'attach_size', 'INTEGER');
+  ensureColumn(table, 'attach_duration', 'INTEGER');
+  ensureColumn(table, 'attach_wave', 'TEXT');
 }
 
 // Реакция — одна на человека на сообщение, как у Телеграма без подписки:

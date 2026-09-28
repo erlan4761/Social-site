@@ -4,8 +4,9 @@ import { requireAuth } from '../auth.js';
 import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { publicUrl } from '../media.js';
 import {
-  FWD_COLUMNS, assertEditable, chatKey, clearTyping, decorate, emojiOf, extraFields, forwardSource,
-  fwdJoin, isTyping, replyIdOf, setTyping,
+  ATTACH_COLUMNS, ATTACH_INSERT_COLUMNS, FWD_COLUMNS, assertEditable, attachmentOf, attachmentUpload,
+  attachmentValues, chatKey, clearTyping, copyAttachment, decorate, dropAttachment, emojiOf, extraFields,
+  forwardSource, fwdJoin, isTyping, readAttachment, replyIdOf, setTyping,
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
 import * as v from '../validate.js';
@@ -54,7 +55,7 @@ const member = (row, viewerId) => ({
 });
 
 const MESSAGE_SELECT = `
-  SELECT m.id, m.chat_id, m.body, m.created_at, m.reply_to_id, m.edited_at, m.fwd_user_id,
+  SELECT m.id, m.chat_id, m.body, m.created_at, m.reply_to_id, m.edited_at, m.fwd_user_id, ${ATTACH_COLUMNS},
          u.id AS author_id, u.username AS author_username,
          u.display_name AS author_display_name, u.avatar_path AS author_avatar_path,
          ${FWD_COLUMNS}
@@ -75,6 +76,7 @@ const serializeMessage = (row) => ({
     displayName: row.author_display_name,
     avatarUrl: publicUrl('avatar', row.author_avatar_path),
   },
+  attachment: attachmentOf('chat', row),
   ...extraFields(row),
 });
 
@@ -320,8 +322,14 @@ router.patch('/:id', (req, res, next) => {
   }
 });
 
+/** Файлы вложений чата. Строки уходят каскадом по внешним ключам, а файлы на
+ *  диске каскад не видит — их собирают до удаления и стирают после. */
+const chatAttachments = (chatId) =>
+  db.prepare('SELECT attach_path FROM chat_messages WHERE chat_id = ? AND attach_path IS NOT NULL')
+    .all(chatId).map((r) => r.attach_path);
+
 // Удаление уносит участников, сообщения и уведомления о чате — всё каскадом по
-// внешним ключам, отдельная уборка не нужна.
+// внешним ключам. Отдельно — только файлы вложений.
 router.delete('/:id', (req, res) => {
   const chat = memberChat(req.params.id, req.user.id);
   if (!chat) return res.status(404).json({ error: NOT_FOUND });
@@ -329,7 +337,9 @@ router.delete('/:id', (req, res) => {
     return res.status(403).json({ error: 'Удалить чат может только владелец' });
   }
 
+  const files = chatAttachments(chat.id);
   db.prepare('DELETE FROM chats WHERE id = ?').run(chat.id);
+  files.forEach(dropAttachment);
   res.json({ ok: true });
 });
 
@@ -379,24 +389,30 @@ router.get('/:id/messages', (req, res) => {
  * Написать в чат: обычное сообщение, ответ (`replyTo` — сообщение этого же
  * чата) или пересылка (`forward: {from: 'dm'|'chat', id}`).
  */
-router.post('/:id/messages', (req, res, next) => {
+router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, next) => {
+  let attachment = null;
   try {
     const me = req.user.id;
     const chat = memberChat(req.params.id, me);
     if (!chat) return res.status(404).json({ error: NOT_FOUND });
 
-    const forward = forwardSource(req.body?.forward, me);
-    const body = forward ? forward.body : v.str(req.body?.body, 'сообщение', { min: 1, max: MAX_BODY });
+    const forward = req.file ? null : forwardSource(req.body?.forward, me);
+    const body = forward
+      ? forward.body
+      : v.str(req.body?.body ?? '', 'сообщение', { min: req.file ? 0 : 1, max: MAX_BODY });
 
     const replyTo = forward ? null : replyIdOf(req.body?.replyTo);
     if (replyTo != null && !chatMessage(chat.id, replyTo, me)) {
       return res.status(400).json({ error: 'Сообщение, на которое вы отвечаете, не найдено' });
     }
 
+    // Файл — последним, как в ЛС: отказ не должен оставлять сироту на диске.
+    attachment = forward ? await copyAttachment(forward.attachment) : await readAttachment(req.file, req.body);
+
     const info = db.prepare(`
-      INSERT INTO chat_messages (chat_id, author_id, body, created_at, reply_to_id, fwd_user_id)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(chat.id, me, body, nowIso(), replyTo, forward?.fwdUserId ?? null);
+      INSERT INTO chat_messages (chat_id, author_id, body, created_at, reply_to_id, fwd_user_id, ${ATTACH_INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(chat.id, me, body, nowIso(), replyTo, forward?.fwdUserId ?? null, ...attachmentValues(attachment));
 
     clearTyping(chatKey(chat.id), me);
 
@@ -412,6 +428,7 @@ router.post('/:id/messages', (req, res, next) => {
     const row = db.prepare(`${MESSAGE_SELECT} WHERE m.id = ?`).get(Number(info.lastInsertRowid));
     res.status(201).json({ message: decorateChat([serializeMessage(row)], chat.id, me)[0] });
   } catch (err) {
+    if (attachment) dropAttachment(attachment.path);
     next(err);
   }
 });
@@ -436,7 +453,7 @@ router.patch('/:id/messages/:mid', (req, res, next) => {
     assertEditable(msg.author_id, msg.created_at, me);
     if (msg.fwd_user_id != null) return res.status(403).json({ error: 'Пересланное сообщение изменить нельзя' });
 
-    const body = v.str(req.body?.body, 'сообщение', { min: 1, max: MAX_BODY });
+    const body = v.str(req.body?.body ?? '', 'сообщение', { min: msg.attach_path ? 0 : 1, max: MAX_BODY });
     if (body !== msg.body) {
       db.prepare('UPDATE chat_messages SET body = ?, edited_at = ? WHERE id = ?').run(body, nowIso(), msg.id);
     }
@@ -465,6 +482,7 @@ router.delete('/:id/messages/:mid', (req, res) => {
   }
 
   db.prepare('DELETE FROM chat_messages WHERE id = ?').run(msg.id);
+  dropAttachment(msg.attach_path);
   res.json({ ok: true });
 });
 
@@ -588,6 +606,7 @@ router.delete('/:id/members/:username', (req, res, next) => {
       return res.status(403).json({ error: 'Удалять участников может только владелец' });
     }
 
+    let orphaned = [];
     db.exec('BEGIN');
     try {
       db.prepare('DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?').run(chat.id, target.id);
@@ -604,7 +623,8 @@ router.delete('/:id/members/:username', (req, res, next) => {
 
       if (!rest) {
         // Ушёл последний — чат больше некому открыть. Сообщения и события
-        // уходят каскадом.
+        // уходят каскадом, файлы вложений — после COMMIT.
+        orphaned = chatAttachments(chat.id);
         db.prepare('DELETE FROM chats WHERE id = ?').run(chat.id);
       } else if (chat.owner_id === target.id) {
         // Владение переходит старейшему участнику: чат без владельца нельзя
@@ -617,6 +637,7 @@ router.delete('/:id/members/:username', (req, res, next) => {
       db.exec('ROLLBACK');
       throw err;
     }
+    orphaned.forEach(dropAttachment);
 
     res.json(leaving ? { ok: true, left: true } : { ok: true });
   } catch (err) {
