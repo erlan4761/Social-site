@@ -1579,5 +1579,172 @@ const veraInChat = r.body.chat?.members?.find((m) => m.username === userV);
 check('в чате при блокировке время визита скрыто', veraInChat && veraInChat.lastSeenAt === null, JSON.stringify(veraInChat));
 await yan(`/users/${userV}/block`, { method: 'DELETE' });
 
+console.log('\n— действия с сообщениями —');
+const kira = makeClient();
+const lev = makeClient();
+const mia = makeClient();
+const userKi = `kira_${stamp}`;
+const userLe = `lev_${stamp}`;
+const userMi = `mia_${stamp}`;
+await signUp(kira, userKi, 'Кира');
+await signUp(lev, userLe, 'Лев');
+await signUp(mia, userMi, 'Мия');
+
+const dmSend = (client, to, payload) =>
+  client(`/messages/${to}`, { method: 'POST', body: JSON.stringify(payload) });
+const dmMsg = (res, id) => res.body.messages?.find((m) => m.id === id);
+
+// Ответ с цитатой.
+r = await dmSend(kira, userLe, { body: 'Лев, во сколько встречаемся? Я бы ближе к семи.' });
+const km1 = r.body.message.id;
+check('сообщение без ответа — replyTo: null, реакций нет', r.body.message.replyTo === null && r.body.message.reactions?.length === 0, JSON.stringify(r.body.message));
+r = await dmSend(lev, userKi, { body: 'В семь отлично.', replyTo: km1 });
+const lr1 = r.body.message?.id;
+check('ответ на сообщение пары принят', r.status === 201 && r.body.message.replyTo?.id === km1, `${r.status} ${JSON.stringify(r.body)}`);
+check('в цитате автор и начало текста', r.body.message.replyTo?.author?.displayName === 'Кира' && r.body.message.replyTo?.body.startsWith('Лев, во сколько'), JSON.stringify(r.body.message.replyTo));
+r = await dmSend(lev, userKi, { body: 'чужое', replyTo: msg1 });
+check('ответ на сообщение чужой пары — 400', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
+r = await dmSend(lev, userKi, { body: 'мусор', replyTo: 'abc' });
+check('мусорный replyTo — 400', r.status === 400, `${r.status}`);
+r = await lev(`/messages/${userKi}`);
+check('цитата приходит и в переписке', dmMsg(r, lr1)?.replyTo?.id === km1, JSON.stringify(dmMsg(r, lr1)));
+
+// Правка.
+r = await lev(`/messages/${userKi}/${lr1}`, { method: 'PATCH', body: JSON.stringify({ body: 'В семь пятнадцать, если можно.' }) });
+check('правка своего — 200 и пометка editedAt', r.status === 200 && r.body.message.body === 'В семь пятнадцать, если можно.' && typeof r.body.message.editedAt === 'string', `${r.status} ${JSON.stringify(r.body)}`);
+check('правка не теряет цитату', r.body.message?.replyTo?.id === km1, JSON.stringify(r.body.message?.replyTo));
+r = await kira(`/messages/${userLe}/${lr1}`, { method: 'PATCH', body: JSON.stringify({ body: 'подменил' }) });
+check('чужое править нельзя — 403', r.status === 403, `${r.status} ${JSON.stringify(r.body)}`);
+r = await mia(`/messages/${userKi}/${lr1}`, { method: 'PATCH', body: JSON.stringify({ body: 'посторонний' }) });
+check('посторонний не находит сообщение чужой пары — 404', r.status === 404, `${r.status}`);
+r = await dmSend(kira, userLe, { body: 'Без изменений' });
+const kSame = r.body.message.id;
+r = await kira(`/messages/${userLe}/${kSame}`, { method: 'PATCH', body: JSON.stringify({ body: 'Без изменений' }) });
+check('тот же текст — не правка, editedAt остаётся null', r.status === 200 && r.body.message.editedAt === null, JSON.stringify(r.body.message));
+r = await kira(`/messages/${userLe}/${kSame}`, { method: 'PATCH', body: JSON.stringify({ body: '  ' }) });
+check('пустая правка — 400', r.status === 400, `${r.status}`);
+{
+  const wdb = new DatabaseSync(process.env.DB_PATH);
+  try {
+    wdb.prepare('UPDATE messages SET created_at = ? WHERE id = ?').run(new Date(Date.now() - 49 * 3600_000).toISOString(), kSame);
+  } finally {
+    wdb.close();
+  }
+}
+r = await kira(`/messages/${userLe}/${kSame}`, { method: 'PATCH', body: JSON.stringify({ body: 'Через двое суток' }) });
+check('правка старше 48 часов — 403', r.status === 403, `${r.status} ${JSON.stringify(r.body)}`);
+
+// Реакции.
+const react = (client, path, emoji) => client(`${path}/reaction`, { method: 'PUT', body: JSON.stringify({ emoji }) });
+r = await react(kira, `/messages/${userLe}/${lr1}`, '👍');
+check('реакция поставлена', r.status === 200 && JSON.stringify(r.body.message.reactions) === JSON.stringify([{ emoji: '👍', count: 1, mine: true }]), `${r.status} ${JSON.stringify(r.body.message?.reactions)}`);
+r = await react(lev, `/messages/${userKi}/${lr1}`, '❤️');
+check('вторая реакция от другого — две строки', r.body.message?.reactions?.length === 2, JSON.stringify(r.body.message?.reactions));
+r = await react(kira, `/messages/${userLe}/${lr1}`, '❤️');
+check('новая реакция заменяет прежнюю — одна на человека', JSON.stringify(r.body.message?.reactions) === JSON.stringify([{ emoji: '❤️', count: 2, mine: true }]), JSON.stringify(r.body.message?.reactions));
+r = await react(kira, `/messages/${userLe}/${lr1}`, '💩');
+check('реакция не из набора — 400', r.status === 400, `${r.status}`);
+r = await react(mia, `/messages/${userKi}/${lr1}`, '👍');
+check('посторонний реагировать не может — 404', r.status === 404, `${r.status}`);
+r = await kira(`/messages/${userLe}/${lr1}/reaction`, { method: 'DELETE' });
+check('снять свою реакцию', r.status === 200 && JSON.stringify(r.body.message.reactions) === JSON.stringify([{ emoji: '❤️', count: 1, mine: false }]), JSON.stringify(r.body.message?.reactions));
+
+// Удаление.
+r = await dmSend(kira, userLe, { body: 'Это сообщение я удалю.' });
+const kDel = r.body.message.id;
+r = await dmSend(lev, userKi, { body: 'А я на него отвечу.', replyTo: kDel });
+const lOnDel = r.body.message.id;
+r = await lev(`/messages/${userKi}/${kDel}`, { method: 'DELETE' });
+check('чужое удалить нельзя — 403', r.status === 403, `${r.status}`);
+r = await kira(`/messages/${userLe}/${kDel}`, { method: 'DELETE' });
+check('своё удалено', r.status === 200, `${r.status}`);
+r = await lev(`/messages/${userKi}`);
+check('у собеседника оно тоже пропало', !dmMsg(r, kDel), JSON.stringify(r.body.messages?.map((m) => m.id)));
+check('ответ на удалённое остался и показывает «удалено»', dmMsg(r, lOnDel)?.replyTo?.deleted === true, JSON.stringify(dmMsg(r, lOnDel)));
+r = await kira(`/messages/${userLe}/${kDel}`, { method: 'DELETE' });
+check('повторное удаление — 404', r.status === 404, `${r.status}`);
+
+// «Печатает…».
+await kira(`/messages/${userLe}/typing`, { method: 'PUT' });
+r = await lev(`/messages/${userKi}`);
+check('собеседник видит «печатает…»', r.body.typing === true, JSON.stringify(r.body.typing));
+r = await kira(`/messages/${userLe}`);
+check('себя «печатающим» не видно', r.body.typing === false, JSON.stringify(r.body.typing));
+await dmSend(kira, userLe, { body: 'Дописала.' });
+r = await lev(`/messages/${userKi}`);
+check('после отправки «печатает…» гаснет сразу', r.body.typing === false, JSON.stringify(r.body.typing));
+
+// Блокировка.
+await lev(`/users/${userKi}/block`, { method: 'PUT' });
+r = await react(kira, `/messages/${userLe}/${lr1}`, '🔥');
+check('при блокировке реакция — 403', r.status === 403, `${r.status}`);
+r = await dmSend(kira, userLe, { body: 'Последнее до блокировки было раньше.' });
+check('и отправка — 403', r.status === 403, `${r.status}`);
+r = await kira(`/messages/${userLe}/typing`, { method: 'PUT' });
+check('«печатает…» при блокировке отвечает как обычно', r.status === 200, `${r.status}`);
+r = await lev(`/messages/${userKi}`);
+check('но собеседник его не видит', r.body.typing === false, JSON.stringify(r.body.typing));
+check('и реакций заблокированной не видно', dmMsg(r, lr1)?.reactions?.every((x) => x.mine), JSON.stringify(dmMsg(r, lr1)?.reactions));
+r = await kira(`/messages/${userLe}/${km1}`, { method: 'DELETE' });
+check('своё удалить можно и при блокировке', r.status === 200, `${r.status}`);
+await lev(`/users/${userKi}/block`, { method: 'DELETE' });
+
+// Групповой чат.
+r = await kira('/chats', { method: 'POST', body: JSON.stringify({ title: 'Действия', members: [userLe, userMi] }) });
+const actChat = r.body.chat.id;
+const chatSend = (client, payload) =>
+  client(`/chats/${actChat}/messages`, { method: 'POST', body: JSON.stringify(payload) });
+r = await chatSend(lev, { body: 'Берём два термоса или один?' });
+const lc1 = r.body.message.id;
+r = await chatSend(mia, { body: 'Два, путь долгий.', replyTo: lc1 });
+const mc1 = r.body.message?.id;
+check('ответ в чате — цитата с автором', r.status === 201 && r.body.message.replyTo?.author?.displayName === 'Лев', `${r.status} ${JSON.stringify(r.body)}`);
+r = await chatSend(mia, { body: 'мимо', replyTo: lr1 });
+check('ответ на сообщение из ЛС в чате — 400', r.status === 400, `${r.status}`);
+r = await mia(`/chats/${actChat}/messages/${lc1}`, { method: 'PATCH', body: JSON.stringify({ body: 'три' }) });
+check('в чате чужое править нельзя — 403', r.status === 403, `${r.status}`);
+r = await lev(`/chats/${actChat}/messages/${lc1}`, { method: 'PATCH', body: JSON.stringify({ body: 'Берём два термоса.' }) });
+check('своё в чате правится', r.status === 200 && r.body.message.editedAt && r.body.message.body === 'Берём два термоса.', JSON.stringify(r.body.message));
+r = await react(mia, `/chats/${actChat}/messages/${lc1}`, '🔥');
+check('реакция в чате', r.status === 200 && r.body.message.reactions?.[0]?.emoji === '🔥', `${r.status} ${JSON.stringify(r.body)}`);
+r = await lev(`/chats/${actChat}/messages`);
+const levSees = r.body.messages?.find((m) => m.id === lc1);
+check('другой участник видит её без отметки «моя»', JSON.stringify(levSees?.reactions) === JSON.stringify([{ emoji: '🔥', count: 1, mine: false }]), JSON.stringify(levSees?.reactions));
+r = await mia(`/chats/${actChat}/messages/${lc1}`, { method: 'DELETE' });
+check('участник не удаляет чужое — 403', r.status === 403, `${r.status}`);
+r = await kira(`/chats/${actChat}/messages/${mc1}`, { method: 'DELETE' });
+check('владелец чата удаляет любое', r.status === 200, `${r.status}`);
+r = await lev(`/chats/${actChat}/messages`);
+check('удалённое пропало у всех', !r.body.messages?.some((m) => m.id === mc1), JSON.stringify(r.body.messages?.map((m) => m.id)));
+
+await mia(`/chats/${actChat}/typing`, { method: 'PUT' });
+r = await lev(`/chats/${actChat}/messages`);
+check('в чате видно, кто печатает', r.body.typing?.length === 1 && r.body.typing[0].displayName === 'Мия', JSON.stringify(r.body.typing));
+r = await mia(`/chats/${actChat}/messages`);
+check('себя в «печатает…» нет', r.body.typing?.length === 0, JSON.stringify(r.body.typing));
+// Ян — вошедший, но не участник этого чата (`a` к этому месту уже вышел).
+r = await yan(`/chats/${actChat}/typing`, { method: 'PUT' });
+check('посторонний «печатать» в чужой чат не может — 404', r.status === 404, `${r.status}`);
+
+await lev(`/users/${userMi}/block`, { method: 'PUT' });
+r = await lev(`/chats/${actChat}/messages`);
+const levBlocked = r.body.messages?.find((m) => m.id === lc1);
+check('при блокировке реакция заблокированной не считается', levBlocked?.reactions?.length === 0, JSON.stringify(levBlocked?.reactions));
+check('и её «печатает…» не видно', r.body.typing?.length === 0, JSON.stringify(r.body.typing));
+await lev(`/users/${userMi}/block`, { method: 'DELETE' });
+
+// Пересылка.
+r = await chatSend(kira, { forward: { from: 'dm', id: lr1 } });
+check('пересылка из ЛС в чат', r.status === 201 && r.body.message.body === 'В семь пятнадцать, если можно.' && r.body.message.forwardedFrom?.username === userLe, `${r.status} ${JSON.stringify(r.body)}`);
+const fwd1 = r.body.message.id;
+r = await dmSend(mia, userKi, { forward: { from: 'chat', id: fwd1 } });
+check('пересылка пересланного указывает на первоисточник', r.status === 201 && r.body.message.forwardedFrom?.username === userLe, `${r.status} ${JSON.stringify(r.body)}`);
+r = await dmSend(mia, userKi, { forward: { from: 'dm', id: lr1 } });
+check('переслать из чужой ЛС нельзя — 404', r.status === 404, `${r.status}`);
+r = await dmSend(mia, userKi, { forward: { from: 'nowhere', id: 1 } });
+check('мусорная пересылка — 400', r.status === 400, `${r.status}`);
+r = await kira(`/chats/${actChat}/messages/${fwd1}`, { method: 'PATCH', body: JSON.stringify({ body: 'правлю чужие слова' }) });
+check('пересланное не правится — 403', r.status === 403, `${r.status}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

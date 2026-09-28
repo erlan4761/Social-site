@@ -3,6 +3,10 @@ import { db, nowIso } from '../db.js';
 import { requireAuth } from '../auth.js';
 import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { publicUrl } from '../media.js';
+import {
+  FWD_COLUMNS, assertEditable, chatKey, clearTyping, decorate, emojiOf, extraFields, forwardSource,
+  fwdJoin, isTyping, replyIdOf, setTyping,
+} from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
 import * as v from '../validate.js';
 
@@ -50,14 +54,16 @@ const member = (row, viewerId) => ({
 });
 
 const MESSAGE_SELECT = `
-  SELECT m.id, m.chat_id, m.body, m.created_at,
+  SELECT m.id, m.chat_id, m.body, m.created_at, m.reply_to_id, m.edited_at, m.fwd_user_id,
          u.id AS author_id, u.username AS author_username,
-         u.display_name AS author_display_name, u.avatar_path AS author_avatar_path
+         u.display_name AS author_display_name, u.avatar_path AS author_avatar_path,
+         ${FWD_COLUMNS}
   FROM chat_messages m
   JOIN users u ON u.id = m.author_id
+  ${fwdJoin('m')}
 `;
 
-/** Ожидает строку, выбранную через MESSAGE_SELECT. */
+/** Ожидает строку, выбранную через MESSAGE_SELECT. Цитата и реакции — в `decorate()`. */
 const serializeMessage = (row) => ({
   id: row.id,
   chatId: row.chat_id,
@@ -69,7 +75,24 @@ const serializeMessage = (row) => ({
     displayName: row.author_display_name,
     avatarUrl: publicUrl('avatar', row.author_avatar_path),
   },
+  ...extraFields(row),
 });
+
+/** «Тот же чат и не от заблокированного» — граница, внутри которой ищутся
+ *  цитаты: ответ на скрытую реплику показывает «сообщение недоступно». */
+const CHAT_SCOPE = `m.chat_id = :chatId AND ${blockPairSql('m.author_id')}`;
+
+const decorateChat = (messages, chatId, viewerId) =>
+  decorate('chat', messages, { viewerId, scope: CHAT_SCOPE, scopeParams: { chatId, viewerId } });
+
+/** Сообщение этого чата по id из пути, видимое смотрящему, или null. */
+function chatMessage(chatId, rawId, viewerId) {
+  const id = intParam(rawId);
+  if (!id) return null;
+  return db.prepare(`${MESSAGE_SELECT} WHERE m.id = :id AND ${CHAT_SCOPE}`).get({ id, chatId, viewerId }) ?? null;
+}
+
+const MESSAGE_NOT_FOUND = 'Сообщение не найдено';
 
 function findUserByName(name) {
   return db.prepare('SELECT id, username, display_name, avatar_path FROM users WHERE username = ?')
@@ -155,8 +178,11 @@ function lastVisibleMessage(chatId, viewerId) {
     WHERE m.chat_id = :chatId AND ${blockPairSql('m.author_id')}
     ORDER BY m.id DESC LIMIT 1
   `).get({ chatId, viewerId });
+  if (!row) return null;
 
-  return row ? serializeMessage(row) : null;
+  // Превью в списке: цитата и реакции там не показываются, запросы за ними не нужны.
+  const { replyToId, ...last } = serializeMessage(row);
+  return { ...last, replyTo: null, reactions: [] };
 }
 
 /* ─ Список и создание ──────────────────────────────────────────────────── */
@@ -333,24 +359,46 @@ router.get('/:id/messages', (req, res) => {
   const hasMore = rows.length > PAGE_SIZE;
   const page = rows.slice(0, PAGE_SIZE);
 
+  // Кто сейчас печатает — кроме себя и тех, с кем смотрящий в блокировке:
+  // их реплик он не видит, и «печатает…» от них было бы обещанием, которое
+  // никогда не сбудется.
+  const typing = chatMembers(chat.id)
+    .filter((u) => u.id !== me && isTyping(chatKey(chat.id), u.id) && !isBlockedPair(me, u.id))
+    .map((u) => ({ id: u.id, displayName: u.display_name }));
+
   res.json({
     chat: serializeChat(chat, me),
-    messages: page.map(serializeMessage).reverse(),
+    messages: decorateChat(page.map(serializeMessage).reverse(), chat.id, me),
     nextCursor: hasMore ? page.at(-1).id : null,
     readUpTo: othersReadUpTo(chat.id, me),
+    typing,
   });
 });
 
+/**
+ * Написать в чат: обычное сообщение, ответ (`replyTo` — сообщение этого же
+ * чата) или пересылка (`forward: {from: 'dm'|'chat', id}`).
+ */
 router.post('/:id/messages', (req, res, next) => {
   try {
     const me = req.user.id;
     const chat = memberChat(req.params.id, me);
     if (!chat) return res.status(404).json({ error: NOT_FOUND });
 
-    const body = v.str(req.body?.body, 'сообщение', { min: 1, max: MAX_BODY });
-    const info = db.prepare(
-      'INSERT INTO chat_messages (chat_id, author_id, body, created_at) VALUES (?, ?, ?, ?)',
-    ).run(chat.id, me, body, nowIso());
+    const forward = forwardSource(req.body?.forward, me);
+    const body = forward ? forward.body : v.str(req.body?.body, 'сообщение', { min: 1, max: MAX_BODY });
+
+    const replyTo = forward ? null : replyIdOf(req.body?.replyTo);
+    if (replyTo != null && !chatMessage(chat.id, replyTo, me)) {
+      return res.status(400).json({ error: 'Сообщение, на которое вы отвечаете, не найдено' });
+    }
+
+    const info = db.prepare(`
+      INSERT INTO chat_messages (chat_id, author_id, body, created_at, reply_to_id, fwd_user_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(chat.id, me, body, nowIso(), replyTo, forward?.fwdUserId ?? null);
+
+    clearTyping(chatKey(chat.id), me);
 
     // Событие каждому участнику, кроме автора. Блокировку и схлопывание по
     // чату notify() берёт на себя: на чат приходится максимум одно
@@ -362,10 +410,96 @@ router.post('/:id/messages', (req, res, next) => {
     }
 
     const row = db.prepare(`${MESSAGE_SELECT} WHERE m.id = ?`).get(Number(info.lastInsertRowid));
-    res.status(201).json({ message: serializeMessage(row) });
+    res.status(201).json({ message: decorateChat([serializeMessage(row)], chat.id, me)[0] });
   } catch (err) {
     next(err);
   }
+});
+
+/** «Печатает…» в чате. Ответ всегда одинаковый. */
+router.put('/:id/typing', (req, res) => {
+  const chat = memberChat(req.params.id, req.user.id);
+  if (!chat) return res.status(404).json({ error: NOT_FOUND });
+  setTyping(chatKey(chat.id), req.user.id);
+  res.json({ ok: true });
+});
+
+/** Правка своего сообщения — в течение 48 часов, как в ЛС. */
+router.patch('/:id/messages/:mid', (req, res, next) => {
+  try {
+    const me = req.user.id;
+    const chat = memberChat(req.params.id, me);
+    if (!chat) return res.status(404).json({ error: NOT_FOUND });
+
+    const msg = chatMessage(chat.id, req.params.mid, me);
+    if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
+    assertEditable(msg.author_id, msg.created_at, me);
+    if (msg.fwd_user_id != null) return res.status(403).json({ error: 'Пересланное сообщение изменить нельзя' });
+
+    const body = v.str(req.body?.body, 'сообщение', { min: 1, max: MAX_BODY });
+    if (body !== msg.body) {
+      db.prepare('UPDATE chat_messages SET body = ?, edited_at = ? WHERE id = ?').run(body, nowIso(), msg.id);
+    }
+
+    const row = db.prepare(`${MESSAGE_SELECT} WHERE m.id = ?`).get(msg.id);
+    res.json({ message: decorateChat([serializeMessage(row)], chat.id, me)[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Удалить у всех: автор — своё, владелец — любое в своём чате (как админ группы
+ * в Телеграме: без этого у владельца не было бы способа убрать спам). Строка
+ * стирается целиком, ответы на неё показывают «сообщение удалено».
+ */
+router.delete('/:id/messages/:mid', (req, res) => {
+  const me = req.user.id;
+  const chat = memberChat(req.params.id, me);
+  if (!chat) return res.status(404).json({ error: NOT_FOUND });
+
+  const msg = chatMessage(chat.id, req.params.mid, me);
+  if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
+  if (msg.author_id !== me && chat.owner_id !== me) {
+    return res.status(403).json({ error: 'Удалить можно только своё сообщение' });
+  }
+
+  db.prepare('DELETE FROM chat_messages WHERE id = ?').run(msg.id);
+  res.json({ ok: true });
+});
+
+/** Реакция: одна на человека, новая заменяет прежнюю. */
+router.put('/:id/messages/:mid/reaction', (req, res, next) => {
+  try {
+    const me = req.user.id;
+    const chat = memberChat(req.params.id, me);
+    if (!chat) return res.status(404).json({ error: NOT_FOUND });
+
+    const msg = chatMessage(chat.id, req.params.mid, me);
+    if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
+
+    const emoji = emojiOf(req.body?.emoji);
+    db.prepare(`
+      INSERT INTO chat_message_reactions (message_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT (message_id, user_id) DO UPDATE SET emoji = excluded.emoji, created_at = excluded.created_at
+    `).run(msg.id, me, emoji, nowIso());
+
+    res.json({ message: decorateChat([serializeMessage(msg)], chat.id, me)[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/:id/messages/:mid/reaction', (req, res) => {
+  const me = req.user.id;
+  const chat = memberChat(req.params.id, me);
+  if (!chat) return res.status(404).json({ error: NOT_FOUND });
+
+  const msg = chatMessage(chat.id, req.params.mid, me);
+  if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
+
+  db.prepare('DELETE FROM chat_message_reactions WHERE message_id = ? AND user_id = ?').run(msg.id, me);
+  res.json({ message: decorateChat([serializeMessage(msg)], chat.id, me)[0] });
 });
 
 /**

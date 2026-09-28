@@ -81,6 +81,17 @@ const blockLimit = rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 30
 app.put('/api/users/:username/block', blockLimit);
 app.delete('/api/users/:username/block', blockLimit);
 
+// Всё, что меняет переписку, кроме самой отправки: правки, удаления, реакции,
+// «печатает…», отметки прочтения. Потолок щедрый — «печатает…» уходит раз в
+// три секунды, прочтение — на каждое новое сообщение, — но скрипт, который
+// правит или реагирует без остановки, в него упрётся.
+const conversationLimit = rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 120 });
+for (const path of ['/api/messages/*splat', '/api/chats/*splat']) {
+  app.put(path, conversationLimit);
+  app.patch(path, conversationLimit);
+  app.delete(path, conversationLimit);
+}
+
 if (relaxed) console.warn('⚠  RELAX_RATE_LIMITS=1 — защита от перебора ослаблена. Только для тестов.');
 
 app.use('/api/auth', authRoutes);

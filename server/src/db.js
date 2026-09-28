@@ -188,6 +188,36 @@ db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)');
 // Когда человек последний раз что-то запрашивал у сервера — отсюда «в сети» и
 // «был(а) 5 минут назад» в переписке. Пишется в loadUser не чаще раза в минуту.
 ensureColumn('users', 'last_seen_at', 'TEXT');
+// Действия с сообщениями — одинаково для ЛС и групп (см. messageExtras.js).
+// reply_to_id без внешнего ключа намеренно: ответ переживает удаление того, на
+// что отвечал, и показывает «сообщение удалено», а не исчезает вместе с ним.
+// fwd_user_id — автор оригинала пересланного; ушёл из сети — подпись пропадает.
+for (const table of ['messages', 'chat_messages']) {
+  ensureColumn(table, 'reply_to_id', 'INTEGER');
+  ensureColumn(table, 'edited_at', 'TEXT');
+  ensureColumn(table, 'fwd_user_id', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+}
+
+// Реакция — одна на человека на сообщение, как у Телеграма без подписки:
+// новая заменяет старую. Первичный ключ держит это правило схемой.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS message_reactions (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji      TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (message_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS chat_message_reactions (
+    message_id INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji      TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (message_id, user_id)
+  );
+`);
+
 ensureColumn('posts', 'media_path', 'TEXT');
 ensureColumn('posts', 'media_type', 'TEXT');
 ensureColumn('posts', 'media_mime', 'TEXT');
