@@ -2952,6 +2952,7 @@ r = await signup(ph, signupTicket, userTel, 'Тел Телефонов');
 check('регистрация по номеру — 201 и сразу вход', r.status === 201 && r.body.user?.username === userTel && (await ph('/auth/me')).body.user?.username === userTel, JSON.stringify(r.body));
 r = await ph('/account');
 check('в настройках — номер, без пароля и без входа по логину', r.body.phone === phoneNew && r.body.hasPassword === false && r.body.passwordLogin === false && r.body.email === null, JSON.stringify(r.body));
+check('без галочки по номеру не находят и номер никому не виден', r.body.phoneFind === 'nobody' && r.body.phoneShow === 'nobody', JSON.stringify(r.body));
 r = await ph('/notifications');
 check('регистрация по номеру не шлёт «вход в аккаунт»', r.body.notifications?.length === 0, JSON.stringify(r.body.notifications));
 r = await signup(makeClient(), signupTicket, `tel2_${stamp}`);
@@ -3034,6 +3035,16 @@ r = await ph('/account', { method: 'DELETE', body: JSON.stringify({ code: delCod
 check('аккаунт по номеру удалён по коду', r.status === 200 && (await ph('/auth/me')).body.user === null, `${r.status}`);
 r = await oldie('/account/delete-code', { method: 'POST' });
 check('у аккаунта с паролем — удаление паролем, а не кодом', r.status === 400, `${r.status}`);
+
+// Галочка «находить меня по номеру» при регистрации.
+const phoneFindable = `+9965${tail}4`;
+const fin = makeClient();
+await start(fin, phoneFindable);
+r = await verify(fin, phoneFindable, lastCode(phoneFindable));
+r = await fin('/auth/phone/signup', { method: 'POST', body: JSON.stringify({ ticket: r.body.ticket, username: `fin_${stamp}`, displayName: 'Находимый', findable: true }) });
+check('регистрация с галочкой «находить по номеру»', r.status === 201 && (await fin('/account')).body.phoneFind === 'all', `${r.status}`);
+r = await oldie('/users/by-phone', { method: 'POST', body: JSON.stringify({ phones: [phoneFindable] }) });
+check('такого находят по номеру', r.body.users?.length === 1 && r.body.users[0].username === `fin_${stamp}`, JSON.stringify(r.body));
 fakeTwilio.close();
 
 console.log('\n— уведомление о новом входе —');
@@ -3067,6 +3078,96 @@ r = await home('/notifications');
 check('каждый вход — своё событие, новое сверху', r.body.notifications?.length === 2 && r.body.notifications[0].device === 'Firefox, Android', JSON.stringify(r.body.notifications?.map((x) => x.device)));
 r = await home('/account/sessions');
 check('все три сеанса видны в настройках', r.body.sessions?.length === 3, JSON.stringify(r.body.sessions?.length));
+
+console.log('\n— поиск по номеру и кому виден номер —');
+const fa = makeClient();
+const fb = makeClient();
+const userFa = `finda_${stamp}`;
+const userFb = `findb_${stamp}`;
+await legacySignUp(fa, userFa, 'Ищущий');
+await legacySignUp(fb, userFb, 'Искомая');
+// Номер привязывается кодом — это проверено выше; здесь его кладём прямо в базу.
+const phoneFb = `+9967${tail}1`;
+legacyDb.prepare('UPDATE users SET phone = ? WHERE username = ?').run(phoneFb, userFb);
+const byPhone = (client, phones) => client('/users/by-phone', { method: 'POST', body: JSON.stringify({ phones }) });
+const setPrivacy = (client, body) => client('/account/privacy', { method: 'PUT', body: JSON.stringify(body) });
+const found = (res) => (res.body.users ?? []).map((u) => u.username);
+
+r = await byPhone(guest, [phoneFb]);
+check('поиск по номеру — гостю 401', r.status === 401, `${r.status}`);
+r = await fa('/users/by-phone', { method: 'POST', body: JSON.stringify({ phones: phoneFb }) });
+check('номера не списком — 400', r.status === 400, `${r.status}`);
+r = await byPhone(fa, []);
+check('пустой список — 400', r.status === 400, `${r.status}`);
+r = await byPhone(fa, Array.from({ length: 51 }, (_, i) => `+99670000${String(i).padStart(4, '0')}`));
+check('больше 50 номеров за раз — 400', r.status === 400, `${r.status}`);
+r = await byPhone(fa, [996700000000]);
+check('номер числом, а не строкой — 400', r.status === 400, `${r.status}`);
+
+r = await fb('/account');
+check('по умолчанию: не находят и номер не виден', r.body.phoneFind === 'nobody' && r.body.phoneShow === 'nobody', JSON.stringify(r.body));
+r = await byPhone(fa, [phoneFb]);
+check('без разрешения — пусто, как будто номера нет', r.status === 200 && found(r).length === 0, JSON.stringify(r.body));
+
+r = await setPrivacy(fb, { phoneFind: 'friends' });
+check('неизвестное значение — 400', r.status === 400, `${r.status}`);
+r = await setPrivacy(fb, {});
+check('пустая настройка — 400', r.status === 400, `${r.status}`);
+await setPrivacy(fb, { lastSeen: 'follows' });
+r = await setPrivacy(fb, { phoneFind: 'all' });
+check('меняется только присланное', r.status === 200 && r.body.phoneFind === 'all' && r.body.lastSeen === 'follows' && r.body.phoneShow === 'nobody', JSON.stringify(r.body));
+await setPrivacy(fb, { lastSeen: 'all' });
+
+const pretty = `+996 (7${tail.slice(0, 2)}) ${tail.slice(2, 4)}-${tail.slice(4)}-1`;
+r = await byPhone(fa, ['не номер', pretty, phoneFb]);
+check('находит по номеру в любом написании, мусор пропускает, повтор схлопывает', found(r).join() === userFb, JSON.stringify(r.body));
+const hit = r.body.users?.[0];
+check('в ответе — номер в E.164 и подписка', hit?.phone === phoneFb && hit.followedByMe === false && hit.displayName === 'Искомая', JSON.stringify(hit));
+r = await byPhone(fb, [phoneFb]);
+check('себя по своему номеру не находит', found(r).length === 0, JSON.stringify(r.body));
+
+await setPrivacy(fb, { phoneFind: 'follows' });
+r = await byPhone(fa, [phoneFb]);
+check('«мои подписки»: чужому — пусто', found(r).length === 0, JSON.stringify(r.body));
+await fb(`/users/${userFa}/follow`, { method: 'PUT' });
+r = await byPhone(fa, [phoneFb]);
+check('«мои подписки»: тому, на кого подписана, — находит', found(r).join() === userFb, JSON.stringify(r.body));
+await fa(`/users/${userFb}/follow`, { method: 'PUT' });
+r = await byPhone(fa, [phoneFb]);
+check('подписка видна в ответе', r.body.users?.[0]?.followedByMe === true, JSON.stringify(r.body));
+
+// Номер в профиле.
+r = await fa(`/users/${userFb}`);
+check('номер в профиле по умолчанию скрыт', r.status === 200 && r.body.user.phone === null, JSON.stringify(r.body.user?.phone));
+r = await fb(`/users/${userFb}`);
+check('и в своём профиле не показан, раз никому не виден', r.body.user.phone === null, JSON.stringify(r.body.user?.phone));
+await setPrivacy(fb, { phoneShow: 'all' });
+r = await fa(`/users/${userFb}`);
+check('«все» — номер в профиле', r.body.user.phone === phoneFb, JSON.stringify(r.body.user?.phone));
+r = await guest(`/users/${userFb}`);
+check('гостю номер не виден никогда', r.status === 200 && r.body.user.phone === null, JSON.stringify(r.body.user?.phone));
+r = await fb(`/users/${userFb}`);
+check('свой номер в профиле — раз его видят другие', r.body.user.phone === phoneFb, JSON.stringify(r.body.user?.phone));
+await setPrivacy(fb, { phoneShow: 'follows' });
+r = await b(`/users/${userFb}`);
+check('«мои подписки»: чужому номер не виден', r.body.user.phone === null, JSON.stringify(r.body.user?.phone));
+r = await fa(`/users/${userFb}`);
+check('«мои подписки»: тому, на кого подписана, — виден', r.body.user.phone === phoneFb, JSON.stringify(r.body.user?.phone));
+r = await fb(`/users/${userFa}`);
+check('у кого номера нет — null', r.body.user.phone === null, JSON.stringify(r.body.user?.phone));
+
+// Блокировка сильнее любой настройки.
+await setPrivacy(fb, { phoneFind: 'all', phoneShow: 'all' });
+await fb(`/users/${userFa}/block`, { method: 'PUT' });
+r = await byPhone(fa, [phoneFb]);
+check('заблокированный не находит по номеру', found(r).length === 0, JSON.stringify(r.body));
+r = await fa(`/users/${userFb}`);
+check('и не видит номер в профиле', r.body.user.phone === null, JSON.stringify(r.body.user?.phone));
+r = await byPhone(fb, [phoneFb, `+9967${tail}9`]);
+check('незарегистрированный номер — просто пусто', r.status === 200 && found(r).length === 0, JSON.stringify(r.body));
+await fb(`/users/${userFa}/block`, { method: 'DELETE' });
+r = await byPhone(fa, [phoneFb]);
+check('после разблокировки — снова находит', found(r).join() === userFb, JSON.stringify(r.body));
 
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

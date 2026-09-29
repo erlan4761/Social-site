@@ -83,10 +83,12 @@ router.post('/signup', (req, res, next) => {
     }
     // Пароля нет (его можно задать потом как двухэтапную проверку), почты нет,
     // и вход по логину с паролем для такого аккаунта закрыт — только номер.
+    // Находиться по номеру — только если человек сам отметил это галочкой.
+    const findable = req.body?.findable === true ? 'all' : 'nobody';
     const info = db.prepare(`
-      INSERT INTO users (username, display_name, bio, email, password_hash, created_at, phone, password_login)
-      VALUES (?, ?, '', NULL, '', ?, ?, 0)
-    `).run(username, displayName, nowIso(), ticket.phone);
+      INSERT INTO users (username, display_name, bio, email, password_hash, created_at, phone, password_login, phone_find)
+      VALUES (?, ?, '', NULL, '', ?, ?, 0, ?)
+    `).run(username, displayName, nowIso(), ticket.phone, findable);
     dropTicket(ticket.token);
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
     // Первый вход нового аккаунта — не «вход с нового устройства»: других нет.

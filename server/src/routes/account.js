@@ -7,6 +7,7 @@ import { dropPrefs } from '../prefs.js';
 import { unpin } from '../pins.js';
 import { LAST_SEEN_OPTIONS } from '../presence.js';
 import { checkCode, hasPassword, normalizePhone, sendCode } from '../phone.js';
+import { PHONE_PRIVACY_OPTIONS } from '../phoneBook.js';
 import * as v from '../validate.js';
 
 /**
@@ -32,6 +33,8 @@ router.get('/', (req, res) => {
     hasPassword: hasPassword(row),
     passwordLogin: Boolean(row.password_login),
     lastSeen: row.last_seen_privacy,
+    phoneFind: row.phone_find,
+    phoneShow: row.phone_show,
     createdAt: row.created_at,
   });
 });
@@ -78,13 +81,29 @@ router.delete('/phone', (req, res) => {
   res.json({ phone: null });
 });
 
+/**
+ * Приватность: время захода и номер. Любое подмножество полей — меняется
+ * только присланное; неизвестное значение отклоняет запрос целиком.
+ */
+const PRIVACY_FIELDS = [
+  { key: 'lastSeen', column: 'last_seen_privacy', options: LAST_SEEN_OPTIONS, label: 'Кто видит время захода' },
+  { key: 'phoneFind', column: 'phone_find', options: PHONE_PRIVACY_OPTIONS, label: 'Кто найдёт по номеру' },
+  { key: 'phoneShow', column: 'phone_show', options: PHONE_PRIVACY_OPTIONS, label: 'Кто видит номер' },
+];
+
 router.put('/privacy', (req, res) => {
-  const lastSeen = req.body?.lastSeen;
-  if (!LAST_SEEN_OPTIONS.includes(lastSeen)) {
-    return res.status(400).json({ error: `«Кто видит время захода» — ${LAST_SEEN_OPTIONS.join(', ')}` });
+  const given = PRIVACY_FIELDS.filter((f) => req.body?.[f.key] !== undefined);
+  if (given.length === 0) return res.status(400).json({ error: 'Нечего менять' });
+  for (const f of given) {
+    if (!f.options.includes(req.body[f.key])) {
+      return res.status(400).json({ error: `«${f.label}» — ${f.options.join(', ')}` });
+    }
   }
-  db.prepare('UPDATE users SET last_seen_privacy = ? WHERE id = ?').run(lastSeen, req.user.id);
-  res.json({ lastSeen });
+  for (const f of given) {
+    db.prepare(`UPDATE users SET ${f.column} = ? WHERE id = ?`).run(req.body[f.key], req.user.id);
+  }
+  const row = me(req);
+  res.json({ lastSeen: row.last_seen_privacy, phoneFind: row.phone_find, phoneShow: row.phone_show });
 });
 
 /** Пароль — по текущему, а не по «забыли»: сеанс мог остаться открытым на чужом компьютере. */

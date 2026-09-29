@@ -3,7 +3,7 @@
  * single-process deployment; swap for a shared store if this ever runs on more
  * than one instance.
  */
-export function rateLimit({ windowMs = 60_000, max = 20 } = {}) {
+export function rateLimit({ windowMs = 60_000, max = 20, cost = () => 1 } = {}) {
   const hits = new Map();
 
   setInterval(() => {
@@ -21,7 +21,9 @@ export function rateLimit({ windowMs = 60_000, max = 20 } = {}) {
       hits.set(key, entry);
     }
 
-    if (++entry.count > max) {
+    // `cost` — сколько «стоит» запрос: у поиска по номерам это число номеров.
+    entry.count += cost(req);
+    if (entry.count > max) {
       res.set('Retry-After', String(Math.ceil((entry.resetAt - now) / 1000)));
       return res.status(429).json({ error: 'Слишком много попыток. Попробуйте позже.' });
     }

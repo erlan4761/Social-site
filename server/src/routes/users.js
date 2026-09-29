@@ -5,6 +5,7 @@ import { requireAuth, publicUser } from '../auth.js';
 import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { deleteUpload, publicUrl, storeUpload } from '../media.js';
 import { dropNotification, notify } from '../notifications.js';
+import { findByPhones, LOOKUP_MAX, visiblePhone } from '../phoneBook.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -110,6 +111,29 @@ router.get('/search', (req, res) => {
   res.json({ users: scored.map(({ row }) => person(row)) });
 });
 
+/**
+ * Найти людей по номерам — набранному в поиске или выбранным из контактов.
+ * Только целиком и только тех, кто разрешил (см. phoneBook.js). В ответе —
+ * номер, по которому человек нашёлся: его прислал сам спрашивающий, и без него
+ * не сопоставить найденного с контактом.
+ */
+router.post('/by-phone', requireAuth, (req, res) => {
+  const phones = req.body?.phones;
+  if (!Array.isArray(phones) || phones.length === 0 || phones.length > LOOKUP_MAX || !phones.every((x) => typeof x === 'string')) {
+    return res.status(400).json({ error: `Номера — списком строк, от 1 до ${LOOKUP_MAX}` });
+  }
+  const followed = new Set(
+    db.prepare('SELECT followee_id AS id FROM follows WHERE follower_id = ?').all(req.user.id).map((r) => r.id),
+  );
+  res.json({
+    users: findByPhones(req.user.id, phones).map((row) => ({
+      ...person(row),
+      phone: row.phone,
+      followedByMe: followed.has(row.id),
+    })),
+  });
+});
+
 // Тоже перед /:username — иначе Express принял бы "me" за чьё-то имя.
 router.get('/me/blocks', requireAuth, (req, res) => {
   const rows = db.prepare(`
@@ -201,6 +225,8 @@ router.get('/:username', (req, res) => {
       // «Разблокировать», «он меня заблокировал» — плашка без кнопки.
       blockedByMe,
       blocksMe,
+      // Номер — только если владелец показывает его смотрящему (см. phoneBook.js).
+      phone: visiblePhone(user, viewerId),
     },
   });
 });
