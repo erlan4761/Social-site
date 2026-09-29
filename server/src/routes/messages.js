@@ -11,6 +11,7 @@ import {
 import { markNotificationsRead, notify } from '../notifications.js';
 import { dmUnreadTotal, prefFor, prefsOf } from '../prefs.js';
 import { dmScope, pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
+import { clearDraft, draftsOf } from '../drafts.js';
 import { presenceFor } from '../presence.js';
 import * as v from '../validate.js';
 
@@ -120,6 +121,7 @@ router.get('/', (req, res) => {
   `).all({ me, viewerId: me });
 
   const prefs = prefsOf(me, 'dm');
+  const drafts = draftsOf(me, 'dm');
   res.json({
     // История не удаляется и диалог не исчезает из списка: блокировка — это
     // «дальше не пишем», а не «этого разговора не было». Флаг нужен клиенту,
@@ -135,6 +137,7 @@ router.get('/', (req, res) => {
         lastMessage: { ...last, replyTo: null, reactions: [] },
         pinnedAt: pref.pinnedAt,
         muted: pref.muted,
+        draft: drafts.get(row.id) ?? null,
       };
     }),
     unreadTotal: unreadTotal(me),
@@ -222,6 +225,8 @@ router.post('/:username', attachmentUpload.single('file'), async (req, res, next
     `).run(me, other.id, body, nowIso(), saved ? nowIso() : null, replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, sticker ?? forward?.sticker ?? null, ...attachmentValues(attachment));
 
     clearTyping(dmKey(me, other.id), me);
+    // Отправленный текст — больше не черновик. Стикер и пересылка его не трогают.
+    if (!sticker && !forward) clearDraft(me, 'dm', other.id);
 
     // Одно событие на диалог: notify() убирает предыдущее непрочитанное
     // уведомление от того же собеседника, иначе лента событий стала бы

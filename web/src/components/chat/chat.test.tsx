@@ -1,10 +1,11 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import type { Poll } from '../../api';
+import { api, type Poll } from '../../api';
 import { Composer } from './Composer';
 import { MessageText } from './MessageText';
 import { PollCard } from './PollCard';
+import { DRAFT_SAVE_MS } from './draft';
 
 /** Поведение деталей переписки — как его видит человек: кнопки, подсказки, ссылки. */
 
@@ -96,5 +97,37 @@ describe('упоминания', () => {
     fireEvent.keyDown(field, { key: 'Enter' });
     expect(field.value).toBe('Привет, @nina ');
     expect(screen.queryByRole('option')).toBeNull();
+  });
+});
+
+describe('черновик', () => {
+  it('подставляется при открытии, сохраняется по паузе, после отправки — пуст', async () => {
+    vi.useFakeTimers();
+    const load = vi.spyOn(api, 'draft').mockResolvedValue({ draft: { body: 'Недописанное', updatedAt: '' } });
+    const put = vi.spyOn(api, 'saveDraft').mockResolvedValue({ draft: null });
+    const onSend = vi.fn().mockResolvedValue(true);
+    try {
+      render(<Composer placeholder="Сообщение" onSend={onSend} draft={{ kind: 'dm', target: 'nina' }} />);
+      await act(async () => undefined);
+      const field = screen.getByPlaceholderText('Сообщение') as HTMLTextAreaElement;
+      expect(load).toHaveBeenCalledWith('dm', 'nina');
+      expect(field.value).toBe('Недописанное');
+
+      fireEvent.change(field, { target: { value: 'Недописанное, но уже больше' } });
+      await act(async () => vi.advanceTimersByTime(DRAFT_SAVE_MS - 100));
+      expect(put).not.toHaveBeenCalled();
+      await act(async () => vi.advanceTimersByTime(200));
+      expect(put).toHaveBeenLastCalledWith('dm', 'nina', 'Недописанное, но уже больше');
+
+      fireEvent.keyDown(field, { key: 'Enter' });
+      await act(async () => undefined);
+      expect(onSend).toHaveBeenCalledWith('Недописанное, но уже больше');
+      expect(put).toHaveBeenLastCalledWith('dm', 'nina', '');
+      expect(field.value).toBe('');
+    } finally {
+      load.mockRestore();
+      put.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });

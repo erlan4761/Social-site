@@ -39,7 +39,11 @@ export const dmUnreadTotal = (userId: number) =>
   db.messages.filter((m) => m.toId === userId && !m.readAt && !mutedFor(userId, 'dm', m.fromId)).length;
 
 export const dropPrefs = (kind: PrefKind, targetId: number, userId?: number) => {
-  db.prefs = db.prefs.filter((x) => !(x.kind === kind && x.targetId === targetId && (userId == null || x.userId === userId)));
+  const gone = (x: { kind: PrefKind; targetId: number; userId: number }) =>
+    x.kind === kind && x.targetId === targetId && (userId == null || x.userId === userId);
+  db.prefs = db.prefs.filter((x) => !gone(x));
+  // Черновики исчезают вместе с настройками: цель пропала — отправлять их некуда.
+  db.drafts = db.drafts.filter((x) => !gone(x));
 };
 
 export function notify(input: NotifyInput) {

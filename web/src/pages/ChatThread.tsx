@@ -592,6 +592,8 @@ function ChatView({ idParam }: { idParam: string }) {
 
       <ScheduledBar kind="chat" target={chatId} version={scheduledVersion} onSent={refreshList} />
       <Composer
+        key={`chat:${chatId}`}
+        draft={{ kind: 'chat', target: chatId }}
         placeholder="Сообщение в чат"
         onSchedule={async (text, at) => {
           await api.schedule('chat', chatId, text, at.toISOString());

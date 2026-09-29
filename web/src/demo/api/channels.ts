@@ -4,6 +4,7 @@ import { requireMe, blockedPair, hidden } from '../model/people';
 import { EDIT_WINDOW_MS, attachmentFrom, setReaction, findHits } from '../model/messages';
 import { pinnedOf, setPin, pinPreview } from '../model/folders';
 import { prefFields, dropPrefs } from '../model/notifications';
+import { clearDraft, draftOf } from '../model/drafts';
 import { pollOf, readPoll, addPoll } from '../model/polls';
 import { CHANNEL_HANDLE_RE, channelBy, requireChannel, requireOwner, subOf, channelUnread, toChannel, toChannelPost, postsOf, requirePost, toChannelComment } from '../model/channels';
 
@@ -22,6 +23,7 @@ export const channelsApi = {
         return {
           ...toChannel(c), unread: channelUnread(s), lastPost: last ? toChannelPost(last) : null,
           ...prefFields(u.id, 'channel', c.id),
+          draft: draftOf(u.id, 'channel', c.id),
         };
       })
       .sort((a, b) => (b.lastPost?.createdAt ?? b.createdAt).localeCompare(a.lastPost?.createdAt ?? a.createdAt));
@@ -133,6 +135,7 @@ export const channelsApi = {
       id: id(), channelId: c.id, authorId: u.id, body, createdAt: new Date().toISOString(), editedAt: null, attachment,
     };
     db.channelPosts.push(post);
+    clearDraft(u.id, 'channel', c.id);
     const s = subOf(c.id, u.id);
     if (s) s.lastReadId = post.id;
     return tick({ post: toChannelPost(post) });

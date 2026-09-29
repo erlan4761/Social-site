@@ -15,6 +15,7 @@ import { presenceFor } from '../presence.js';
 import { saveMentions, unreadMentions } from '../mentions.js';
 import { createPoll, hasPoll, readPoll, withPolls } from '../polls.js';
 import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
+import { clearDraft, draftsOf, dropDrafts } from '../drafts.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -212,6 +213,7 @@ router.get('/', (req, res) => {
   `).all(me);
 
   const prefs = prefsOf(me, 'chat');
+  const drafts = draftsOf(me, 'chat');
   const chats = rows.map((row) => {
     const lastMessage = lastVisibleMessage(row.id, me);
     const pref = prefFor(prefs, row.id);
@@ -223,6 +225,7 @@ router.get('/', (req, res) => {
       readUpTo: othersReadUpTo(row.id, me),
       pinnedAt: pref.pinnedAt,
       muted: pref.muted,
+      draft: drafts.get(row.id) ?? null,
       // Только для сортировки, наружу не уходит: пустой чат должен стоять по
       // времени создания, иначе новый чат оказался бы в самом низу списка.
       sortKey: lastMessage ? lastMessage.createdAt : row.created_at,
@@ -354,6 +357,7 @@ router.delete('/:id', (req, res) => {
   files.forEach(dropAttachment);
   unpin('chat', chat.id);
   dropPrefs({ kind: 'chat', targetId: chat.id });
+  dropDrafts('chat', chat.id);
   res.json({ ok: true });
 });
 
@@ -439,6 +443,7 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
 
     if (poll) createPoll('chat', Number(info.lastInsertRowid), poll);
     clearTyping(chatKey(chat.id), me);
+    if (!poll && !sticker && !forward) clearDraft(me, 'chat', chat.id);
 
     // Событие каждому участнику, кроме автора. Блокировку и схлопывание по
     // чату notify() берёт на себя: на чат приходится максимум одно
@@ -685,6 +690,7 @@ router.delete('/:id/members/:username', (req, res, next) => {
       db.prepare('DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?').run(chat.id, target.id);
       // Закреплённый у ушедшего чат не должен занимать место в его лимите.
       dropPrefs({ userId: target.id, kind: 'chat', targetId: chat.id });
+      clearDraft(target.id, 'chat', chat.id);
 
       // Ушедший не должен остаться с непрочитанными событиями о чате, который
       // теперь отвечает ему 404: это была бы битая ссылка в ленте событий.

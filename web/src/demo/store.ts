@@ -111,6 +111,9 @@ export const NO_EXTRAS: DbExtras = { replyToId: null, editedAt: null, fwdUserId:
 export type DbChatMessage = DbExtras & { id: number; chatId: number; authorId: number; body: string; createdAt: string };
 
 /** Настройки чатов в списке — как таблица chat_prefs на сервере. */
+/** Черновик — как строка таблицы drafts. */
+export type DbDraft = { userId: number; kind: PrefKind; targetId: number; body: string; updatedAt: string };
+
 export type DbPref = { userId: number; kind: PrefKind; targetId: number; pinnedAt: string | null; muted: boolean };
 
 /** Закреплённое сообщение — одно на переписку, как pinned_messages на сервере. */
@@ -161,6 +164,7 @@ export const db = {
   channelComments: [] as DbChannelComment[],
   /** Настройки чатов в списке — как таблица chat_prefs на сервере. */
   prefs: [] as DbPref[],
+  drafts: [] as DbDraft[],
   /** Закреплённое сообщение — одно на переписку, как pinned_messages. */
   pins: [] as DbPin[],
   folders: [] as DbFolder[],

@@ -7,6 +7,7 @@ import { ScheduleDialog } from '../Scheduled';
 import { StickerPicker } from '../StickerPicker';
 import { fileSize } from './format';
 import { VideoNotePreview } from './attachments';
+import { useDraft, type DraftTarget } from './draft';
 import { mentionQuery, fold } from './MessageText';
 
 /* ─ Поле ввода ──────────────────────────────────────────────────────────
@@ -57,6 +58,8 @@ type ComposerProps = {
   onSchedule?: (text: string, sendAt: Date) => Promise<void>;
   /** Отправить стикер — кнопка со смайликом у поля ввода. */
   onSendSticker?: (id: string) => Promise<boolean>;
+  /** Черновик этого чата на сервере. Родитель даёт полю `key` по чату. */
+  draft?: DraftTarget;
 };
 
 export function Composer({
@@ -72,6 +75,7 @@ export function Composer({
   onCreatePoll,
   onSchedule,
   onSendSticker,
+  draft,
 }: ComposerProps) {
   const [scheduling, setScheduling] = useState<string | null>(null);
   const [stickersOpen, setStickersOpen] = useState(false);
@@ -91,6 +95,7 @@ export function Composer({
   const left = LIMIT - text.length;
   const ready = (text.trim().length > 0 || pending != null) && left >= 0 && !sending;
   const attachable = Boolean(onSendAttachment) && !editing;
+  const drafts = useDraft(draft, text, setText, editing);
 
   const voice = useRecorder((rec) => {
     if (!onSendAttachment) return;
@@ -102,17 +107,19 @@ export function Composer({
     ).finally(() => setSending(false));
   });
 
-  // Вход в правку подставляет текст сообщения, выход из неё — очищает поле:
-  // иначе после «Отмена» в поле остался бы старый текст, похожий на черновик.
+  // Вход в правку подставляет текст сообщения, выход из неё возвращает
+  // черновик (или пустое поле): иначе после «Отмена» в поле остался бы старый
+  // текст сообщения, похожий на черновик.
   const modeKey = mode ? `${mode.kind}:${mode.id}` : '';
   const editBody = mode?.kind === 'edit' ? mode.body : null;
   const wasEditing = useRef(false);
   useEffect(() => {
     if (editBody != null) {
+      if (!wasEditing.current) drafts.flush();
       setText(editBody);
       wasEditing.current = true;
     } else if (wasEditing.current) {
-      setText('');
+      setText(drafts.body());
       wasEditing.current = false;
     }
     if (modeKey) field.current?.focus();
@@ -150,7 +157,13 @@ export function Composer({
         : await onSend(trimmed);
     setSending(false);
     if (ok) {
-      setText('');
+      if (editing) {
+        // Правка сохранена — в поле возвращается то, что было до неё.
+        setText(drafts.body());
+      } else {
+        drafts.clear();
+        setText('');
+      }
       setPending(null);
       wasEditing.current = false;
     }
