@@ -211,7 +211,7 @@ function ThreadView({ username }: { username: string }) {
             kind: 'reply',
             id: msg.id,
             who: msg.fromId === user?.id ? (user?.displayName ?? '') : other.displayName,
-            body: previewText(msg.body, msg.attachment),
+            body: previewText(msg.body, msg.attachment, msg.sticker),
           });
           break;
         case 'edit':
@@ -272,7 +272,8 @@ function ThreadView({ username }: { username: string }) {
       replyTo: m.replyTo,
       reactions: m.reactions,
       attachment: m.attachment,
-      canEdit: mine && !m.forwardedFrom && editable(m.createdAt),
+      sticker: m.sticker,
+      canEdit: mine && !m.forwardedFrom && !m.sticker && editable(m.createdAt),
       canDelete: mine,
     };
   });
@@ -402,6 +403,19 @@ function ThreadView({ username }: { username: string }) {
             }}
             onSend={send}
             onSendAttachment={sendAttachment}
+            onSendSticker={async (sticker) => {
+              setError(null);
+              try {
+                const res = await api.sendSticker(username, sticker);
+                edits.current += 1;
+                setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
+                refreshList();
+                return true;
+              } catch (err) {
+                setError(err instanceof ApiError ? err.message : 'Не удалось отправить стикер');
+                return false;
+              }
+            }}
             mode={mode}
             onCancelMode={() => setMode(null)}
             onEditLast={editLast}
@@ -414,7 +428,7 @@ function ThreadView({ username }: { username: string }) {
       {forwarding && (
         <ForwardDialog
           source={{ from: 'dm', id: forwarding.id }}
-          preview={previewText(forwarding.body, forwarding.attachment)}
+          preview={previewText(forwarding.body, forwarding.attachment, forwarding.sticker)}
           onClose={() => setForwarding(null)}
         />
       )}

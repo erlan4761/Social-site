@@ -1166,6 +1166,89 @@ a.pane-who:hover { background: var(--surface-2); }
 
 .composer-video { align-self: flex-end; margin-bottom: 0.125rem; }
 
+/* ─ Стикеры ──────────────────────────────────────────────────────────
+   Стикер стоит без пузыря, как «кружок»: картинка и время плашкой поверх
+   нижнего угла. Панель выбора — над полем ввода, в потоке: вкладки наборов
+   и сетка, по щелчку стикер сразу уходит. */
+.bubble.has-sticker { background: none; box-shadow: none; padding: 0; }
+.bubble.has-sticker .sticker-art { display: block; }
+.bubble.has-sticker .bubble-author,
+.bubble.has-sticker .bubble-forwarded,
+.bubble.has-sticker .bubble-quote { margin-bottom: var(--s-1); }
+
+.bubble.has-sticker .bubble-meta {
+  right: 0.25rem;
+  bottom: 0.25rem;
+  padding: 0.125rem 0.4375rem;
+  border-radius: var(--r-full);
+  background: rgb(0 0 0 / 0.45);
+  color: #fff;
+}
+
+.bubble.has-sticker .bubble-meta .ticks { color: #fff; }
+.bubble.has-sticker .bubble-foot { display: none; }
+.bubble.has-sticker .reactions { padding-right: 0; }
+
+.composer-sticker { align-self: flex-end; margin-bottom: 0.125rem; }
+
+.sticker-picker { border-bottom: 1px solid var(--line); background: var(--surface); }
+
+.sticker-tabs {
+  display: flex;
+  gap: var(--s-1);
+  padding: var(--s-2) var(--s-3) 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sticker-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex: none;
+  padding: 0.25rem 0.625rem 0.25rem 0.25rem;
+  border: 1px solid transparent;
+  border-radius: var(--r-full);
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--t-meta);
+  cursor: pointer;
+}
+
+.sticker-tab:hover { background: var(--surface-2); }
+.sticker-tab.on { border-color: var(--accent); color: var(--accent); background: var(--accent-tint); }
+
+.sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(4.75rem, 1fr));
+  gap: var(--s-1);
+  max-height: 13.5rem;
+  overflow-y: auto;
+  padding: var(--s-2) var(--s-3) var(--s-3);
+}
+
+.sticker-cell {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
+}
+
+.sticker-cell:hover:not(:disabled),
+.sticker-cell:focus-visible { background: var(--surface-2); transform: scale(1.06); }
+.sticker-cell svg { width: 100%; height: auto; max-width: 4.5rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sticker-cell { transition: none; }
+  .sticker-cell:hover:not(:disabled),
+  .sticker-cell:focus-visible { transform: none; }
+}
+
 /* Полоса над полем: «ответ на …» или «редактирование». */
 /* ─ Упоминания ───────────────────────────────────────────────────────
    @логин в тексте — ссылка на профиль цветом акцента; своё имя — плашкой,

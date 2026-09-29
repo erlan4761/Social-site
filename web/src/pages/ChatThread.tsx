@@ -231,7 +231,7 @@ function ChatView({ idParam }: { idParam: string }) {
     try {
       switch (action.type) {
         case 'reply':
-          setMode({ kind: 'reply', id: msg.id, who: msg.author.displayName, body: previewText(msg.body, msg.attachment) });
+          setMode({ kind: 'reply', id: msg.id, who: msg.author.displayName, body: previewText(msg.body, msg.attachment, msg.sticker) });
           break;
         case 'edit':
           setMode({ kind: 'edit', id: msg.id, body: msg.body });
@@ -385,8 +385,9 @@ function ChatView({ idParam }: { idParam: string }) {
       reactions: m.reactions,
       attachment: m.attachment,
       poll: m.poll,
-      // Опрос не правится: за него уже голосуют.
-      canEdit: mine && !m.forwardedFrom && !m.poll && editable(m.createdAt),
+      sticker: m.sticker,
+      // Опрос и стикер не правятся.
+      canEdit: mine && !m.forwardedFrom && !m.poll && !m.sticker && editable(m.createdAt),
       // Владелец чата удаляет любое сообщение — как админ группы.
       canDelete: mine || Boolean(chat?.iAmOwner),
     };
@@ -585,6 +586,19 @@ function ChatView({ idParam }: { idParam: string }) {
         }}
         onSend={send}
         onSendAttachment={sendAttachment}
+        onSendSticker={async (sticker) => {
+          setError(null);
+          try {
+            const res = await api.sendChatSticker(chatId, sticker);
+            edits.current += 1;
+            setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
+            refreshList();
+            return true;
+          } catch (err) {
+            setError(err instanceof ApiError ? err.message : 'Не удалось отправить стикер');
+            return false;
+          }
+        }}
         mode={mode}
         onCancelMode={() => setMode(null)}
         onEditLast={editLast}
@@ -610,7 +624,7 @@ function ChatView({ idParam }: { idParam: string }) {
       {forwarding && (
         <ForwardDialog
           source={{ from: 'chat', id: forwarding.id }}
-          preview={previewText(forwarding.body, forwarding.attachment)}
+          preview={previewText(forwarding.body, forwarding.attachment, forwarding.sticker)}
           onClose={() => setForwarding(null)}
         />
       )}

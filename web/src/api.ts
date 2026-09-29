@@ -125,6 +125,8 @@ function attachmentForm(input: AttachmentInput) {
 /** Общее у сообщений ЛС и групп: правка, пересылка, ответ, реакции, вложение. */
 export type MessageExtras = {
   attachment: Attachment | null;
+  /** Стикер из встроенного набора («plenka/hi») — у ЛС и групп; тогда текста нет. */
+  sticker?: string | null;
   editedAt: string | null;
   forwardedFrom: ForwardedFrom | null;
   replyTo: Quote | null;
@@ -669,6 +671,14 @@ const realApi = {
   // ─ Каналы ───────────────────────────────────────────────────────────────
 
   channels: () => request<{ channels: ChannelSummary[]; unreadTotal: number }>('/channels'),
+
+  // ─ Стикеры ────────────────────────────────────────────────────────────
+
+  sendSticker: (username: string, sticker: string) =>
+    request<{ message: Message }>(`/messages/${encodeURIComponent(username)}`, { method: 'POST', body: body({ sticker }) }),
+
+  sendChatSticker: (chatId: number, sticker: string) =>
+    request<{ message: ChatMessage }>(`/chats/${chatId}/messages`, { method: 'POST', body: body({ sticker }) }),
 
   // ─ Отложенные ──────────────────────────────────────────────────────────
 

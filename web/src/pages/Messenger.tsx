@@ -548,7 +548,7 @@ function DmRow({ c, meId }: { c: Conversation; meId?: number }) {
         <span className="dialog-foot">
           <span className={c.unread > 0 ? 'dialog-last unread' : 'dialog-last'}>
             {mine && <span className="dialog-you">Вы: </span>}
-            {previewText(c.lastMessage.body, c.lastMessage.attachment)}
+            {previewText(c.lastMessage.body, c.lastMessage.attachment, c.lastMessage.sticker)}
           </span>
           <RowTail unread={c.unread} muted={c.muted} pinned={Boolean(c.pinnedAt)} />
         </span>
@@ -580,7 +580,7 @@ function ChatRow({ c, meId }: { c: ChatSummary; meId?: number }) {
             {last ? (
               <>
                 <span className="dialog-you">{mine ? 'Вы: ' : `${last.author.displayName}: `}</span>
-                {last.poll ? `Опрос: ${last.body}` : previewText(last.body, last.attachment)}
+                {last.poll ? `Опрос: ${last.body}` : previewText(last.body, last.attachment, last.sticker)}
               </>
             ) : (
               `${c.memberCount} ${plural(c.memberCount, 'участник', 'участника', 'участников')}, сообщений пока нет`

@@ -15,6 +15,7 @@ import type {
   LastSeenPrivacy, NotificationKind, Page, Person, PinnedPreview, Poll, PollInput, PrefKind, Scheduled, ScheduledKind, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
 } from '../api';
 import { ApiError } from '../api';
+import { STICKER_PACKS } from '../stickers';
 
 type DbUser = {
   id: number;
@@ -52,6 +53,8 @@ type DbExtras = {
   /** Переслано из канала — подпись ведёт на канал, а не на человека. */
   fwdChannelId: number | null;
   attachment: Attachment | null;
+  /** Стикер из встроенного набора — тогда текста нет. */
+  sticker?: string | null;
 };
 
 type DbChannel = { id: number; handle: string; title: string; description: string; ownerId: number; createdAt: string };
@@ -399,6 +402,8 @@ function seed() {
   const weekend = dm(demo, marina, 'Тогда схожу ещё раз. В выходные?', 84);
   // Ответ с цитатой и реакция — чтобы в витрине всё это было видно сразу.
   dm(marina, demo, 'Давай в субботу до обеда, пока пусто.', 82, true, weekend);
+  const hi = dm(marina, demo, '', 81.5);
+  hi.sticker = 'plenka/yay';
   const hum = hummedVoice(6);
   const voice = dm(marina, demo, '', 81);
   voice.attachment = { url: hum.url, kind: 'voice', mime: 'audio/wav', name: null, size: null, duration: 6, wave: hum.wave };
@@ -742,13 +747,13 @@ function reactionsOf(list: DbReaction[], messageId: number): Reaction[] {
 /** Цитата: чего нет среди видимых сообщений той же переписки — «удалено». */
 function quoteOf(
   replyToId: number | null,
-  visible: { id: number; body: string; authorId: number; attachment: Attachment | null }[],
+  visible: { id: number; body: string; authorId: number; attachment: Attachment | null; sticker?: string | null }[],
 ): Quote | null {
   if (replyToId == null) return null;
   const m = visible.find((x) => x.id === replyToId);
   if (!m) return { id: replyToId, deleted: true };
   const a = byId(m.authorId)!;
-  const text = m.body || attachmentLabelOf(m.attachment);
+  const text = m.body || (m.sticker ? 'Стикер' : attachmentLabelOf(m.attachment));
   return {
     id: m.id,
     author: { id: a.id, displayName: a.displayName },
@@ -817,9 +822,10 @@ const toMessage = (m: DbMessage): Message => ({
   id: m.id, body: m.body, createdAt: m.createdAt, fromId: m.fromId, toId: m.toId, readAt: m.readAt,
   editedAt: m.editedAt,
   forwardedFrom: forwardedOf(m),
-  replyTo: quoteOf(m.replyToId, pairOf(m).map((x) => ({ id: x.id, body: x.body, authorId: x.fromId, attachment: x.attachment }))),
+  replyTo: quoteOf(m.replyToId, pairOf(m).map((x) => ({ id: x.id, body: x.body, authorId: x.fromId, attachment: x.attachment, sticker: x.sticker }))),
   reactions: reactionsOf(dmReactions, m.id),
   attachment: m.attachment,
+  sticker: m.sticker ?? null,
 });
 
 /** Правка: своё, не пересланное, в первые двое суток — те же правила, что на сервере. */
@@ -994,8 +1000,8 @@ const isTyping = (key: string, userId: number) => (typingUntil.get(`${key}|${use
 /** Первоисточник: пересланное пересланного указывает туда же, куда оригинал. */
 const origin = (m: DbExtras & { body: string }, author: number) =>
   m.fwdChannelId != null
-    ? { body: m.body, fwdUserId: null, fwdChannelId: m.fwdChannelId, attachment: m.attachment }
-    : { body: m.body, fwdUserId: m.fwdUserId ?? author, fwdChannelId: null, attachment: m.attachment };
+    ? { body: m.body, fwdUserId: null, fwdChannelId: m.fwdChannelId, attachment: m.attachment, sticker: m.sticker ?? null }
+    : { body: m.body, fwdUserId: m.fwdUserId ?? author, fwdChannelId: null, attachment: m.attachment, sticker: m.sticker ?? null };
 
 /** Источник пересылки глазами пересылающего; пересланное указывает на первоисточник. */
 function forwardSource(source: ForwardRef, u: DbUser) {
@@ -1008,7 +1014,7 @@ function forwardSource(source: ForwardRef, u: DbUser) {
     const post = channelPosts.find((x) => x.id === source.id);
     if (!post) fail(404, 'Сообщение для пересылки не найдено');
     if (pollOf('channel', post!.id)) fail(400, 'Опрос переслать нельзя');
-    return { body: post!.body, fwdUserId: null, fwdChannelId: post!.channelId, attachment: post!.attachment };
+    return { body: post!.body, fwdUserId: null, fwdChannelId: post!.channelId, attachment: post!.attachment, sticker: null };
   }
   const m = chatMessages.find((x) => x.id === source.id && memberRow(x.chatId, u.id) && !hidden(x.authorId));
   if (!m) fail(404, 'Сообщение для пересылки не найдено');
@@ -1215,6 +1221,9 @@ const visibleChatMessages = (chatId: number) =>
     .filter((m) => m.chatId === chatId && !hidden(m.authorId))
     .sort((a, b) => a.id - b.id);
 
+const KNOWN_STICKERS = new Set(STICKER_PACKS.flatMap((p) => p.stickers.map((s) => s.id)));
+const readSticker = (id: string) => (KNOWN_STICKERS.has(id) ? id : fail(400, 'Такого стикера нет'));
+
 // ─ Отложенные ───────────────────────────────────────────────────────────────
 
 const toScheduled = ({ userId: _u, targetId: _t, ...s }: DbScheduled): Scheduled => ({ ...s });
@@ -1349,6 +1358,7 @@ const toChatMessage = (m: DbChatMessage): ChatMessage => ({
   replyTo: quoteOf(m.replyToId, visibleChatMessages(m.chatId)),
   reactions: reactionsOf(chatReactions, m.id),
   attachment: m.attachment,
+  sticker: m.sticker ?? null,
 });
 
 /** Сообщение чата, видимое смотрящему, или 404. */
@@ -1826,7 +1836,7 @@ export const mockApi = rejectInsteadOfThrow({
     });
   },
 
-  sendMessage: (username: string, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput) => {
+  sendMessage: (username: string, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput, sticker?: string) => {
     const u = requireMe()!;
     const other = byName(username);
     if (!other) fail(404, 'Пользователь не найден');
@@ -1839,7 +1849,8 @@ export const mockApi = rejectInsteadOfThrow({
     const src = forward ? forwardSource(forward, u) : null;
     const body = src ? src.body : text.trim();
     const attachment = src ? src.attachment : file ? attachmentFrom(file) : null;
-    if (!body && !attachment) fail(400, '«сообщение»: минимум 1 символов');
+    const stick = sticker ? readSticker(sticker) : src?.sticker ?? null;
+    if (!body && !attachment && !stick) fail(400, '«сообщение»: минимум 1 символов');
     if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
     if (!src && replyTo != null && !pairThread(u.id, other!.id).some((m) => m.id === replyTo)) {
       fail(400, 'Сообщение, на которое вы отвечаете, не найдено');
@@ -1849,6 +1860,7 @@ export const mockApi = rejectInsteadOfThrow({
       id: id(), fromId: u.id, toId: other!.id, body,
       createdAt: new Date().toISOString(), readAt: saved ? new Date().toISOString() : null,
       replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, fwdChannelId: src?.fwdChannelId ?? null, attachment,
+      sticker: stick,
     };
     messages.push(m);
     clearTyping(dmKey(u.id, other!.id), u.id);
@@ -1863,6 +1875,7 @@ export const mockApi = rejectInsteadOfThrow({
   editMessage: (username: string, messageId: number, text: string) => {
     const { u, other, m } = requirePairMessage(username, messageId);
     assertEditable(m.fromId, m.createdAt, m.fwdUserId, u, m.fwdChannelId);
+    if (m.sticker) fail(403, 'Стикер изменить нельзя');
     if (blockedPair(u.id, other.id)) fail(403, 'Переписка с этим пользователем недоступна');
     const body = text.trim();
     if (!body && !m.attachment) fail(400, '«сообщение»: минимум 1 символов');
@@ -2280,12 +2293,13 @@ export const mockApi = rejectInsteadOfThrow({
     });
   },
 
-  sendChatMessage: (chatId: number, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput) => {
+  sendChatMessage: (chatId: number, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput, sticker?: string) => {
     const { u, chat } = requireChat(chatId);
     const src = forward ? forwardSource(forward, u) : null;
     const body = src ? src.body : text.trim();
     const attachment = src ? src.attachment : file ? attachmentFrom(file) : null;
-    if (!body && !attachment) fail(400, '«сообщение»: минимум 1 символов');
+    const stick = sticker ? readSticker(sticker) : src?.sticker ?? null;
+    if (!body && !attachment && !stick) fail(400, '«сообщение»: минимум 1 символов');
     if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
     if (!src && replyTo != null && !visibleChatMessages(chat.id).some((m) => m.id === replyTo)) {
       fail(400, 'Сообщение, на которое вы отвечаете, не найдено');
@@ -2294,6 +2308,7 @@ export const mockApi = rejectInsteadOfThrow({
     const m: DbChatMessage = {
       id: id(), chatId: chat.id, authorId: u.id, body, createdAt: new Date().toISOString(),
       replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, fwdChannelId: src?.fwdChannelId ?? null, attachment,
+      sticker: stick,
     };
     chatMessages.push(m);
     clearTyping(`chat:${chat.id}`, u.id);
@@ -2314,6 +2329,7 @@ export const mockApi = rejectInsteadOfThrow({
     const m = requireChatMessage(chat.id, messageId);
     assertEditable(m.authorId, m.createdAt, m.fwdUserId, u, m.fwdChannelId);
     if (pollOf('chat', m.id)) fail(403, 'Опрос изменить нельзя — за него уже голосуют');
+    if (m.sticker) fail(403, 'Стикер изменить нельзя');
     const body = text.trim();
     if (!body && !m.attachment) fail(400, '«сообщение»: минимум 1 символов');
     if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
@@ -2667,6 +2683,13 @@ export const mockApi = rejectInsteadOfThrow({
     setPin('channel', c.id, null);
     return tick({ ok: true as const });
   },
+
+  // ─ Стикеры ────────────────────────────────────────────────────────────
+
+  sendSticker: (username: string, sticker: string) => mockApi.sendMessage(username, '', null, undefined, undefined, sticker),
+
+  sendChatSticker: (chatId: number, sticker: string) =>
+    mockApi.sendChatMessage(chatId, '', null, undefined, undefined, sticker),
 
   // ─ Отложенные ──────────────────────────────────────────────────────────
 

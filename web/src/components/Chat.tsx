@@ -13,6 +13,8 @@ import { Icon } from './Icon';
 import { Monogram } from './Monogram';
 import { useSession } from '../session';
 import { ScheduleDialog } from './Scheduled';
+import { StickerPicker } from './StickerPicker';
+import { StickerArt } from '../stickers';
 
 /* ─ Вложения ───────────────────────────────────────────────────────────── */
 
@@ -29,9 +31,9 @@ export function attachmentLabel(a: Pick<Attachment, 'kind' | 'name'> | null | un
   }
 }
 
-/** Превью сообщения в одну строку: текст, а без него — что приложено. */
-export const previewText = (body: string, a: Attachment | null) =>
-  body ? oneLine(body) : attachmentLabel(a);
+/** Превью сообщения в одну строку: текст, а без него — стикер или что приложено. */
+export const previewText = (body: string, a: Attachment | null, sticker?: string | null) =>
+  body ? oneLine(body) : sticker ? 'Стикер' : attachmentLabel(a);
 
 /** `1536` → `1,5 КБ`. */
 export function fileSize(bytes: number | null) {
@@ -380,6 +382,8 @@ export type BubbleItem = {
   commentCount?: number;
   /** Опрос: вопрос — `body`, варианты и голоса — здесь. */
   poll?: Poll | null;
+  /** Стикер вместо текста — рисуется крупно и без пузыря. */
+  sticker?: string | null;
 };
 
 /** Какие действия есть в меню. У публикации канала нет «Ответить», у
@@ -760,6 +764,8 @@ export function MessageList({
               if (menu?.item.id === m.id) cls.push('menu-open');
               // «Кружок» без подписи — без пузыря, как в Телеграме: только круг и время.
               if (m.attachment?.kind === 'videonote' && !m.body) cls.push('has-note');
+              // Стикер — тоже без пузыря: картинка и время поверх неё.
+              if (m.sticker) cls.push('has-sticker');
 
               const meta = (
                 <>
@@ -851,7 +857,12 @@ export function MessageList({
                         в последней строке: время встаёт справа внизу, как в
                         Телеграме, и никогда не наезжает на слова. Без текста
                         (фото, голосовое) подпись идёт отдельной строкой. */}
-                    {m.poll ? (
+                    {m.sticker ? (
+                      <>
+                        <StickerArt id={m.sticker} />
+                        {m.reactions.length === 0 && <span className="bubble-foot" aria-hidden="true" />}
+                      </>
+                    ) : m.poll ? (
                       <>
                         <PollCard
                           question={m.body}
@@ -1164,6 +1175,8 @@ type ComposerProps = {
   /** «Отправить позже»: правый клик или долгое нажатие на кнопку отправки.
    *  Ошибку бросает — окно выбора времени её покажет. */
   onSchedule?: (text: string, sendAt: Date) => Promise<void>;
+  /** Отправить стикер — кнопка со смайликом у поля ввода. */
+  onSendSticker?: (id: string) => Promise<boolean>;
 };
 
 export function Composer({
@@ -1178,8 +1191,10 @@ export function Composer({
   mentionables,
   onCreatePoll,
   onSchedule,
+  onSendSticker,
 }: ComposerProps) {
   const [scheduling, setScheduling] = useState<string | null>(null);
+  const [stickersOpen, setStickersOpen] = useState(false);
   const id = useId();
   const [caret, setCaret] = useState(0);
   const [pickIndex, setPickIndex] = useState(0);
@@ -1364,6 +1379,19 @@ export function Composer({
         </ul>
       )}
 
+      {stickersOpen && onSendSticker && !voice.recording && (
+        <StickerPicker
+          disabled={sending}
+          onPick={(sticker) => {
+            setSending(true);
+            void onSendSticker(sticker).then((ok) => {
+              setSending(false);
+              if (ok) setStickersOpen(false);
+            });
+          }}
+        />
+      )}
+
       {scheduling != null && onSchedule && (
         <ScheduleDialog
           title="Отправить позже"
@@ -1521,6 +1549,18 @@ export function Composer({
             }}
           />
           {left <= COUNTER_FROM && <span className={left < 0 ? 'counter over' : 'counter'}>{left}</span>}
+          {onSendSticker && !editing && (
+            <button
+              className={stickersOpen ? 'icon-btn composer-sticker on' : 'icon-btn composer-sticker'}
+              type="button"
+              aria-label={stickersOpen ? 'Закрыть стикеры' : 'Стикеры'}
+              aria-expanded={stickersOpen}
+              title="Стикеры"
+              onClick={() => setStickersOpen((v) => !v)}
+            >
+              <Icon name="sticker" />
+            </button>
+          )}
           {showMic ? (
             <>
               {/* «Кружок» — отдельной кнопкой рядом с микрофоном: в вебе явная
