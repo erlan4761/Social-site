@@ -243,14 +243,17 @@ function ThreadView({ username }: { username: string }) {
         case 'react':
           put((await api.reactMessage(username, msg.id, action.emoji)).message);
           break;
-        case 'delete':
-          if (!window.confirm(saved ? 'Удалить сообщение?' : 'Удалить сообщение? Оно исчезнет и у собеседника.')) return;
-          await api.deleteMessage(username, msg.id);
+        case 'delete': {
+          const ids = action.ids ?? [msg.id];
+          const what = ids.length > 1 ? `альбом — ${ids.length} снимков` : 'сообщение';
+          if (!window.confirm(saved ? `Удалить ${what}?` : `Удалить ${what}? Исчезнет и у собеседника.`)) return;
+          for (const id of ids) await api.deleteMessage(username, id);
           edits.current += 1;
-          setMessages((prev) => prev.filter((m) => m.id !== msg.id));
-          if (mode?.id === msg.id) setMode(null);
+          setMessages((prev) => prev.filter((m) => !ids.includes(m.id)));
+          if (mode && ids.includes(mode.id)) setMode(null);
           refreshList();
           break;
+        }
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не получилось');
@@ -287,6 +290,7 @@ function ThreadView({ username }: { username: string }) {
       reactions: m.reactions,
       attachment: m.attachment,
       sticker: m.sticker,
+      albumId: m.albumId,
       canEdit: mine && !m.forwardedFrom && !m.sticker && editable(m.createdAt),
       canDelete: mine,
     };
@@ -412,6 +416,7 @@ function ThreadView({ username }: { username: string }) {
           <Composer
             key={`dm:${username}`}
             draft={{ kind: 'dm', target: username }}
+            albums
             placeholder={saved ? 'Заметка для себя' : 'Сообщение'}
             onSchedule={async (text, at) => {
               await api.schedule('dm', username, text, at.toISOString());

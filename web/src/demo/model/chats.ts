@@ -35,6 +35,7 @@ export const toChatMessage = (m: DbChatMessage): ChatMessage => ({
   reactions: reactionsOf(db.chatReactions, m.id),
   attachment: m.attachment,
   sticker: m.sticker ?? null,
+  albumId: m.albumId ?? null,
 });
 
 /** Сообщение чата, видимое смотрящему, или 404. */
@@ -71,10 +72,10 @@ export function nextPostAt(c: DbChat, userId: number) {
 }
 
 /** Почему нельзя написать — как postBlock() на сервере. */
-export function postBlock(c: DbChat, userId: number) {
+export function postBlock(c: DbChat, userId: number, ignoreSlowMode = false) {
   if (isAdmin(c, userId)) return;
   if (c.adminsOnly) fail(403, 'Писать в эту группу могут только администраторы');
-  const next = nextPostAt(c, userId);
+  const next = ignoreSlowMode ? null : nextPostAt(c, userId);
   if (next) {
     const left = Math.max(1, Math.ceil((Date.parse(next) - Date.now()) / 1000));
     fail(429, `Медленный режим: следующее сообщение — через ${left < 60 ? `${left} с` : `${Math.ceil(left / 60)} мин`}`);

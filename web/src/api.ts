@@ -102,6 +102,8 @@ export type AttachmentInput = {
   name?: string;
   body?: string;
   replyTo?: number | null;
+  /** Код альбома: снимки с одним кодом показываются одной сеткой. */
+  album?: string;
   voice?: { duration: number; wave: string };
   /** «Кружок» — видеосообщение до минуты. */
   videoNote?: { duration: number };
@@ -112,6 +114,7 @@ function attachmentForm(input: AttachmentInput) {
   form.append('file', input.file, input.name ?? 'file');
   if (input.body) form.append('body', input.body);
   if (input.replyTo != null) form.append('replyTo', String(input.replyTo));
+  if (input.album) form.append('album', input.album);
   if (input.voice) {
     form.append('voice', '1');
     form.append('duration', String(input.voice.duration));
@@ -129,6 +132,8 @@ export type MessageExtras = {
   attachment: Attachment | null;
   /** Стикер из встроенного набора («plenka/hi») — у ЛС и групп; тогда текста нет. */
   sticker?: string | null;
+  /** Альбом: сообщения с одним кодом — снимки одной отправки, показываются сеткой. */
+  albumId?: string | null;
   editedAt: string | null;
   forwardedFrom: ForwardedFrom | null;
   replyTo: Quote | null;

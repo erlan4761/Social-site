@@ -40,7 +40,43 @@ export type BubbleItem = {
   poll?: Poll | null;
   /** Стикер вместо текста — рисуется крупно и без пузыря. */
   sticker?: string | null;
+  /** Код альбома: подряд идущие снимки с одним кодом — одна сетка. */
+  albumId?: string | null;
+  /** Собранный альбом: все его снимки по порядку (заполняет сама лента). */
+  album?: BubbleItem[];
 };
+
+/**
+ * Подряд идущие снимки одного альбома — одним пузырём, как в Телеграме. Пузырь
+ * говорит от имени снимка с подписью (или первого): ему отвечают, его правят,
+ * закрепляют и пересылают; удаление — всего альбома. Время и галочки — у
+ * последнего снимка.
+ */
+export function groupAlbums(items: BubbleItem[]): BubbleItem[] {
+  const out: BubbleItem[] = [];
+  for (let i = 0; i < items.length; ) {
+    const m = items[i];
+    let j = i + 1;
+    while (m.albumId && j < items.length && items[j].albumId === m.albumId && items[j].mine === m.mine && items[j].author?.id === m.author?.id) j++;
+    if (j - i < 2) {
+      out.push(m);
+    } else {
+      const parts = items.slice(i, j);
+      const head = parts.find((x) => x.body) ?? parts[0];
+      const last = parts[parts.length - 1];
+      out.push({
+        ...head,
+        createdAt: last.createdAt,
+        status: last.status,
+        attachment: null,
+        album: parts,
+        canDelete: parts.every((x) => x.canDelete),
+      });
+    }
+    i = j;
+  }
+  return out;
+}
 
 /** Какие действия есть в меню. У публикации канала нет «Ответить», у
  *  комментария — ни реакций, ни пересылки. */
@@ -53,7 +89,8 @@ const ALL_ACTIONS: Required<ListActions> = { reply: true, react: true, forward: 
 export type MessageAction =
   | { type: 'reply' }
   | { type: 'edit' }
-  | { type: 'delete' }
+  /** `ids` — у альбома: удаляются все его снимки разом. */
+  | { type: 'delete'; ids?: number[] }
   | { type: 'forward' }
   | { type: 'copy' }
   | { type: 'pin' }
@@ -124,6 +161,8 @@ export function MessageList({
   pinnedId = null,
   jump = null,
 }: ListProps) {
+  const raw = items;
+  items = groupAlbums(raw);
   const can = { ...ALL_ACTIONS, ...actions };
   const me = useSession().user?.username;
   const box = useRef<HTMLDivElement>(null);
@@ -144,8 +183,8 @@ export function MessageList({
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
-    const first = items[0]?.id;
-    const last = items.at(-1)?.id;
+    const first = raw[0]?.id;
+    const last = raw.at(-1)?.id;
     const was = prev.current;
 
     if (was.last === undefined) {
@@ -154,19 +193,19 @@ export function MessageList({
     } else if (first !== was.first && last === was.last) {
       // Подгрузили старые сверху — держим на месте то, что человек читал.
       el.scrollTop += el.scrollHeight - was.height;
-    } else if (last !== was.last && (atBottom.current || items.at(-1)?.mine)) {
+    } else if (last !== was.last && (atBottom.current || raw.at(-1)?.mine)) {
       // Новое снизу: едем к нему, только если человек и так внизу или это его
       // собственное сообщение. Читающего историю не дёргаем.
       el.scrollTop = el.scrollHeight;
     }
 
     prev.current = { first, last, height: el.scrollHeight };
-  }, [items]);
+  }, [raw]);
 
   // Меню, открытое на сообщении, которое тем временем удалили, закрывается само.
   useEffect(() => {
-    if (menu && !items.some((m) => m.id === menu.item.id)) setMenu(null);
-  }, [items, menu]);
+    if (menu && !raw.some((m) => m.id === menu.item.id)) setMenu(null);
+  }, [raw, menu]);
 
   function onScroll() {
     const el = box.current;
@@ -269,6 +308,8 @@ export function MessageList({
 
               return (
                 <div key={m.id} className="bubble-row" data-mid={m.id}>
+                  {/* Переход к любому снимку альбома находит его пузырь. */}
+                  {m.album?.filter((x) => x.id !== m.id).map((x) => <span key={x.id} data-mid={x.id} hidden />)}
                   {newDay && (
                     <div className="day-sep" role="separator">
                       <span>{dayLabel(m.createdAt)}</span>
@@ -334,6 +375,22 @@ export function MessageList({
                         onMediaLoad={onMediaLoad}
                         onOpenImage={(url, alt) => setViewer({ url, alt })}
                       />
+                    )}
+
+                    {m.album && (
+                      <div className={m.album.length % 2 ? 'album odd' : 'album'}>
+                        {m.album.map(
+                          (x) =>
+                            x.attachment && (
+                              <AttachmentView
+                                key={x.id}
+                                a={x.attachment}
+                                onMediaLoad={onMediaLoad}
+                                onOpenImage={(url, alt) => setViewer({ url, alt })}
+                              />
+                            ),
+                        )}
+                      </div>
                     )}
 
                     {/* Невидимая копия подписи в конце текста резервирует ей место
@@ -438,7 +495,8 @@ export function MessageList({
           onAction={(action) => {
             const item = menu.item;
             setMenu(null);
-            onAction(action, item);
+            // Удалить альбом — значит все его снимки.
+            onAction(action.type === 'delete' && item.album ? { type: 'delete', ids: item.album.map((x) => x.id) } : action, item);
           }}
         />
       )}

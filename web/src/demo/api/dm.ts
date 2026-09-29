@@ -1,7 +1,7 @@
 import { type AttachmentInput, type ChatMessage, type Conversation, type ForwardRef, type ForwardTarget, type Message } from '../../api';
 import { type DbMessage, db, id, tick, fail } from '../store';
 import { byId, byName, requireMe, person, blockedPair } from '../model/people';
-import { attachmentFrom, toMessage, assertEditable, setReaction, pairThread, requirePairMessage, findHits, dmKey, setTyping, clearTyping, isTyping, forwardSource, marinaAnswers, readSticker, CHAT_PAGE, BODY_MAX } from '../model/messages';
+import { attachmentFrom, toMessage, assertEditable, setReaction, pairThread, requirePairMessage, findHits, dmKey, setTyping, clearTyping, isTyping, forwardSource, marinaAnswers, readSticker, CHAT_PAGE, BODY_MAX, checkAlbum } from '../model/messages';
 import { pinScope, pinnedOf, setPin, pinPreview } from '../model/folders';
 import { prefFields, dmUnreadTotal, notify, markNotificationsRead } from '../model/notifications';
 import { clearDraft, draftOf } from '../model/drafts';
@@ -81,8 +81,10 @@ export const dmApi = {
       fail(400, 'Сообщение, на которое вы отвечаете, не найдено');
     }
 
+    const albumId = checkAlbum(file?.album, attachment,
+      db.messages.filter((x) => x.albumId && x.albumId === file?.album).map((x) => ({ mine: x.fromId === u.id && x.toId === other!.id })));
     const m: DbMessage = {
-      id: id(), fromId: u.id, toId: other!.id, body,
+      id: id(), fromId: u.id, toId: other!.id, body, albumId,
       createdAt: new Date().toISOString(), readAt: saved ? new Date().toISOString() : null,
       replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, fwdChannelId: src?.fwdChannelId ?? null, attachment,
       sticker: stick,
