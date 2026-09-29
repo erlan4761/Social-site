@@ -43,10 +43,11 @@ export type BubbleItem = {
 
 /** Какие действия есть в меню. У публикации канала нет «Ответить», у
  *  комментария — ни реакций, ни пересылки. */
-export type ListActions = { reply?: boolean; react?: boolean; forward?: boolean; pin?: boolean };
+export type ListActions = { reply?: boolean; react?: boolean; forward?: boolean; pin?: boolean; readers?: boolean };
 /** Закреплять вправе не все (в группе и канале — владелец), поэтому «pin»
  *  включается явно, а остальное есть по умолчанию. */
-const ALL_ACTIONS: Required<ListActions> = { reply: true, react: true, forward: true, pin: false };
+// «Кто прочитал» — только в группах: в личке хватает двух галочек.
+const ALL_ACTIONS: Required<ListActions> = { reply: true, react: true, forward: true, pin: false, readers: false };
 
 export type MessageAction =
   | { type: 'reply' }
@@ -55,6 +56,7 @@ export type MessageAction =
   | { type: 'forward' }
   | { type: 'copy' }
   | { type: 'pin' }
+  | { type: 'readers' }
   | { type: 'react'; emoji: string | null }
   | { type: 'vote'; options: number[] }
   | { type: 'closePoll' };
@@ -548,6 +550,11 @@ function MessageMenu({ state, readOnly, can, pinned, onClose, onAction }: MenuPr
             {pinned ? 'Открепить' : 'Закрепить'}
           </MenuItem>
         )}
+        {can.readers && item.mine && (
+          <MenuItem icon="eye" onClick={() => onAction({ type: 'readers' })}>
+            Кто прочитал
+          </MenuItem>
+        )}
         {item.canEdit && !readOnly && (
           <MenuItem icon="edit" onClick={() => onAction({ type: 'edit' })}>
             Изменить
@@ -569,7 +576,7 @@ function MenuItem({
   onClick,
   children,
 }: {
-  icon: 'reply' | 'copy' | 'forward' | 'edit' | 'trash' | 'pin';
+  icon: 'reply' | 'copy' | 'forward' | 'edit' | 'trash' | 'pin' | 'eye';
   danger?: boolean;
   onClick: () => void;
   children: ReactNode;

@@ -703,6 +703,35 @@ router.delete('/:id/pin', (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Кто прочитал своё сообщение — как в группах Телеграма: только автору и по
+ * тем же ватерлиниям, что дают две галочки. Прочитал — ватерлиния участника не
+ * ниже id сообщения. Времени нет: ватерлиния двигается целиком, и «прочитано в
+ * 15:00» было бы временем последнего захода, а не этого сообщения.
+ *
+ * Те, с кем автор в блокировке, не считаются ни в одну сторону: этого
+ * сообщения они не видят, их ватерлиния над ним ничего не значит.
+ */
+router.get('/:id/messages/:mid/readers', (req, res) => {
+  const me = req.user.id;
+  const chat = memberChat(req.params.id, me);
+  if (!chat) return res.status(404).json({ error: NOT_FOUND });
+  const msg = chatMessage(chat.id, req.params.mid, me);
+  if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
+  if (msg.author_id !== me) return res.status(403).json({ error: 'Кто прочитал, видно только автору сообщения' });
+
+  const rows = db.prepare(`
+    SELECT u.id, u.username, u.display_name, u.avatar_path, u.last_seen_at, u.last_seen_privacy, cm.last_read_id
+    FROM chat_members cm JOIN users u ON u.id = cm.user_id
+    WHERE cm.chat_id = :chatId AND cm.user_id <> :viewerId AND ${blockPairSql('cm.user_id')}
+    ORDER BY u.display_name
+  `).all({ chatId: chat.id, viewerId: me });
+  res.json({
+    read: rows.filter((r) => r.last_read_id >= msg.id).map((r) => member(r, me)),
+    unread: rows.filter((r) => r.last_read_id < msg.id).map((r) => member(r, me)),
+  });
+});
+
 router.put('/:id/read', (req, res) => {
   const me = req.user.id;
   const chat = memberChat(req.params.id, me);

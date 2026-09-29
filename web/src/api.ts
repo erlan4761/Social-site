@@ -742,6 +742,10 @@ const realApi = {
 
   unpinChatMessage: (chatId: number) => request<{ ok: true }>(`/chats/${chatId}/pin`, { method: 'DELETE' }),
 
+  /** Кто прочитал своё сообщение в группе — только автору. */
+  chatReaders: (chatId: number, id: number) =>
+    request<{ read: Person[]; unread: Person[] }>(`/chats/${chatId}/messages/${id}/readers`),
+
   reactChatMessage: (chatId: number, id: number, emoji: string | null) =>
     request<{ message: ChatMessage }>(`/chats/${chatId}/messages/${id}/reaction`, {
       method: emoji ? 'PUT' : 'DELETE',
