@@ -3509,5 +3509,95 @@ check('ватерлиния: у второго — только тот, кто �
 r = await readers(ra);
 check('у первого теперь оба', names(r.body.read) === [userRb, userRc].sort().join(','), JSON.stringify({ read: names(r.body.read) }));
 
+console.log('\n— предпросмотр ссылок —');
+// Поддельный сайт на 127.0.0.1: сервер поднят с LINK_PREVIEW_ALLOW_LOOPBACK=1
+// (см. README, «Тесты»), и только петля ему открыта — остальные частные адреса
+// закрыты и в этом режиме, это проверяется ниже.
+const SITE_PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000'
+  + '1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082', 'hex');
+const siteHits = {};
+const site = createServer((req, res) => {
+  siteHits[req.url] = (siteHits[req.url] ?? 0) + 1;
+  const html = (body) => res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(body);
+  switch (req.url) {
+    case '/':
+      return html('<html><head><meta property="og:title" content="Плёнка &amp; свет"><meta property="og:description" content="Заметки о проявке">'
+        + '<meta property="og:site_name" content="Заметки"><meta property="og:image" content="/pic.png"></head><body>…</body></html>');
+    case '/cp1251':
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      return res.end(Buffer.concat([Buffer.from('<meta charset="windows-1251"><title>'), Buffer.from([0xcf, 0xf0, 0xee, 0xff, 0xe2, 0xea, 0xe0]), Buffer.from('</title>')]));
+    case '/redirect':
+      return res.writeHead(302, { Location: '/' }).end();
+    case '/loop':
+      return res.writeHead(302, { Location: '/loop' }).end();
+    case '/to-metadata':
+      return res.writeHead(302, { Location: 'http://169.254.169.254/latest/meta-data' }).end();
+    case '/json':
+      return res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"title":"нет"}');
+    case '/svg-page':
+      return html('<meta property="og:title" content="С картинкой-SVG"><meta property="og:image" content="/evil.svg">');
+    case '/evil.svg':
+      return res.writeHead(200, { 'Content-Type': 'image/svg+xml' }).end('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    case '/pic.png':
+      return res.writeHead(200, { 'Content-Type': 'image/png' }).end(SITE_PNG);
+    default:
+      return res.writeHead(404).end();
+  }
+});
+await new Promise((resolve) => site.listen(0, '127.0.0.1', resolve));
+const siteBase = `http://127.0.0.1:${site.address().port}`;
+const lpa = makeClient();
+const lpb = makeClient();
+await legacySignUp(lpa, `lpva_${stamp}`, 'Смотрящая');
+await legacySignUp(lpb, `lpvb_${stamp}`, 'Второй');
+const preview = (client, url) => client(`/link-preview?url=${encodeURIComponent(url)}`);
+
+r = await preview(guest, `${siteBase}/`);
+check('предпросмотр — гостю 401', r.status === 401, `${r.status}`);
+r = await preview(lpa, 'ftp://example.com/');
+check('не http(s) — 400', r.status === 400, `${r.status}`);
+r = await preview(lpa, 'http://user:pass@example.com/');
+check('с логином в адресе — 400', r.status === 400, `${r.status}`);
+for (const [name, url] of [
+  ['облачные метаданные', 'http://169.254.169.254/latest/meta-data'],
+  ['частная сеть', 'http://10.0.0.1/'],
+  ['IPv4 внутри IPv6', 'http://[::ffff:192.168.0.1]/'],
+]) {
+  const started = Date.now();
+  r = await preview(lpa, url);
+  check(`закрыто: ${name} — пусто и сразу`, r.status === 200 && r.body.preview === null && Date.now() - started < 2000, `${r.status} ${Date.now() - started}ms`);
+}
+
+r = await preview(lpa, `${siteBase}/#якорь`);
+const pv = r.body.preview;
+check('Open Graph разобран: заголовок, описание, сайт', r.status === 200 && pv?.title === 'Плёнка & свет' && pv.description === 'Заметки о проявке' && pv.siteName === 'Заметки' && pv.url === `${siteBase}/`, JSON.stringify(r.body));
+check('картинка — через наш сервер', pv?.image === `/api/link-preview/image?u=${encodeURIComponent(`${siteBase}/pic.png`)}`, JSON.stringify(pv?.image));
+await preview(lpb, `${siteBase}/`);
+check('повтор берётся из кэша, сайт не дёргается', siteHits['/'] === 1, JSON.stringify(siteHits));
+const img = await lpa.raw(pv.image);
+const imgBody = Buffer.from(await img.arrayBuffer());
+check('картинка отдаётся: png, те же байты, кэш у браузера', img.status === 200 && img.headers.get('content-type') === 'image/png'
+  && imgBody.equals(SITE_PNG) && /private/.test(img.headers.get('cache-control') ?? ''), `${img.status} ${img.headers.get('content-type')}`);
+r = await lpa.raw(`/api/link-preview/image?u=${encodeURIComponent(`${siteBase}/pic.png?other=1`)}`);
+check('картинка не из превью — 404: это не открытый прокси', r.status === 404, `${r.status}`);
+r = await guest.raw(pv.image);
+check('картинка — гостю 401', r.status === 401, `${r.status}`);
+
+r = await preview(lpa, `${siteBase}/cp1251`);
+check('страница в windows-1251 — заголовок по-русски', r.body.preview?.title === 'Проявка', JSON.stringify(r.body));
+r = await preview(lpa, `${siteBase}/redirect`);
+check('переадресация на тот же сайт — превью конечной страницы', r.body.preview?.title === 'Плёнка & свет', JSON.stringify(r.body));
+r = await preview(lpa, `${siteBase}/loop`);
+check('бесконечная переадресация — пусто', r.status === 200 && r.body.preview === null, JSON.stringify(r.body));
+r = await preview(lpa, `${siteBase}/to-metadata`);
+check('переадресация на закрытый адрес — пусто', r.status === 200 && r.body.preview === null, JSON.stringify(r.body));
+r = await preview(lpa, `${siteBase}/json`);
+check('не HTML — пусто', r.body.preview === null, JSON.stringify(r.body));
+r = await preview(lpa, `${siteBase}/svg-page`);
+const svgImg = r.body.preview?.image;
+r = svgImg ? await lpa.raw(svgImg) : { status: 0 };
+check('SVG через прокси не отдаётся', r.status === 404, `${r.status}`);
+site.close();
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

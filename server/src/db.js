@@ -453,6 +453,21 @@ ensureColumn('chats', 'slow_mode', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('chats', 'admins_only', 'INTEGER NOT NULL DEFAULT 0');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_invite ON chats(invite_token)');
 
+// Предпросмотр ссылок (см. linkPreview.js): кэш по адресу. ok = 0 — страница
+// не отдала превью; такую запись повторяют через час, удачную — через сутки.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS link_previews (
+    url         TEXT PRIMARY KEY,
+    ok          INTEGER NOT NULL,
+    title       TEXT,
+    description TEXT,
+    site_name   TEXT,
+    image_url   TEXT,
+    fetched_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_link_previews_image ON link_previews(image_url);
+`);
+
 // Черновики (см. drafts.js): по одному на человека и чат.
 db.exec(`
   CREATE TABLE IF NOT EXISTS drafts (

@@ -224,6 +224,9 @@ export type Message = MessageExtras & {
 export type ChatPrefs = { pinnedAt: string | null; muted: boolean };
 export type PrefKind = 'dm' | 'chat' | 'channel';
 
+/** Предпросмотр ссылки. `image` — адрес на нашем сервере, а не на чужом сайте. */
+export type LinkPreview = { url: string; title: string; description: string | null; siteName: string | null; image: string | null };
+
 /** Недописанное в поле ввода — хранится на сервере и видно в списке чатов. */
 export type Draft = { body: string; updatedAt: string };
 export type WithDraft = { draft: Draft | null };
@@ -779,6 +782,9 @@ const realApi = {
     request<{ message: ChatMessage }>(`/chats/${chatId}/messages`, { method: 'POST', body: body({ sticker }) }),
 
   // ─ Отложенные ──────────────────────────────────────────────────────────
+
+  /** Предпросмотр ссылки: страницу скачивает сервер; не вышло — null. */
+  linkPreview: (url: string) => request<{ preview: LinkPreview | null }>(`/link-preview?url=${encodeURIComponent(url)}`),
 
   /** Черновик чата: target — логин собеседника, номер группы или адрес своего канала. */
   draft: (kind: PrefKind, target: string | number) =>

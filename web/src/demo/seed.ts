@@ -322,6 +322,7 @@ export function seed() {
   });
 
   // «Избранное»: заметка себе и пересланная реплика Марины.
+  dm(demo, demo, 'Исходники «Хроники»: https://github.com/erlan4761/Social-site', days(3));
   dm(demo, demo, 'Список на субботу: две плёнки Kodak Gold 200, фиксаж, забрать сканы с Литейной.', days(2));
   const kept = dm(demo, demo, 'Второй там и был весь смысл. Они его специально спрятали за лестницей.', 85);
   kept.fwdUserId = marina.id;
