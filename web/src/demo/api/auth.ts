@@ -3,6 +3,8 @@ import { type DbUser, db, id, tick, fail } from '../store';
 import { openSession, endOtherSessions, dropUser } from '../model/account';
 import { byId, byName, byEmail, me, requireMe } from '../model/people';
 import { publicUser } from '../model/posts';
+import { checkCode, dropTicket, issueTicket, normalizePhone, readTicket, sendCode } from '../model/phone';
+import type { PhoneVerdict } from '../../api';
 
 /** Методы витрины: вход, регистрация, пароль, настройки аккаунта. */
 
@@ -15,24 +17,55 @@ export const authApi = {
 
   me: () => tick({ user: me() ? publicUser(me()!) : null }),
 
-  register: (input: { username: string; displayName: string; email: string; password: string }) => {
-    const username = input.username.trim().toLowerCase();
-    if (!/^[a-z0-9_]{3,20}$/.test(username)) {
-      fail(400, 'Имя пользователя: 3–20 символов, только латиница, цифры и _');
-    }
-    const email = input.email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) fail(400, 'Некорректный email');
-    if (input.password.length < 8) fail(400, 'Пароль должен быть не короче 8 символов');
-    if (byName(username)) fail(409, 'Это имя пользователя уже занято');
-    if (db.users.some((u) => u.email === email)) fail(409, 'На этот email уже зарегистрирован аккаунт');
+  // ─ Вход по номеру ─────────────────────────────────────────────────
 
+  phoneStart: (raw: string) => tick(sendCode(normalizePhone(raw), 'login')),
+
+  phoneVerify: (raw: string, code: string) => {
+    const phone = normalizePhone(raw);
+    checkCode(phone, 'login', code);
+    const u = db.users.find((x) => x.phone === phone);
+    let verdict: PhoneVerdict;
+    if (!u) verdict = { status: 'signup', ticket: issueTicket('signup', phone) };
+    else if (u.password) verdict = { status: 'password', ticket: issueTicket('password', phone, u.id) };
+    else {
+      db.meId = u.id;
+      openSession(u.id);
+      verdict = { status: 'signed-in', user: publicUser(u) };
+    }
+    return tick(verdict);
+  },
+
+  phonePassword: (token: string, password: string) => {
+    const ticket = readTicket(token, 'password');
+    const u = byId(ticket.userId ?? -1);
+    if (!u || !password || u.password !== password) {
+      ticket.attempts += 1;
+      if (ticket.attempts >= 5) dropTicket(ticket.token);
+      fail(403, 'Пароль не подходит');
+    }
+    dropTicket(ticket.token);
+    db.meId = u!.id;
+    openSession(u!.id);
+    return tick({ user: publicUser(u!) });
+  },
+
+  phoneSignup: (token: string, rawName: string, displayName: string) => {
+    const ticket = readTicket(token, 'signup');
+    const username = rawName.trim().toLowerCase();
+    if (!/^[a-z0-9_]{3,20}$/.test(username)) fail(400, 'Имя пользователя: 3–20 символов, только латиница, цифры и _');
+    if (byName(username)) fail(409, 'Это имя пользователя уже занято');
+    if (db.users.some((x) => x.phone === ticket.phone)) {
+      dropTicket(ticket.token);
+      fail(409, 'Этот номер уже зарегистрирован — войдите по нему заново');
+    }
     const u: DbUser = {
-      id: id(), username,
-      displayName: input.displayName.trim() || username,
-      bio: '', avatarUrl: null, createdAt: new Date().toISOString(), email, password: input.password,
-      lastSeenAt: new Date().toISOString(),
+      id: id(), username, displayName: displayName.trim() || username,
+      bio: '', avatarUrl: null, createdAt: new Date().toISOString(), email: null, password: '',
+      phone: ticket.phone, passwordLogin: false, lastSeenAt: new Date().toISOString(),
     };
     db.users.push(u);
+    dropTicket(ticket.token);
     db.meId = u.id;
     openSession(u.id);
     return tick({ user: publicUser(u) });
@@ -40,7 +73,10 @@ export const authApi = {
 
   login: (input: { username: string; password: string }) => {
     const u = byName(input.username.trim());
-    if (!u || u.password !== input.password) fail(401, 'Неверное имя пользователя или пароль');
+    // Аккаунт по номеру по логину не входит: его пароль — второй шаг после кода.
+    if (!u || u.passwordLogin === false || !u.password || u.password !== input.password) {
+      fail(401, 'Неверное имя пользователя или пароль');
+    }
     db.meId = u!.id;
     openSession(u!.id);
     return tick({ user: publicUser(u!) });
@@ -99,7 +135,55 @@ export const authApi = {
 
   account: () => {
     const u = requireMe()!;
-    return tick({ email: u.email as string | null, lastSeen: u.lastSeenPrivacy ?? 'all', createdAt: u.createdAt });
+    return tick({
+      email: u.email ?? null,
+      phone: u.phone ?? null,
+      hasPassword: Boolean(u.password),
+      passwordLogin: u.passwordLogin !== false,
+      lastSeen: u.lastSeenPrivacy ?? 'all',
+      createdAt: u.createdAt,
+    });
+  },
+
+  linkPhoneStart: (raw: string) => {
+    const u = requireMe()!;
+    const phone = normalizePhone(raw);
+    const owner = db.users.find((x) => x.phone === phone);
+    if (owner?.id === u.id) fail(400, 'Это уже ваш номер');
+    if (owner) fail(409, 'Этот номер привязан к другому аккаунту');
+    return tick(sendCode(phone, 'link', u.id));
+  },
+
+  linkPhone: (raw: string, code: string) => {
+    const u = requireMe()!;
+    const phone = normalizePhone(raw);
+    checkCode(phone, 'link', code, u.id);
+    if (db.users.some((x) => x.phone === phone && x.id !== u.id)) fail(409, 'Этот номер привязан к другому аккаунту');
+    u.phone = phone;
+    return tick({ phone });
+  },
+
+  unlinkPhone: () => {
+    const u = requireMe()!;
+    if (u.passwordLogin === false) fail(400, 'Номер — ваш способ входа: его можно сменить, но не убрать');
+    u.phone = null;
+    return tick({ phone: null });
+  },
+
+  removePassword: (currentPassword: string) => {
+    const u = requireMe()!;
+    if (u.passwordLogin !== false) fail(400, 'Пароль нужен для входа по логину — убрать его нельзя');
+    if (!u.password) fail(400, 'Пароля и так нет');
+    if (u.password !== currentPassword) fail(403, 'Пароль не подходит');
+    u.password = '';
+    return tick({ ok: true as const });
+  },
+
+  deleteCode: () => {
+    const u = requireMe()!;
+    if (u.password) fail(400, 'Удаление подтверждается паролем');
+    if (!u.phone) fail(400, 'Нет ни пароля, ни номера — удаление подтвердить нечем');
+    return tick(sendCode(u.phone!, 'delete', u.id));
   },
 
   setLastSeen: (lastSeen: LastSeenPrivacy) => {
@@ -112,7 +196,8 @@ export const authApi = {
   changePassword: (currentPassword: string, newPassword: string) => {
     const u = requireMe()!;
     if (newPassword.length < 8) fail(400, 'Пароль должен быть не короче 8 символов');
-    if (u.password !== currentPassword) fail(403, 'Пароль не подходит');
+    // Пароля ещё нет (аккаунт по номеру) — задаётся без текущего.
+    if (u.password && u.password !== currentPassword) fail(403, 'Пароль не подходит');
     if (newPassword === currentPassword) fail(400, 'Новый пароль совпадает с текущим');
     u.password = newPassword;
     db.resets = db.resets.filter((r) => !(r.userId === u.id && !r.usedAt));
@@ -142,9 +227,14 @@ export const authApi = {
     return tick({ ok: true as const, ended: endOtherSessions(u.id) });
   },
 
-  deleteAccount: (password: string) => {
+  deleteAccount: (proof: { password: string } | { code: string }) => {
     const u = requireMe()!;
-    if (u.password !== password) fail(403, 'Пароль не подходит');
+    if (u.password) {
+      if (!('password' in proof) || u.password !== proof.password) fail(403, 'Пароль не подходит');
+    } else {
+      if (!u.phone) fail(400, 'Нет ни пароля, ни номера — удаление подтвердить нечем');
+      checkCode(u.phone!, 'delete', 'code' in proof ? proof.code : '', u.id);
+    }
     dropUser(u.id);
     db.meId = null;
     db.currentSession = null;

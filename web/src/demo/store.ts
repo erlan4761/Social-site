@@ -9,8 +9,13 @@ export type DbUser = {
   bio: string;
   avatarUrl: string | null;
   createdAt: string;
-  email: string;
+  email: string | null;
+  /** Пустая строка — пароля нет (аккаунт по номеру без двухэтапной проверки). */
   password: string;
+  /** Номер в E.164 — как users.phone. */
+  phone?: string | null;
+  /** false — аккаунт создан по номеру и по логину не входит (users.password_login). */
+  passwordLogin?: boolean;
   /** Последний визит — для «в сети» и «был(а) … назад» в переписке. */
   lastSeenAt: string | null;
   /** Персонаж витрины, который «всегда в сети»: иначе через пару минут
@@ -162,6 +167,9 @@ export const db = {
   sessions: [] as DbSession[],
   /** Сеанс этой вкладки — его нельзя «завершить», только выйти. */
   currentSession: null as number | null,
+  /** Коды «из SMS» и билеты незаконченного входа — как phone_codes и phone_tickets. */
+  phoneCodes: [] as { phone: string; purpose: 'login' | 'link' | 'delete'; userId: number | null; code: string; attempts: number; expiresAt: number; createdAt: number; used: boolean }[],
+  phoneTickets: [] as { token: string; kind: 'signup' | 'password'; phone: string; userId: number | null; attempts: number; expiresAt: number }[],
   /** Кто вошёл в витрину; null — гость. */
   meId: null as number | null,
   nextId: 1,

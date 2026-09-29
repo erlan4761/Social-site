@@ -36,6 +36,8 @@ export function seed() {
   db.folders = [];
   db.sessions = [];
   db.currentSession = null;
+  db.phoneCodes = [];
+  db.phoneTickets = [];
   db.channelComments = [];
   typingUntil.clear();
   db.nextId = 1;
@@ -51,6 +53,9 @@ export function seed() {
   };
 
   const demo = make('demo', 'Ерлан', 'Собираю портфолио и пишу о том, что строю.', gradient('#0e7863', '#8265ba', 256, 256));
+  // Старый аккаунт с привязанным номером: в витрине можно войти и по логину,
+  // и по номеру — вторым шагом тогда спросят пароль.
+  demo.phone = '+996555000001';
   const marina = make('marina', 'Марина Штольц', 'Читаю больше, чем успеваю обдумывать.', gradient('#8265ba', '#3b7a9c', 256, 256));
   const oleg = make('oleg_k', 'Олег Кузьмин', 'Чиню станки старше себя.', gradient('#ad5f34', '#488048', 256, 256));
   const nina = make('nina', 'Нина Барто', 'Поля, плёнка, проявка на кухне.', null);
