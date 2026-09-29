@@ -46,7 +46,7 @@ const LEGACY_SALT = randomBytes(16);
 // Тот же формат, что у hashPassword() сервера: scrypt$соль$ключ.
 const LEGACY_HASH = ['scrypt', LEGACY_SALT.toString('hex'), scryptSync('parol12345', LEGACY_SALT, 64).toString('hex')].join('$');
 let legacyDb = null;
-function legacySignUp(client, username, displayName) {
+async function legacySignUp(client, username, displayName) {
   if (!legacyDb) {
     legacyDb = new DatabaseSync(process.env.DB_PATH);
     legacyDb.exec('PRAGMA busy_timeout = 5000');
@@ -54,7 +54,14 @@ function legacySignUp(client, username, displayName) {
   legacyDb.prepare(`
     INSERT INTO users (username, display_name, bio, email, password_hash, created_at) VALUES (?, ?, '', ?, ?, ?)
   `).run(username.toLowerCase(), displayName, `${username.toLowerCase()}@example.test`, LEGACY_HASH, new Date().toISOString());
-  return client('/auth/login', { method: 'POST', body: JSON.stringify({ username, password: 'parol12345' }) });
+  const res = await client('/auth/login', { method: 'POST', body: JSON.stringify({ username, password: 'parol12345' }) });
+  // Аккаунт «уже бывал в сети»: его первый вход в тесте — подготовка, а не
+  // новость. Событие «Вход в аккаунт» убираем, чтобы секции считали только
+  // свои события; сами уведомления о входе проверяет отдельная секция.
+  legacyDb.prepare(`
+    DELETE FROM notifications WHERE kind = 'new_login' AND user_id = (SELECT id FROM users WHERE username = ?)
+  `).run(username.toLowerCase());
+  return res;
 }
 
 let pass = 0, fail = 0;
@@ -72,6 +79,7 @@ function makeClient() {
         // FormData ставит свой Content-Type с boundary — перебивать нельзя.
         ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
         ...(cookie ? { Cookie: cookie } : {}),
+        ...init.headers,
       },
     });
     const setCookie = res.headers.getSetCookie?.() ?? [];
@@ -2861,6 +2869,24 @@ pushStatus = 201;
 await subscribe(pa, endpointA);
 await pa('/auth/logout', { method: 'POST' });
 check('вышли на устройстве — его подписка ушла вместе с сеансом', subsOf(endpointA) === 0, `${subsOf(endpointA)}`);
+
+// О входе в аккаунт пуш уходит, даже когда вкладка открыта: чужой вход
+// важнее тишины.
+const endpointB = `http://127.0.0.1:${pushPort}/b`;
+await subscribe(pb, endpointB);
+const pbLive = await listen(pb);
+await pbLive.waitFor((e) => e.t === 'ready');
+const sentBefore = inbox.length;
+await makeClient()('/auth/login', { method: 'POST', body: JSON.stringify({ username: userPb, password: 'parol12345' }) });
+check('вход в аккаунт — пуш даже при открытой вкладке', await waitInbox(sentBefore + 1), `${inbox.length}`);
+let loginPush = null;
+try {
+  loginPush = decryptPush(inbox.at(-1).body);
+} catch (err) {
+  loginPush = { error: err.message };
+}
+check('в пуше о входе — устройство и путь в настройки', loginPush?.title === 'Вход в аккаунт' && loginPush.url === '/settings' && /^Неизвестное устройство\. Если это были не вы/.test(loginPush.body ?? ''), JSON.stringify(loginPush));
+pbLive.stop();
 pushService.close();
 
 console.log('\n— вход и регистрация по номеру —');
@@ -2926,6 +2952,8 @@ r = await signup(ph, signupTicket, userTel, 'Тел Телефонов');
 check('регистрация по номеру — 201 и сразу вход', r.status === 201 && r.body.user?.username === userTel && (await ph('/auth/me')).body.user?.username === userTel, JSON.stringify(r.body));
 r = await ph('/account');
 check('в настройках — номер, без пароля и без входа по логину', r.body.phone === phoneNew && r.body.hasPassword === false && r.body.passwordLogin === false && r.body.email === null, JSON.stringify(r.body));
+r = await ph('/notifications');
+check('регистрация по номеру не шлёт «вход в аккаунт»', r.body.notifications?.length === 0, JSON.stringify(r.body.notifications));
 r = await signup(makeClient(), signupTicket, `tel2_${stamp}`);
 check('билет одноразовый', r.status === 400, `${r.status}`);
 r = await anon('/auth/login', { method: 'POST', body: JSON.stringify({ username: userTel, password: '' }) });
@@ -2937,6 +2965,8 @@ const ph2 = makeClient();
 await start(ph2, phoneNew);
 r = await verify(ph2, phoneNew, lastCode(phoneNew));
 check('знакомый номер без пароля — сразу вход', r.body.status === 'signed-in' && r.body.user?.username === userTel && (await ph2('/auth/me')).body.user?.username === userTel, JSON.stringify(r.body));
+r = await ph('/notifications');
+check('вход по номеру — событие на остальных устройствах', r.body.notifications?.[0]?.kind === 'new_login' && r.body.unread === 1, JSON.stringify(r.body.notifications));
 
 // Двухэтапная проверка: пароль задаётся без текущего (его нет), дальше — после кода.
 r = await ph('/account/password', { method: 'PUT', body: JSON.stringify({ newPassword: 'dvuhetap12' }) });
@@ -3005,6 +3035,38 @@ check('аккаунт по номеру удалён по коду', r.status ==
 r = await oldie('/account/delete-code', { method: 'POST' });
 check('у аккаунта с паролем — удаление паролем, а не кодом', r.status === 400, `${r.status}`);
 fakeTwilio.close();
+
+console.log('\n— уведомление о новом входе —');
+const home = makeClient();
+const userHome = `home_${stamp}`;
+await legacySignUp(home, userHome, 'Домосед');
+const homeId = (await home('/auth/me')).body.user.id;
+r = await home('/notifications');
+check('подготовительный вход событий не оставил', r.body.notifications?.length === 0, JSON.stringify(r.body.notifications));
+
+const chromeWin = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
+r = await makeClient()('/auth/login', { method: 'POST', headers: { 'User-Agent': chromeWin }, body: JSON.stringify({ username: userHome, password: 'не тот' }) });
+check('неверный пароль — не вход', r.status === 401, `${r.status}`);
+r = await home('/notifications');
+check('неудачная попытка события не создаёт', r.body.notifications?.length === 0, JSON.stringify(r.body.notifications));
+
+const away = makeClient();
+r = await away('/auth/login', { method: 'POST', headers: { 'User-Agent': chromeWin }, body: JSON.stringify({ username: userHome, password: 'parol12345' }) });
+check('вход с другого устройства', r.status === 200, `${r.status}`);
+r = await home('/notifications');
+ev = r.body.notifications?.[0];
+check('событие «вход в аккаунт» с устройством', r.body.notifications?.length === 1 && ev?.kind === 'new_login' && ev.device === 'Chrome, Windows', JSON.stringify(r.body.notifications));
+check('автор события — сам владелец', ev?.actor?.id === homeId && ev.post === null && ev.chat === null, JSON.stringify(ev));
+check('событие непрочитано и видно в счётчике', r.body.unread === 1 && (await home('/badges')).body.notifications === 1, JSON.stringify(r.body.unread));
+r = await away('/notifications');
+check('новое устройство видит то же событие', r.body.notifications?.[0]?.kind === 'new_login', JSON.stringify(r.body.notifications));
+
+const phoneUa = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/131.0';
+await makeClient()('/auth/login', { method: 'POST', headers: { 'User-Agent': phoneUa }, body: JSON.stringify({ username: userHome, password: 'parol12345' }) });
+r = await home('/notifications');
+check('каждый вход — своё событие, новое сверху', r.body.notifications?.length === 2 && r.body.notifications[0].device === 'Firefox, Android', JSON.stringify(r.body.notifications?.map((x) => x.device)));
+r = await home('/account/sessions');
+check('все три сеанса видны в настройках', r.body.sessions?.length === 3, JSON.stringify(r.body.sessions?.length));
 
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

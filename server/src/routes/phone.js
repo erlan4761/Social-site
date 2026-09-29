@@ -4,6 +4,7 @@ import { createSession, publicUser, setSessionCookie, verifyPassword } from '../
 import {
   checkCode, dropTicket, failTicket, hasPassword, issueTicket, normalizePhone, readTicket, sendCode,
 } from '../phone.js';
+import { notifyLogin } from '../notifications.js';
 import * as v from '../validate.js';
 
 /**
@@ -22,8 +23,10 @@ import * as v from '../validate.js';
  */
 export const router = Router();
 
-const signIn = (req, res, user) => {
+/** Открыть сеанс. `announce` — известить о входе остальные устройства (не при регистрации). */
+const signIn = (req, res, user, { announce = true } = {}) => {
   setSessionCookie(res, createSession(user.id, req.get('user-agent')));
+  if (announce) notifyLogin(user.id, req.get('user-agent'));
   return publicUser(user);
 };
 
@@ -86,7 +89,8 @@ router.post('/signup', (req, res, next) => {
     `).run(username, displayName, nowIso(), ticket.phone);
     dropTicket(ticket.token);
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
-    res.status(201).json({ user: signIn(req, res, user) });
+    // Первый вход нового аккаунта — не «вход с нового устройства»: других нет.
+    res.status(201).json({ user: signIn(req, res, user, { announce: false }) });
   } catch (err) {
     next(err);
   }
