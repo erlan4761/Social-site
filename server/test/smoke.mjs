@@ -2749,5 +2749,115 @@ await ron('/auth/logout', { method: 'POST' });
 check('вышли — поток закрыт', await ronLive.waitClosed(), '');
 solLive.stop();
 
+console.log('\n— push-уведомления —');
+// Своя «служба доставки» на localhost: принимает письмо сервера и
+// расшифровывает его ключом подписчика (aes128gcm, RFC 8291), как браузер.
+const { createServer } = await import('node:http');
+const { createECDH, createDecipheriv, hkdfSync, randomBytes } = await import('node:crypto');
+
+const inbox = [];
+let pushStatus = 201;
+const pushService = createServer((req, res) => {
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
+  req.on('end', () => {
+    inbox.push({ path: req.url, headers: req.headers, body: Buffer.concat(chunks) });
+    res.writeHead(pushStatus).end();
+  });
+});
+await new Promise((resolve) => pushService.listen(0, '127.0.0.1', resolve));
+const pushPort = pushService.address().port;
+
+const ua = createECDH('prime256v1');
+ua.generateKeys();
+const uaPublic = ua.getPublicKey();
+const authSecret = randomBytes(16);
+
+function decryptPush(body) {
+  const salt = body.subarray(0, 16);
+  const idlen = body[20];
+  const asPublic = body.subarray(21, 21 + idlen);
+  const record = body.subarray(21 + idlen);
+  const shared = ua.computeSecret(asPublic);
+  const info = Buffer.concat([Buffer.from('WebPush: info\0'), uaPublic, asPublic]);
+  const ikm = Buffer.from(hkdfSync('sha256', shared, authSecret, info, 32));
+  const cek = Buffer.from(hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0'), 16));
+  const nonce = Buffer.from(hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: nonce\0'), 12));
+  const decipher = createDecipheriv('aes-128-gcm', cek, nonce);
+  decipher.setAuthTag(record.subarray(record.length - 16));
+  const plain = Buffer.concat([decipher.update(record.subarray(0, record.length - 16)), decipher.final()]);
+  return JSON.parse(plain.subarray(0, plain.lastIndexOf(2)).toString('utf8'));
+}
+const waitInbox = async (n, ms = 1500) => {
+  const until = Date.now() + ms;
+  while (Date.now() < until && inbox.length < n) await sleep(25);
+  return inbox.length >= n;
+};
+
+const pa = makeClient();
+const pb = makeClient();
+const userPa = `pusha_${stamp}`;
+const userPb = `pushb_${stamp}`;
+await signUp(pa, userPa, 'Пуш А');
+await signUp(pb, userPb, 'Пуш Б');
+const pbId = (await pb('/auth/me')).body.user.id;
+const subscribe = (client, endpoint, keys = { p256dh: uaPublic.toString('base64url'), auth: authSecret.toString('base64url') }) =>
+  client('/push/subscription', { method: 'PUT', body: JSON.stringify({ endpoint, keys }) });
+const subsOf = (endpoint) => {
+  const rdb = new DatabaseSync(process.env.DB_PATH, { readOnly: true });
+  try {
+    return rdb.prepare('SELECT COUNT(*) AS c FROM push_subscriptions WHERE endpoint = ?').get(endpoint).c;
+  } finally {
+    rdb.close();
+  }
+};
+
+r = await guest('/push/key');
+check('ключ сервера — гостю 401', r.status === 401, `${r.status}`);
+r = await pa('/push/key');
+check('открытый ключ VAPID', r.status === 200 && /^[A-Za-z0-9_-]{80,}$/.test(r.body.publicKey ?? ''), JSON.stringify(r.body));
+r = await subscribe(pa, 'https://evil.example.com/push');
+check('чужой адрес вместо службы доставки — 400', r.status === 400, `${r.status}`);
+r = await subscribe(pa, 'http://169.254.169.254/latest');
+check('внутренний адрес — 400', r.status === 400, `${r.status}`);
+r = await subscribe(pa, `http://127.0.0.1:${pushPort}/a`, { p256dh: 'не ключ!', auth: 'x' });
+check('повреждённые ключи — 400', r.status === 400, `${r.status}`);
+
+const endpointA = `http://127.0.0.1:${pushPort}/a`;
+r = await subscribe(pa, endpointA);
+check('подписка устройства сохранена', r.status === 200 && subsOf(endpointA) === 1, `${r.status}`);
+
+await dmSend(pb, userPa, { body: 'Привет из пуша' });
+check('без открытой вкладки — пуш ушёл в службу доставки', await waitInbox(1), `${inbox.length}`);
+const sent = inbox[0];
+check('письмо подписано VAPID и зашифровано aes128gcm', sent?.headers.authorization?.startsWith('vapid t=') && sent.headers['content-encoding'] === 'aes128gcm' && sent.headers.ttl === '86400', JSON.stringify(sent?.headers));
+let payload = null;
+try {
+  payload = decryptPush(sent.body);
+} catch (err) {
+  payload = { error: err.message };
+}
+check('расшифровывается ключом подписчика: кто, что и куда', payload?.title === 'Пуш Б' && payload.body === 'Привет из пуша' && payload.url === `/messages/${userPb}` && payload.tag === `dm-${pbId}`, JSON.stringify(payload));
+
+const paLive = await listen(pa);
+await paLive.waitFor((e) => e.t === 'ready');
+await dmSend(pb, userPa, { body: 'Вкладка открыта' });
+await sleep(600);
+check('при открытой вкладке пуша нет — хватает живого потока', inbox.length === 1, `${inbox.length}`);
+paLive.stop();
+await sleep(300);
+
+pushStatus = 410;
+await dmSend(pb, userPa, { body: 'Подписку отозвали' });
+await waitInbox(2);
+await sleep(200);
+check('служба ответила 410 — подписка удалена', subsOf(endpointA) === 0, `${subsOf(endpointA)}`);
+
+pushStatus = 201;
+await subscribe(pa, endpointA);
+await pa('/auth/logout', { method: 'POST' });
+check('вышли на устройстве — его подписка ушла вместе с сеансом', subsOf(endpointA) === 0, `${subsOf(endpointA)}`);
+pushService.close();
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

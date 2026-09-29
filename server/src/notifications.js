@@ -3,6 +3,7 @@ import { isBlockedPair } from './blocks.js';
 import { publicUrl } from './media.js';
 import { isMuted } from './prefs.js';
 import { touchBadges } from './live.js';
+import { pushNotification } from './push.js';
 
 export const NOTIFICATION_KINDS = ['like', 'comment', 'follow', 'message', 'chat_message', 'chat_invite', 'mention'];
 
@@ -100,6 +101,8 @@ export function notify({ userId, actorId, kind, postId = null, commentId = null,
   `).run({ ...params, messageId: asId(messageId), createdAt: nowIso() });
 
   touchBadges(user);
+  // Открытой вкладки нет — пуш на устройства (решает push.js).
+  pushNotification(Number(info.lastInsertRowid));
   return Number(info.lastInsertRowid);
 }
 

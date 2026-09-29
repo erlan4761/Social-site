@@ -415,6 +415,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_scheduled_due  ON scheduled_messages(send_at);
   CREATE INDEX IF NOT EXISTS idx_scheduled_user ON scheduled_messages(user_id, kind, target_id);
 `);
+// Пуш-подписки устройств (см. push.js). Подписка живёт, пока жив сеанс:
+// вышли на телефоне — строка уходит каскадом, и пуши туда прекращаются.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_token TEXT NOT NULL REFERENCES sessions(token) ON DELETE CASCADE,
+    endpoint      TEXT NOT NULL UNIQUE,
+    p256dh        TEXT NOT NULL,
+    auth          TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
+`);
 ensureColumn('notifications', 'message_id', 'INTEGER REFERENCES chat_messages(id) ON DELETE CASCADE');
 
 // Реакция — одна на человека на сообщение, как у Телеграма без подписки:
