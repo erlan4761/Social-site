@@ -11,6 +11,7 @@ import {
 import { markNotificationsRead, notify } from '../notifications.js';
 import { dmUnreadTotal, prefFor, prefsOf } from '../prefs.js';
 import { dmScope, pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
+import { presenceFor } from '../presence.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -53,16 +54,15 @@ function full(row, me, otherId) {
 const PAIR_SQL = '((m.from_id = :me AND m.to_id = :other) OR (m.from_id = :other AND m.to_id = :me))';
 
 /**
- * `lastSeenAt` — только вне блокировки: заблокированный не должен узнавать,
- * когда человек заходил, и заблокировавший тоже — правило симметрично, как и
- * всё остальное в блокировках.
+ * Время визита — глазами смотрящего (presence.js): при блокировке его нет
+ * вовсе, а спрятанное настройкой заменяется на «был(а) недавно».
  */
-const person = (row, { blocked = false } = {}) => ({
+const person = (row, viewerId, blocked) => ({
   id: row.id,
   username: row.username,
   displayName: row.display_name,
   avatarUrl: publicUrl('avatar', row.avatar_path),
-  lastSeenAt: blocked ? null : row.last_seen_at ?? null,
+  ...presenceFor(viewerId, row, { blocked }),
 });
 
 // Один и тот же текст в обе стороны. Если заблокированному ответить «вас
@@ -75,7 +75,7 @@ const MESSAGE_NOT_FOUND = 'Сообщение не найдено';
 const unreadTotal = dmUnreadTotal;
 
 function findUser(username) {
-  return db.prepare('SELECT id, username, display_name, avatar_path, last_seen_at FROM users WHERE username = ?')
+  return db.prepare('SELECT id, username, display_name, avatar_path, last_seen_at, last_seen_privacy FROM users WHERE username = ?')
     .get(String(username).toLowerCase());
 }
 
@@ -107,7 +107,7 @@ router.get('/', (req, res) => {
       SELECT other_id, MAX(id) AS last_id FROM mine GROUP BY other_id
     )
     SELECT
-      u.id, u.username, u.display_name, u.avatar_path, u.last_seen_at,
+      u.id, u.username, u.display_name, u.avatar_path, u.last_seen_at, u.last_seen_privacy,
       m.id AS msg_id, m.body, m.created_at, m.from_id, m.to_id, m.read_at, m.edited_at,
       m.attach_path, m.attach_kind, m.attach_mime, m.attach_name, m.attach_size, m.attach_duration, m.attach_wave,
       (SELECT COUNT(*) FROM messages x
@@ -129,7 +129,7 @@ router.get('/', (req, res) => {
       // Превью в списке: цитата и реакции там не показываются, запросы за ними не нужны.
       const { replyToId, ...last } = serialize({ ...row, id: row.msg_id });
       return {
-        user: person(row, { blocked: Boolean(row.blocked) }),
+        user: person(row, me, Boolean(row.blocked)),
         unread: row.unread,
         blocked: Boolean(row.blocked),
         lastMessage: { ...last, replyTo: null, reactions: [] },
@@ -164,7 +164,7 @@ router.get('/:username', (req, res) => {
   const blocked = isBlockedPair(me, other.id);
 
   res.json({
-    user: person(other, { blocked }),
+    user: person(other, me, blocked),
     messages: decorate('dm', page.map(serialize).reverse(), {
       viewerId: me,
       scope: PAIR_SQL,
@@ -190,7 +190,9 @@ router.post('/:username', attachmentUpload.single('file'), async (req, res, next
     const other = otherOr404(req, res);
     if (!other) return;
     const me = req.user.id;
-    if (other.id === me) return res.status(400).json({ error: 'Нельзя написать самому себе' });
+    // Себе писать можно: это «Избранное», как в Телеграме. Такое сообщение
+    // сразу прочитано и не будит ни счётчик, ни ленту событий.
+    const saved = other.id === me;
     if (isBlockedPair(me, other.id)) {
       return res.status(403).json({ error: BLOCKED_CHAT_MESSAGE });
     }
@@ -210,16 +212,16 @@ router.post('/:username', attachmentUpload.single('file'), async (req, res, next
     attachment = forward ? await copyAttachment(forward.attachment) : await readAttachment(req.file, req.body);
 
     const info = db.prepare(`
-      INSERT INTO messages (from_id, to_id, body, created_at, reply_to_id, fwd_user_id, fwd_channel_id, ${ATTACH_INSERT_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(me, other.id, body, nowIso(), replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, ...attachmentValues(attachment));
+      INSERT INTO messages (from_id, to_id, body, created_at, read_at, reply_to_id, fwd_user_id, fwd_channel_id, ${ATTACH_INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(me, other.id, body, nowIso(), saved ? nowIso() : null, replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, ...attachmentValues(attachment));
 
     clearTyping(dmKey(me, other.id), me);
 
     // Одно событие на диалог: notify() убирает предыдущее непрочитанное
     // уведомление от того же собеседника, иначе лента событий стала бы
     // копией переписки.
-    notify({ userId: other.id, actorId: me, kind: 'message' });
+    if (!saved) notify({ userId: other.id, actorId: me, kind: 'message' });
 
     const row = db.prepare(`${MESSAGE_SELECT} WHERE m.id = ?`).get(Number(info.lastInsertRowid));
     res.status(201).json({ message: full(row, me, other.id) });

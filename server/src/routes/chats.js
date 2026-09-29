@@ -11,6 +11,7 @@ import {
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
 import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
+import { presenceFor } from '../presence.js';
 import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import * as v from '../validate.js';
 
@@ -50,11 +51,11 @@ const person = (row) => ({
   avatarUrl: publicUrl('avatar', row.avatar_path),
 });
 
-/** Участник с отметкой «в сети» — как собеседник в ЛС: кому-то из пары в
- *  блокировке время последнего визита не показывается. */
+/** Участник с отметкой «в сети» — по тем же правилам, что собеседник в ЛС
+ *  (presence.js): блокировка и настройка «кому видно время» действуют и тут. */
 const member = (row, viewerId) => ({
   ...person(row),
-  lastSeenAt: row.id !== viewerId && isBlockedPair(viewerId, row.id) ? null : row.last_seen_at ?? null,
+  ...presenceFor(viewerId, row),
 });
 
 const MESSAGE_SELECT = `
@@ -129,7 +130,7 @@ function memberChat(rawId, viewerId) {
  */
 function chatMembers(chatId) {
   return db.prepare(`
-    SELECT u.id, u.username, u.display_name, u.avatar_path, u.last_seen_at
+    SELECT u.id, u.username, u.display_name, u.avatar_path, u.last_seen_at, u.last_seen_privacy
     FROM chat_members cm JOIN users u ON u.id = cm.user_id
     WHERE cm.chat_id = ?
     ORDER BY cm.joined_at, u.id

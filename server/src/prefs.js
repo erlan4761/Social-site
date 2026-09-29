@@ -76,11 +76,19 @@ export function setPrefs(userId, kind, targetId, { pinned, muted }) {
 export const pinnedCount = (userId) =>
   db.prepare('SELECT COUNT(*) AS c FROM chat_prefs WHERE user_id = ? AND pinned_at IS NOT NULL').get(userId).c;
 
-/** Человек потерял доступ к чату или каналу — его настройки там больше не нужны. */
+/**
+ * Человек потерял доступ к чату или каналу — его настройки там больше не
+ * нужны, как и сам чат в его папках. Без `userId` — чата больше нет ни у кого.
+ */
 export function dropPrefs({ userId = null, kind, targetId }) {
   if (userId == null) {
     db.prepare('DELETE FROM chat_prefs WHERE kind = ? AND target_id = ?').run(kind, targetId);
+    db.prepare('DELETE FROM chat_folder_items WHERE kind = ? AND target_id = ?').run(kind, targetId);
   } else {
     db.prepare('DELETE FROM chat_prefs WHERE user_id = ? AND kind = ? AND target_id = ?').run(userId, kind, targetId);
+    db.prepare(`
+      DELETE FROM chat_folder_items
+      WHERE kind = ? AND target_id = ? AND folder_id IN (SELECT id FROM chat_folders WHERE user_id = ?)
+    `).run(kind, targetId, userId);
   }
 }

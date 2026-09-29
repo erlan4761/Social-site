@@ -22,6 +22,7 @@ import { router as attachmentRoutes } from './routes/attachments.js';
 import { router as channelRoutes } from './routes/channels.js';
 import { router as prefRoutes } from './routes/prefs.js';
 import { router as folderRoutes } from './routes/folders.js';
+import { router as accountRoutes } from './routes/account.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -56,6 +57,11 @@ app.use('/api/auth/login', rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_
 // чужой ящик или перебором нащупать, какие email вообще зарегистрированы.
 app.use('/api/auth/forgot-password', rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 5 }));
 app.use('/api/auth/reset-password', rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 20 }));
+// Смена пароля и удаление аккаунта проверяют текущий пароль — это тот же
+// вход, и перебирать его через открытый чужой сеанс нельзя давать быстрее.
+const passwordCheckLimit = rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 20 });
+app.put('/api/account/password', passwordCheckLimit);
+app.delete('/api/account', passwordCheckLimit);
 
 // Писать может кто угодно кому угодно, поэтому отправку приходится ограничивать:
 // иначе открытые ЛС — готовый канал для рассылки.
@@ -100,7 +106,7 @@ app.post('/api/channels/*splat', rateLimit({ windowMs: 60_000, max: relaxed ? 10
 // три секунды, прочтение — на каждое новое сообщение, — но скрипт, который
 // правит или реагирует без остановки, в него упрётся.
 const conversationLimit = rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 120 });
-for (const path of ['/api/messages/*splat', '/api/chats/*splat', '/api/channels/*splat', '/api/prefs/*splat', '/api/folders/*splat']) {
+for (const path of ['/api/messages/*splat', '/api/chats/*splat', '/api/channels/*splat', '/api/prefs/*splat', '/api/folders/*splat', '/api/account/*splat']) {
   app.put(path, conversationLimit);
   app.patch(path, conversationLimit);
   app.delete(path, conversationLimit);
@@ -123,6 +129,7 @@ app.use('/api/attachments', attachmentRoutes);
 app.use('/api/channels', channelRoutes);
 app.use('/api/prefs', prefRoutes);
 app.use('/api/folders', folderRoutes);
+app.use('/api/account', accountRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Нет такого эндпоинта' }));
 

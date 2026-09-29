@@ -446,7 +446,8 @@ r = await anon(`/messages`);
 check('аноним не видит диалоги', r.status === 401, `${r.status}`);
 
 r = await a(`/messages/${userA}`, { method: 'POST', body: JSON.stringify({ body: 'сам себе' }) });
-check('нельзя написать себе', r.status === 400, `${r.status}`);
+check('себе — можно: это «Избранное»', r.status === 201, `${r.status}`);
+await a(`/messages/${userA}/${r.body.message.id}`, { method: 'DELETE' });
 
 r = await a(`/messages/net_takogo_${stamp}`, { method: 'POST', body: JSON.stringify({ body: 'привет' }) });
 check('письмо несуществующему = 404', r.status === 404, `${r.status}`);
@@ -2058,8 +2059,8 @@ r = await pref(yan, 'chat', actChat, { pinned: true });
 check('чужой чат — 404', r.status === 404, `${r.status}`);
 r = await pref(yan, 'channel', prefHandle, { pinned: true });
 check('канал без подписки — 404', r.status === 404, `${r.status}`);
-r = await pref(lev, 'dm', userLe, { pinned: true });
-check('сам себе — 404', r.status === 404, `${r.status}`);
+r = await pref(lev, 'dm', userLe, { muted: false });
+check('себе — можно: «Избранное» тоже чат в списке', r.status === 200, `${r.status}`);
 r = await pref(lev, 'group', actChat, { pinned: true });
 check('неизвестный вид — 404', r.status === 404, `${r.status}`);
 r = await pref(lev, 'dm', userKi, { pinned: 'yes' });
@@ -2247,6 +2248,188 @@ r = await lev(`/folders/${film.id}`, { method: 'DELETE' });
 check('удалить свою', r.status === 200, `${r.status}`);
 r = await folderPost(lev, { title: 'Снова место', types: ['channel'] });
 check('после удаления место освободилось', r.status === 201, `${r.status}`);
+
+console.log('\n— Избранное —');
+const sam = makeClient();
+const userSa = `sam_${stamp}`;
+await signUp(sam, userSa, 'Сэм');
+r = await sam(`/messages/${userSa}`, { method: 'POST', body: JSON.stringify({ body: 'Купить: плёнка, фиксаж, проявитель' }) });
+check('сообщение себе — сразу прочитано', r.status === 201 && r.body.message?.readAt != null, `${r.status} ${JSON.stringify(r.body.message)}`);
+const savedMsg = r.body.message.id;
+r = await sam('/messages');
+const savedRow = r.body.conversations?.find((c) => c.user.username === userSa);
+check('«Избранное» в списке без непрочитанного', savedRow?.unread === 0 && r.body.unreadTotal === 0, JSON.stringify(r.body));
+r = await sam('/notifications');
+check('себе — без события', !r.body.notifications?.some((x) => x.kind === 'message'), JSON.stringify(r.body.notifications?.map((x) => x.kind)));
+r = await dmSend(kira, userSa, { body: 'Проявка в субботу, приходи' });
+r = await sam(`/messages/${userSa}`, { method: 'POST', body: JSON.stringify({ forward: { from: 'dm', id: r.body.message.id } }) });
+check('переслать в «Избранное»', r.status === 201 && r.body.message?.forwardedFrom?.username === userKi, `${r.status} ${JSON.stringify(r.body.message?.forwardedFrom)}`);
+r = await dmPost(sam, userSa, withFile(PNG_1PX, 'чек.png', 'image/png'));
+check('файл в «Избранное»', r.status === 201 && r.body.message?.attachment?.kind === 'image', `${r.status}`);
+r = await sam(`/messages/${userSa}/${savedMsg}/pin`, { method: 'PUT' });
+check('закрепить в «Избранном»', r.status === 200 && r.body.pinned?.id === savedMsg, `${r.status}`);
+r = await sam(`/messages/${userSa}/search?q=фиксаж`);
+check('поиск по «Избранному»', r.body.results?.length === 1 && r.body.results[0].id === savedMsg, JSON.stringify(r.body));
+r = await pref(sam, 'dm', userSa, { pinned: true });
+check('«Избранное» закрепляется в списке', r.status === 200 && r.body.pinned === true, `${r.status}`);
+r = await sam(`/messages/${userSa}`);
+check('в «Избранном» три сообщения и никакого «печатает»', r.body.typing === false && r.body.messages?.length === 3, JSON.stringify(r.body.messages?.length));
+
+console.log('\n— кто видит время захода —');
+const tom = makeClient();
+const una = makeClient();
+const userTo = `tom_${stamp}`;
+const userUn = `una_${stamp}`;
+await signUp(tom, userTo, 'Том');
+await signUp(una, userUn, 'Уна');
+await dmSend(tom, userUn, { body: 'Привет!' });
+const seenBy = async (client, other) => (await client(`/messages/${other}`)).body.user;
+const privacy = (client, lastSeen) => client('/account/privacy', { method: 'PUT', body: JSON.stringify({ lastSeen }) });
+
+r = await guest('/account');
+check('настройки — гостю 401', r.status === 401, `${r.status}`);
+r = await tom('/account');
+check('настройки: почта и «всем»', r.status === 200 && r.body.email === `${userTo}@example.test` && r.body.lastSeen === 'all', JSON.stringify(r.body));
+let lastSeen = await seenBy(una, userTo);
+check('по умолчанию время видно', typeof lastSeen?.lastSeenAt === 'string' && lastSeen.seenRecently === false, JSON.stringify(lastSeen));
+r = await privacy(tom, 'nobody');
+check('«никому» сохранено', r.status === 200 && r.body.lastSeen === 'nobody', `${r.status}`);
+lastSeen = await seenBy(una, userTo);
+check('«никому» — вместо времени «недавно»', lastSeen.lastSeenAt === null && lastSeen.seenRecently === true, JSON.stringify(lastSeen));
+lastSeen = await seenBy(tom, userUn);
+check('правило взаимное: спрятавший не видит чужое', lastSeen.lastSeenAt === null && lastSeen.seenRecently === true, JSON.stringify(lastSeen));
+r = await tom('/messages');
+check('и в списке чатов тоже', r.body.conversations?.find((c) => c.user.username === userUn)?.user.lastSeenAt === null, '');
+await privacy(tom, 'follows');
+lastSeen = await seenBy(una, userTo);
+check('«подпискам» — не подписан, не видно', lastSeen.lastSeenAt === null, JSON.stringify(lastSeen));
+await tom(`/users/${userUn}/follow`, { method: 'PUT' });
+lastSeen = await seenBy(una, userTo);
+check('«подпискам» — на кого подписан, тот видит', typeof lastSeen.lastSeenAt === 'string', JSON.stringify(lastSeen));
+lastSeen = await seenBy(tom, userUn);
+check('и сам видит его', typeof lastSeen.lastSeenAt === 'string', JSON.stringify(lastSeen));
+r = await tom('/chats', { method: 'POST', body: JSON.stringify({ title: 'Тихий чат', members: [userUn] }) });
+const quietChat = r.body.chat?.id;
+await privacy(tom, 'nobody');
+r = await una(`/chats/${quietChat}`);
+const tomInChat = r.body.chat?.members?.find((m) => m.username === userTo);
+check('в группе правило то же', tomInChat?.lastSeenAt === null && tomInChat?.seenRecently === true, JSON.stringify(tomInChat));
+r = await privacy(tom, 'friends');
+check('неизвестный вариант — 400', r.status === 400, `${r.status}`);
+await privacy(tom, 'all');
+
+console.log('\n— пароль и сеансы —');
+const tom2 = makeClient();
+const login = (client, password, username = userTo) =>
+  client('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+await login(tom2, 'parol12345');
+r = await tom('/account/sessions');
+const sessions = r.body.sessions ?? [];
+check('два сеанса, текущий первым', sessions.length === 2 && sessions[0].current && !sessions[1].current, JSON.stringify(sessions));
+check('токенов в ответе нет', sessions.every((s) => !('token' in s) && Number.isInteger(s.id)), JSON.stringify(sessions));
+r = await tom(`/account/sessions/${sessions[0].id}`, { method: 'DELETE' });
+check('текущий так не закончить — 400', r.status === 400, `${r.status}`);
+r = await una(`/account/sessions/${sessions[1].id}`, { method: 'DELETE' });
+check('чужой сеанс — 404', r.status === 404, `${r.status}`);
+r = await tom(`/account/sessions/${sessions[1].id}`, { method: 'DELETE' });
+check('закончить другой сеанс', r.status === 200, `${r.status}`);
+r = await tom2('/auth/me');
+check('там больше не вошли', r.body.user === null, JSON.stringify(r.body));
+
+await login(tom2, 'parol12345');
+const changePwd = (currentPassword, newPassword) =>
+  tom('/account/password', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) });
+r = await changePwd('ne-tot-parol', 'novyi-parol-1');
+check('неверный текущий пароль — 403', r.status === 403, `${r.status}`);
+r = await changePwd('parol12345', 'korotk');
+check('короткий новый — 400', r.status === 400, `${r.status}`);
+r = await changePwd('parol12345', 'parol12345');
+check('тот же самый — 400', r.status === 400, `${r.status}`);
+r = await changePwd('parol12345', 'novyi-parol-1');
+check('пароль сменён, другой сеанс закрыт', r.status === 200 && r.body.ended === 1, `${r.status} ${JSON.stringify(r.body)}`);
+r = await tom('/auth/me');
+check('текущий сеанс остался', r.body.user?.username === userTo, JSON.stringify(r.body));
+r = await tom2('/auth/me');
+check('другой — нет', r.body.user === null, JSON.stringify(r.body));
+r = await login(makeClient(), 'parol12345');
+check('старый пароль не входит', r.status === 401, `${r.status}`);
+r = await login(tom2, 'novyi-parol-1');
+check('новый входит', r.status === 200, `${r.status}`);
+r = await tom('/account/sessions', { method: 'DELETE' });
+check('завершить все другие', r.status === 200 && r.body.ended === 1, JSON.stringify(r.body));
+
+console.log('\n— удаление аккаунта —');
+const vic = makeClient();
+const userVi = `vika_${stamp}`;
+await signUp(vic, userVi, 'Вика');
+await vic('/users/me/avatar', { method: 'PUT', body: upload(PNG_1PX, 'me.png', 'image/png', 'avatar') });
+r = await vic('/posts', { method: 'POST', body: upload(PNG_1PX, 'p.png', 'image/png', 'media', { body: `Прощальная запись ${stamp}` }) });
+const vicPost = r.body.post;
+r = await dmPost(vic, userUn, withFile(PNG_1PX, 'v.png', 'image/png'));
+const vicAttach = r.body.message?.attachment?.url;
+await dmSend(una, userVi, { body: 'Ответ Вике' });
+r = await vic('/chats', { method: 'POST', body: JSON.stringify({ title: 'Вика и Уна', members: [userUn] }) });
+const sharedChat = r.body.chat.id;
+await vic(`/chats/${sharedChat}/messages`, { method: 'POST', body: JSON.stringify({ body: 'Моя реплика' }) });
+await una(`/chats/${sharedChat}/messages`, { method: 'POST', body: JSON.stringify({ body: 'Реплика Уны' }) });
+r = await vic('/chats', { method: 'POST', body: JSON.stringify({ title: 'Вика одна', members: [userUn] }) });
+const lonelyChat = r.body.chat.id;
+await una(`/chats/${lonelyChat}/members/${userUn}`, { method: 'DELETE' });
+const vicHandle = `vika_ch_${stamp}`;
+const vicChannel = await chCreate(vic, { title: 'Канал Вики', handle: vicHandle });
+await una(`/channels/${vicHandle}/subscription`, { method: 'PUT' });
+const unaPrefs = [await pref(una, 'dm', userVi, { pinned: true }), await pref(una, 'channel', vicHandle, { pinned: true })];
+const lonelyPref = await pref(vic, 'chat', lonelyChat, { pinned: true });
+const vicMe = (await vic('/auth/me')).body.user;
+const mediaBefore = await fetch(BASE.replace('/api', '') + vicPost?.media?.url);
+const attachBefore = await una.raw(vicAttach);
+check('подготовка: запись с файлом, вложение, группы, канал, настройки', mediaBefore.status === 200 && attachBefore.status === 200 && vicChannel.status === 201 && unaPrefs.every((x) => x.status === 200) && lonelyPref.status === 200 && Boolean(vicMe?.avatarUrl), `${mediaBefore.status} ${attachBefore.status} ${vicChannel.status} ${unaPrefs.map((x) => x.status)} ${lonelyPref.status}`);
+r = await una(`/search/posts?q=${encodeURIComponent(`Прощальная ${stamp}`)}`);
+check('до удаления её запись находится', r.body.posts?.length === 1, JSON.stringify(r.body));
+
+r = await vic('/account', { method: 'DELETE', body: JSON.stringify({ password: 'ne-tot' }) });
+check('без верного пароля — 403', r.status === 403, `${r.status}`);
+r = await vic('/account', { method: 'DELETE', body: JSON.stringify({ password: 'parol12345' }) });
+check('аккаунт удалён', r.status === 200, `${r.status} ${JSON.stringify(r.body)}`);
+r = await vic('/auth/me');
+check('сеанс закрыт', r.body.user === null, JSON.stringify(r.body));
+r = await login(makeClient(), 'parol12345', userVi);
+check('войти больше нельзя', r.status === 401, `${r.status}`);
+r = await una(`/users/${userVi}`);
+check('профиля нет', r.status === 404, `${r.status}`);
+r = await una(`/posts/${vicPost.id}`);
+check('записи нет', r.status === 404, `${r.status}`);
+r = await fetch(BASE.replace('/api', '') + vicPost.media.url);
+check('файл записи удалён', r.status === 404, `${r.status}`);
+r = await fetch(BASE.replace('/api', '') + vicMe.avatarUrl);
+check('аватар удалён', r.status === 404, `${r.status}`);
+r = await una.raw(vicAttach);
+check('вложение ЛС недоступно', r.status === 404, `${r.status}`);
+r = await una('/messages');
+check('переписка с ней ушла из списка', !r.body.conversations?.some((c) => c.user.username === userVi), '');
+r = await una(`/chats/${sharedChat}`);
+check('общая группа осталась и перешла Уне', r.status === 200 && r.body.chat?.ownerId !== vicMe.id && r.body.chat?.members?.length === 1, `${r.status} ${JSON.stringify(r.body.chat?.ownerId)}`);
+r = await una(`/chats/${sharedChat}/messages`);
+check('её реплики ушли, чужие — на месте', r.body.messages?.length === 1 && r.body.messages[0].body === 'Реплика Уны', JSON.stringify(r.body.messages?.map((m) => m.body)));
+r = await una(`/channels/${vicHandle}`);
+check('её канал удалён', r.status === 404, `${r.status}`);
+r = await una(`/search/posts?q=${encodeURIComponent(`Прощальная ${stamp}`)}`);
+check('поиск её записей не находит', r.status === 200 && r.body.posts?.length === 0, `${r.status} ${JSON.stringify(r.body)}`);
+{
+  const rdb = new DatabaseSync(process.env.DB_PATH, { readOnly: true });
+  try {
+    const lonely = rdb.prepare('SELECT COUNT(*) AS c FROM chats WHERE id = ?').get(lonelyChat).c;
+    const prefsLeft = rdb.prepare(`
+      SELECT COUNT(*) AS c FROM chat_prefs
+      WHERE (kind = 'dm' AND target_id = ?) OR (kind = 'chat' AND target_id = ?)
+         OR (kind = 'channel' AND NOT EXISTS (SELECT 1 FROM channels c WHERE c.id = chat_prefs.target_id))
+    `).get(vicMe.id, lonelyChat).c;
+    check('чат, где она была одна, удалён', lonely === 0, `${lonely}`);
+    check('чужие настройки про неё и её каналы убраны', prefsLeft === 0, `${prefsLeft}`);
+  } finally {
+    rdb.close();
+  }
+}
 
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

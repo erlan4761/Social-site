@@ -18,7 +18,8 @@ const NOT_FOUND = 'Чат не найден';
 function resolveTarget(kind, raw, me) {
   if (kind === 'dm') {
     const user = db.prepare('SELECT id FROM users WHERE username = ?').get(String(raw).toLowerCase());
-    return user && user.id !== me ? user.id : null;
+    // Себя тоже можно: это «Избранное», его закрепляют, как любой чат.
+    return user?.id ?? null;
   }
   if (kind === 'chat') {
     const id = Number.parseInt(raw, 10);

@@ -31,7 +31,7 @@ router.post('/register', async (req, res, next) => {
     `).run(uname, displayName, mail, await hashPassword(pwd), nowIso());
 
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
-    setSessionCookie(res, createSession(user.id));
+    setSessionCookie(res, createSession(user.id, req.get('user-agent')));
     res.status(201).json({ user: publicUser(user) });
   } catch (err) {
     next(err);
@@ -49,7 +49,7 @@ router.post('/login', async (req, res, next) => {
       return res.status(401).json({ error: 'Неверное имя пользователя или пароль' });
     }
 
-    setSessionCookie(res, createSession(user.id));
+    setSessionCookie(res, createSession(user.id, req.get('user-agent')));
     res.json({ user: publicUser(user) });
   } catch (err) {
     next(err);

@@ -1,0 +1,185 @@
+import { Router } from 'express';
+import { db, nowIso } from '../db.js';
+import { hashPassword, requireAuth, SESSION_COOKIE, verifyPassword } from '../auth.js';
+import { dropAttachment } from '../messageExtras.js';
+import { deleteUpload } from '../media.js';
+import { dropPrefs } from '../prefs.js';
+import { unpin } from '../pins.js';
+import { LAST_SEEN_OPTIONS } from '../presence.js';
+import * as v from '../validate.js';
+
+/**
+ * Настройки аккаунта: почта, кому видно время визита, пароль, сеансы и
+ * удаление. Всё — только о себе, поэтому чужого id в путях нет вовсе.
+ */
+export const router = Router();
+router.use(requireAuth);
+
+const WRONG_PASSWORD = 'Пароль не подходит';
+
+router.get('/', (req, res) => {
+  const row = db.prepare('SELECT email, last_seen_privacy, created_at FROM users WHERE id = ?').get(req.user.id);
+  res.json({ email: row.email ?? null, lastSeen: row.last_seen_privacy, createdAt: row.created_at });
+});
+
+router.put('/privacy', (req, res) => {
+  const lastSeen = req.body?.lastSeen;
+  if (!LAST_SEEN_OPTIONS.includes(lastSeen)) {
+    return res.status(400).json({ error: `«Кто видит время захода» — ${LAST_SEEN_OPTIONS.join(', ')}` });
+  }
+  db.prepare('UPDATE users SET last_seen_privacy = ? WHERE id = ?').run(lastSeen, req.user.id);
+  res.json({ lastSeen });
+});
+
+/** Пароль — по текущему, а не по «забыли»: сеанс мог остаться открытым на чужом компьютере. */
+async function passwordMatches(userId, candidate) {
+  const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
+  return typeof candidate === 'string' && candidate.length > 0 && verifyPassword(candidate, row.password_hash);
+}
+
+const otherSessions = (userId, token) =>
+  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(userId, token).changes;
+
+router.put('/password', async (req, res, next) => {
+  try {
+    const fresh = v.password(req.body?.newPassword);
+    if (!(await passwordMatches(req.user.id, req.body?.currentPassword))) {
+      return res.status(403).json({ error: WRONG_PASSWORD });
+    }
+    if (fresh === req.body.currentPassword) {
+      return res.status(400).json({ error: 'Новый пароль совпадает с текущим' });
+    }
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword(fresh), req.user.id);
+    // Пароль меняют, когда боятся, что его знает кто-то ещё: остальные сеансы
+    // и неиспользованные ссылки «забыли пароль» больше не должны работать.
+    const ended = otherSessions(req.user.id, req.sessionToken);
+    db.prepare('DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL').run(req.user.id);
+    res.json({ ok: true, ended });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ─ Сеансы ────────────────────────────────────────────────────────────────
+ * Токен сеанса — это и есть вход в аккаунт, наружу он не отдаётся даже
+ * владельцу: у сеанса в ответе только rowid.
+ */
+
+router.get('/sessions', (req, res) => {
+  const rows = db.prepare(`
+    SELECT rowid AS id, token, created_at, user_agent FROM sessions
+    WHERE user_id = ? AND expires_at > ?
+    ORDER BY created_at DESC
+  `).all(req.user.id, nowIso());
+  const sessions = rows
+    .map((r) => ({ id: r.id, current: r.token === req.sessionToken, createdAt: r.created_at, userAgent: r.user_agent ?? null }))
+    .sort((a, b) => Number(b.current) - Number(a.current));
+  res.json({ sessions });
+});
+
+/** «Завершить все другие сеансы» — текущий остаётся. */
+router.delete('/sessions', (req, res) => {
+  res.json({ ok: true, ended: otherSessions(req.user.id, req.sessionToken) });
+});
+
+router.delete('/sessions/:id', (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const row = Number.isSafeInteger(id)
+    ? db.prepare('SELECT rowid AS id, token FROM sessions WHERE rowid = ? AND user_id = ?').get(id, req.user.id)
+    : null;
+  if (!row) return res.status(404).json({ error: 'Сеанс не найден' });
+  if (row.token === req.sessionToken) {
+    return res.status(400).json({ error: 'Это текущий сеанс — чтобы его закончить, нажмите «Выйти»' });
+  }
+  db.prepare('DELETE FROM sessions WHERE rowid = ?').run(row.id);
+  res.json({ ok: true });
+});
+
+/* ─ Удаление аккаунта ─────────────────────────────────────────────────── */
+
+const paths = (sql, ...params) => db.prepare(sql).all(...params).map((r) => r.p).filter(Boolean);
+
+/**
+ * Удаление — навсегда и целиком: записи, комментарии, сообщения (и в личных,
+ * и в группах), каналы, подписки, файлы. Почти всё уносит каскад по внешним
+ * ключам от users; руками — то, у чего ключа нет или где каскад неверен:
+ *
+ * - группа, где остались другие, не удаляется, а переходит старейшему
+ *   участнику — как при выходе владельца; группа, где человек был один,
+ *   удаляется;
+ * - настройки, папки и закрепления других людей, указывающие на ушедшего,
+ *   его каналы и удалённые группы (у них нет внешнего ключа);
+ * - файлы на диске — после COMMIT, когда строк уже точно нет.
+ */
+function deleteAccount(me) {
+  const files = {
+    avatar: paths('SELECT avatar_path AS p FROM users WHERE id = ?', me),
+    media: paths('SELECT media_path AS p FROM posts WHERE author_id = ?', me),
+    attachment: [
+      ...paths('SELECT attach_path AS p FROM messages WHERE from_id = ? OR to_id = ?', me, me),
+      ...paths('SELECT attach_path AS p FROM chat_messages WHERE author_id = ?', me),
+      ...paths(`
+        SELECT p.attach_path AS p FROM channel_posts p JOIN channels c ON c.id = p.channel_id
+        WHERE c.owner_id = ?
+      `, me),
+    ],
+  };
+
+  db.exec('BEGIN');
+  try {
+    const chats = db.prepare(`
+      SELECT c.id, c.owner_id FROM chats c JOIN chat_members m ON m.chat_id = c.id AND m.user_id = ?
+    `).all(me);
+    for (const chat of chats) {
+      const heir = db.prepare(`
+        SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id <> ? ORDER BY joined_at, user_id LIMIT 1
+      `).get(chat.id, me);
+      if (heir) {
+        if (chat.owner_id === me) db.prepare('UPDATE chats SET owner_id = ? WHERE id = ?').run(heir.user_id, chat.id);
+        continue;
+      }
+      files.attachment.push(...paths('SELECT attach_path AS p FROM chat_messages WHERE chat_id = ?', chat.id));
+      db.prepare('DELETE FROM chats WHERE id = ?').run(chat.id);
+      unpin('chat', chat.id);
+      dropPrefs({ kind: 'chat', targetId: chat.id });
+    }
+
+    for (const { id } of db.prepare('SELECT id FROM channels WHERE owner_id = ?').all(me)) {
+      unpin('channel', id);
+      dropPrefs({ kind: 'channel', targetId: id });
+    }
+
+    // Закреплённые его реплики в группах, которые остаются: сами реплики уйдут каскадом.
+    db.prepare(`
+      DELETE FROM pinned_messages
+      WHERE kind = 'chat' AND message_id IN (SELECT id FROM chat_messages WHERE author_id = ?)
+    `).run(me);
+    // Пары ЛС с ним: ключ «меньший-больший».
+    db.prepare(`DELETE FROM pinned_messages WHERE kind = 'dm' AND (scope_id LIKE ? OR scope_id LIKE ?)`)
+      .run(`${me}-%`, `%-${me}`);
+    dropPrefs({ kind: 'dm', targetId: me });
+
+    db.prepare('DELETE FROM users WHERE id = ?').run(me);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+
+  files.avatar.forEach((p) => deleteUpload('avatar', p));
+  files.media.forEach((p) => deleteUpload('media', p));
+  files.attachment.forEach(dropAttachment);
+}
+
+router.delete('/', async (req, res, next) => {
+  try {
+    if (!(await passwordMatches(req.user.id, req.body?.password))) {
+      return res.status(403).json({ error: WRONG_PASSWORD });
+    }
+    deleteAccount(req.user.id);
+    res.clearCookie(SESSION_COOKIE, { path: '/' });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});

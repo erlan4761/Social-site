@@ -22,11 +22,12 @@ export async function verifyPassword(password, stored) {
   return timingSafeEqual(expected, actual);
 }
 
-export function createSession(userId) {
+/** `userAgent` — заголовок запроса входа: по нему сеанс узнают в настройках. */
+export function createSession(userId, userAgent = null) {
   const token = randomBytes(32).toString('base64url');
   const expires = new Date(Date.now() + SESSION_DAYS * 864e5);
-  db.prepare('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)')
-    .run(token, userId, nowIso(), expires.toISOString());
+  db.prepare('INSERT INTO sessions (token, user_id, created_at, expires_at, user_agent) VALUES (?, ?, ?, ?, ?)')
+    .run(token, userId, nowIso(), expires.toISOString(), userAgent ? String(userAgent).slice(0, 300) : null);
   return { token, expires };
 }
 
