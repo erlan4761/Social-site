@@ -3,7 +3,11 @@
 // без базы: npm run test:preview.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { decodeHtml, fetchSafe, isPublicAddress, parsePage, readUrl } from '../src/safeFetch.js';
+// Правила — как в продакшене: смоук-тест в CI разрешает петлю переменной на
+// весь job, а здесь проверяется именно запрет. Поэтому переменную убираем до
+// загрузки модуля (он читает её один раз).
+delete process.env.LINK_PREVIEW_ALLOW_LOOPBACK;
+const { decodeHtml, fetchSafe, isPublicAddress, parsePage, readUrl } = await import('../src/safeFetch.js');
 
 test('частные, локальные и служебные адреса закрыты', () => {
   for (const ip of [
