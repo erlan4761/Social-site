@@ -2201,5 +2201,52 @@ check('ответ на «кружок» цитирует «Видеосообщ�
 r = await chatPost(kira, actChat, withFile(WEBM, 'n.webm', 'video/webm', { videonote: 1, duration: 3 }));
 check('«кружок» в группу', r.status === 201 && r.body.message?.attachment?.kind === 'videonote', `${r.status}`);
 
+console.log('\n— папки чатов —');
+const folderPost = (client, body) => client('/folders', { method: 'POST', body: JSON.stringify(body) });
+r = await folderPost(lev, { title: 'Личное', types: ['dm'], excludeMuted: true });
+const personal = r.body.folder;
+check('папка по виду чатов', r.status === 201 && personal?.types.join() === 'dm' && personal.excludeMuted === true && personal.include.length === 0, `${r.status} ${JSON.stringify(r.body)}`);
+r = await folderPost(lev, { title: 'Плёнка', include: [{ kind: 'chat', id: actChat }, { kind: 'channel', id: 999 }] });
+const film = r.body.folder;
+check('папка из выбранных чатов', r.status === 201 && film?.include.length === 2 && film.types.length === 0, `${r.status} ${JSON.stringify(r.body)}`);
+r = await folderPost(lev, { title: 'Пустая' });
+check('пустая папка — 400', r.status === 400, `${r.status}`);
+r = await folderPost(lev, { title: 'Очень длинное имя папки', types: ['dm'] });
+check('имя длиннее 12 — 400', r.status === 400, `${r.status}`);
+r = await folderPost(lev, { title: 'Боты', types: ['bot'] });
+check('неизвестный вид — 400', r.status === 400, `${r.status}`);
+r = await folderPost(lev, { title: 'Кривая', include: [{ kind: 'chat', id: 'x' }] });
+check('кривой чат в списке — 400', r.status === 400, `${r.status}`);
+
+r = await lev(`/folders/${personal.id}`, { method: 'PATCH', body: JSON.stringify({ exclude: [{ kind: 'dm', id: miaId }], include: [{ kind: 'dm', id: miaId }] }) });
+check('исключение побеждает добавление', r.status === 200 && r.body.folder?.exclude.some((x) => x.id === miaId) && !r.body.folder.include.some((x) => x.id === miaId), `${r.status} ${JSON.stringify(r.body)}`);
+r = await lev(`/folders/${personal.id}`, { method: 'PATCH', body: JSON.stringify({ title: 'Люди' }) });
+check('правка имени не трогает остальное', r.body.folder?.title === 'Люди' && r.body.folder.types.join() === 'dm' && r.body.folder.exclude.length === 1, JSON.stringify(r.body.folder));
+r = await lev(`/folders/${film.id}`, { method: 'PATCH', body: JSON.stringify({ include: [] }) });
+check('правка, после которой папка пуста, — 400 и без изменений', r.status === 400, `${r.status}`);
+r = await lev('/folders');
+check('после отказа чаты папки на месте', r.body.folders?.find((f) => f.id === film.id)?.include.length === 2, JSON.stringify(r.body.folders));
+check('порядок — порядок создания', r.body.folders?.map((f) => f.id).join() === `${personal.id},${film.id}`, JSON.stringify(r.body.folders?.map((f) => f.id)));
+
+r = await lev('/folders/order', { method: 'PUT', body: JSON.stringify({ ids: [film.id, personal.id] }) });
+check('новый порядок', r.status === 200 && r.body.folders?.map((f) => f.id).join() === `${film.id},${personal.id}`, `${r.status} ${JSON.stringify(r.body)}`);
+r = await lev('/folders/order', { method: 'PUT', body: JSON.stringify({ ids: [film.id] }) });
+check('порядок без одной папки — 400', r.status === 400, `${r.status}`);
+
+r = await kira('/folders');
+check('чужих папок не видно', r.body.folders?.length === 0, JSON.stringify(r.body.folders));
+r = await kira(`/folders/${film.id}`, { method: 'PATCH', body: JSON.stringify({ title: 'Моя' }) });
+check('чужую папку не править — 404', r.status === 404, `${r.status}`);
+r = await kira(`/folders/${film.id}`, { method: 'DELETE' });
+check('и не удалить — 404', r.status === 404, `${r.status}`);
+
+for (let i = 0; i < 8; i++) await folderPost(lev, { title: `Папка ${i}`, types: ['chat'] });
+r = await folderPost(lev, { title: 'Одиннадцатая', types: ['chat'] });
+check('одиннадцатая папка — 400', r.status === 400, `${r.status}`);
+r = await lev(`/folders/${film.id}`, { method: 'DELETE' });
+check('удалить свою', r.status === 200, `${r.status}`);
+r = await folderPost(lev, { title: 'Снова место', types: ['channel'] });
+check('после удаления место освободилось', r.status === 201, `${r.status}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

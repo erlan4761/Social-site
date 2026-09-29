@@ -278,6 +278,36 @@ db.exec(`
   );
 `);
 
+/* ─ Папки чатов ─────────────────────────────────────────────────────────
+ * Вкладки над списком чатов, как в Телеграме: у каждого свои. Папка — это
+ * правило, а не копия списка: виды чатов (types — «dm,chat,channel»), чаты,
+ * добавленные вручную, и исключённые (chat_folder_items), плюс «без
+ * приглушённых» и «только непрочитанные». Какие чаты подходят, считает
+ * клиент — список чатов у него и так загружен целиком.
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_folders (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title         TEXT NOT NULL,
+    position      INTEGER NOT NULL,
+    types         TEXT NOT NULL DEFAULT '',
+    exclude_muted INTEGER NOT NULL DEFAULT 0,
+    exclude_read  INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS chat_folder_items (
+    folder_id INTEGER NOT NULL REFERENCES chat_folders(id) ON DELETE CASCADE,
+    kind      TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    mode      TEXT NOT NULL,
+    PRIMARY KEY (folder_id, kind, target_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_chat_folders_user ON chat_folders(user_id, position);
+`);
+
 /* ─ Закреплённое сообщение ──────────────────────────────────────────────
  * Одно на переписку, общее для всех её участников: полоса под шапкой, по
  * нажатию — переход к сообщению. scope_id — пара в ЛС («3-7»), номер чата или

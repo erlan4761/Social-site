@@ -21,6 +21,7 @@ import { router as bookmarkRoutes } from './routes/bookmarks.js';
 import { router as attachmentRoutes } from './routes/attachments.js';
 import { router as channelRoutes } from './routes/channels.js';
 import { router as prefRoutes } from './routes/prefs.js';
+import { router as folderRoutes } from './routes/folders.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -99,7 +100,7 @@ app.post('/api/channels/*splat', rateLimit({ windowMs: 60_000, max: relaxed ? 10
 // три секунды, прочтение — на каждое новое сообщение, — но скрипт, который
 // правит или реагирует без остановки, в него упрётся.
 const conversationLimit = rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 120 });
-for (const path of ['/api/messages/*splat', '/api/chats/*splat', '/api/channels/*splat', '/api/prefs/*splat']) {
+for (const path of ['/api/messages/*splat', '/api/chats/*splat', '/api/channels/*splat', '/api/prefs/*splat', '/api/folders/*splat']) {
   app.put(path, conversationLimit);
   app.patch(path, conversationLimit);
   app.delete(path, conversationLimit);
@@ -121,6 +122,7 @@ app.use('/api/bookmarks', bookmarkRoutes);
 app.use('/api/attachments', attachmentRoutes);
 app.use('/api/channels', channelRoutes);
 app.use('/api/prefs', prefRoutes);
+app.use('/api/folders', folderRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Нет такого эндпоинта' }));
 
