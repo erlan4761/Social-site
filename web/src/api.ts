@@ -14,6 +14,8 @@ export type User = {
   /** Приходят только из `GET /users/:username` для чужого профиля. */
   blockedByMe?: boolean;
   blocksMe?: boolean;
+  /** Номер из `GET /users/:username` — если владелец показывает его смотрящему. */
+  phone?: string | null;
 };
 
 export type Author = { id: number; username: string; displayName: string; avatarUrl: string | null };
@@ -241,6 +243,14 @@ export type FolderInput = Partial<Omit<ChatFolder, 'id'>>;
 /** Кому видно время захода: всем, тем, на кого я подписан, никому. */
 export type LastSeenPrivacy = 'all' | 'follows' | 'nobody';
 
+/** Кто найдёт по номеру и кому номер виден — те же три ответа. По умолчанию «никто». */
+export type PhonePrivacy = LastSeenPrivacy;
+
+export type Privacy = { lastSeen: LastSeenPrivacy; phoneFind: PhonePrivacy; phoneShow: PhonePrivacy };
+
+/** Человек, найденный по номеру: сам номер (тот, что искали) и подписка на него. */
+export type PhoneMatch = Author & { phone: string; followedByMe: boolean };
+
 export type AccountSettings = {
   email: string | null;
   /** Номер в формате E.164 или null. */
@@ -250,6 +260,8 @@ export type AccountSettings = {
   /** Входит ли по логину и паролю — только старые аккаунты, созданные до входа по номеру. */
   passwordLogin: boolean;
   lastSeen: LastSeenPrivacy;
+  phoneFind: PhonePrivacy;
+  phoneShow: PhonePrivacy;
   createdAt: string;
 };
 
@@ -385,8 +397,9 @@ const realApi = {
   phonePassword: (ticket: string, password: string) =>
     request<{ user: User }>('/auth/phone/password', { method: 'POST', body: body({ ticket, password }) }),
 
-  phoneSignup: (ticket: string, username: string, displayName: string) =>
-    request<{ user: User }>('/auth/phone/signup', { method: 'POST', body: body({ ticket, username, displayName }) }),
+  /** `findable` — галочка «находить меня по номеру»; без неё по номеру не найдут. */
+  phoneSignup: (ticket: string, username: string, displayName: string, findable = false) =>
+    request<{ user: User }>('/auth/phone/signup', { method: 'POST', body: body({ ticket, username, displayName, findable }) }),
 
   /** Вход по логину и паролю — только для аккаунтов, созданных до входа по номеру. */
   login: (input: { username: string; password: string }) =>
@@ -549,6 +562,10 @@ const realApi = {
 
   searchUsers: (q: string) =>
     request<{ users: Author[] }>(`/users/search?q=${encodeURIComponent(q)}`),
+
+  /** Люди по номерам (до 50): только номер целиком и только разрешившие. */
+  findByPhone: (phones: string[]) =>
+    request<{ users: PhoneMatch[] }>('/users/by-phone', { method: 'POST', body: body({ phones }) }),
 
   setFollow: (username: string, following: boolean) =>
     request<{ followedByMe: boolean; followerCount: number }>(
@@ -760,8 +777,9 @@ const realApi = {
 
   account: () => request<AccountSettings>('/account'),
 
-  setLastSeen: (lastSeen: LastSeenPrivacy) =>
-    request<{ lastSeen: LastSeenPrivacy }>('/account/privacy', { method: 'PUT', body: body({ lastSeen }) }),
+  /** Меняется только присланное; в ответе — все три настройки. */
+  setPrivacy: (patch: Partial<Privacy>) =>
+    request<Privacy>('/account/privacy', { method: 'PUT', body: body(patch) }),
 
   linkPhoneStart: (phone: string) => request<CodeSent>('/account/phone/start', { method: 'POST', body: body({ phone }) }),
 

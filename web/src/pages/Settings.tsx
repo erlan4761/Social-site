@@ -2,17 +2,31 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent, MouseEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { deviceName } from '../device';
-import { api, ApiError, type AccountSettings, type LastSeenPrivacy, type Session } from '../api';
+import { api, ApiError, type AccountSettings, type LastSeenPrivacy, type Privacy, type Session } from '../api';
 import { disablePush, enablePush, install, isStandalone, pushState, useInstallAvailable, type PushState } from '../pwa';
 import { useSession } from '../session';
 import { EMPTY_PHONE, PhoneField } from '../components/PhoneField';
 import { formatPhone, toE164 } from '../phone';
 import { fullDate, joinedOn, plural } from '../time';
 
-const LAST_SEEN_CHOICES: { value: LastSeenPrivacy; title: string; hint: string }[] = [
+type Choice = { value: LastSeenPrivacy; title: string; hint: string };
+
+const LAST_SEEN_CHOICES: Choice[] = [
   { value: 'all', title: 'Все', hint: 'Собеседники видят «в сети» и «был(а) 5 минут назад».' },
   { value: 'follows', title: 'Мои подписки', hint: 'Время видят только те, на кого подписаны вы.' },
   { value: 'nobody', title: 'Никто', hint: 'Вместо времени собеседники видят «был(а) недавно».' },
+];
+
+const PHONE_FIND_CHOICES: Choice[] = [
+  { value: 'all', title: 'Все', hint: 'Кто знает ваш номер целиком, найдёт вас в поиске и сможет написать.' },
+  { value: 'follows', title: 'Мои подписки', hint: 'Найдут только те, на кого подписаны вы.' },
+  { value: 'nobody', title: 'Никто', hint: 'По номеру вас не найти — только по имени и логину.' },
+];
+
+const PHONE_SHOW_CHOICES: Choice[] = [
+  { value: 'all', title: 'Все', hint: 'Номер виден в профиле всем, кто вошёл в Хронику. Гостям — никогда.' },
+  { value: 'follows', title: 'Мои подписки', hint: 'Номер в профиле видят только те, на кого подписаны вы.' },
+  { value: 'nobody', title: 'Никто', hint: 'Номер не виден никому.' },
 ];
 
 const errorText = (err: unknown, fallback: string) => (err instanceof ApiError ? err.message : fallback);
@@ -73,7 +87,32 @@ export function Settings() {
         )}
 
         {account && <PhoneBlock account={account} onChange={reload} />}
-        {account && <Privacy initial={account.lastSeen} />}
+        {account && (
+          <PrivacyChoice
+            field="lastSeen"
+            title="Кто видит, когда я был(а) в сети"
+            choices={LAST_SEEN_CHOICES}
+            initial={account.lastSeen}
+            note="Правило взаимное, как в Телеграме: от кого вы прячете своё время, того время не видите и вы."
+          />
+        )}
+        {account?.phone && (
+          <PrivacyChoice
+            field="phoneFind"
+            title="Кто может найти меня по номеру"
+            choices={PHONE_FIND_CHOICES}
+            initial={account.phoneFind}
+            note="Номер ищется только целиком — по кусочку не найти. Пока вы сами не разрешили, по номеру вас не находят."
+          />
+        )}
+        {account?.phone && (
+          <PrivacyChoice
+            field="phoneShow"
+            title="Кто видит мой номер"
+            choices={PHONE_SHOW_CHOICES}
+            initial={account.phoneShow}
+          />
+        )}
         {account && <Password account={account} onChange={reload} />}
         <Device />
         <Sessions />
@@ -205,9 +244,17 @@ function PhoneBlock({ account, onChange }: { account: AccountSettings; onChange:
   );
 }
 
-/* ─ Время захода ───────────────────────────────────────────────────────── */
+/* ─ Приватность: время захода и номер ─────────────────────────────────────── */
 
-function Privacy({ initial }: { initial: LastSeenPrivacy }) {
+type PrivacyProps = {
+  field: keyof Privacy;
+  title: string;
+  choices: Choice[];
+  initial: LastSeenPrivacy;
+  note?: string;
+};
+
+function PrivacyChoice({ field, title, choices, initial, note }: PrivacyProps) {
   const [value, setValue] = useState(initial);
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -217,7 +264,7 @@ function Privacy({ initial }: { initial: LastSeenPrivacy }) {
     setValue(next);
     setStatus(null);
     try {
-      await api.setLastSeen(next);
+      await api.setPrivacy({ [field]: next });
       setStatus({ ok: true, text: 'Сохранено' });
     } catch (err) {
       setValue(before);
@@ -226,17 +273,17 @@ function Privacy({ initial }: { initial: LastSeenPrivacy }) {
   }
 
   return (
-    <section className="settings-block" aria-labelledby="settings-privacy">
-      <h2 className="settings-title" id="settings-privacy">
-        Кто видит, когда я был(а) в сети
+    <section className="settings-block" aria-labelledby={`settings-${field}`}>
+      <h2 className="settings-title" id={`settings-${field}`}>
+        {title}
       </h2>
       <fieldset className="choices">
-        <legend className="sr-only">Кто видит время захода</legend>
-        {LAST_SEEN_CHOICES.map((c) => (
+        <legend className="sr-only">{title}</legend>
+        {choices.map((c) => (
           <label key={c.value} className="choice">
             <input
               type="radio"
-              name="last-seen"
+              name={field}
               value={c.value}
               checked={value === c.value}
               onChange={() => void choose(c.value)}
@@ -248,9 +295,7 @@ function Privacy({ initial }: { initial: LastSeenPrivacy }) {
           </label>
         ))}
       </fieldset>
-      <p className="settings-note">
-        Правило взаимное, как в Телеграме: от кого вы прячете своё время, того время не видите и вы.
-      </p>
+      {note && <p className="settings-note">{note}</p>}
       {status && (
         <p className={status.ok ? 'settings-status' : 'error'} role="status">
           {status.text}

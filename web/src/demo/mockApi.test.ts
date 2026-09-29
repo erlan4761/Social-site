@@ -91,7 +91,7 @@ describe('витрина: отложенные', () => {
 
 describe('витрина: аккаунт', () => {
   it('«никому» прячет время и у собеседника, и у себя', async () => {
-    await api.setLastSeen('nobody');
+    await api.setPrivacy({ lastSeen: 'nobody' });
     const { user } = await api.thread('marina');
     expect(user.lastSeenAt).toBeNull();
     expect(user.seenRecently).toBe(true);
@@ -155,5 +155,47 @@ describe('витрина: вход по номеру', () => {
     await api.phoneStart('+996700445566');
     await expect(api.phoneStart('+996700445566')).rejects.toMatchObject({ status: 429 });
     await expect(api.phoneStart('123')).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe('витрина: поиск по номеру', () => {
+  it('находит только разрешивших; «мои подписки» — только тех, на кого подписан владелец', async () => {
+    const hits = async (phones: string[]) => (await api.findByPhone(phones)).users.map((u) => u.username);
+    expect(await hits(['+996 555 00-00-02', 'мусор'])).toEqual(['marina']);
+    // Олега по номеру находят те, на кого подписан он сам.
+    await loginAs('oleg_k');
+    await api.setFollow('demo', false);
+    await loginAs('demo');
+    expect(await hits(['+996555000003'])).toEqual([]);
+    await loginAs('oleg_k');
+    await api.setFollow('demo', true);
+    await loginAs('demo');
+    expect(await hits(['+996555000003'])).toEqual(['oleg_k']);
+    expect(await hits(['+996555000001'])).toEqual([]);
+    await expect(api.findByPhone([])).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('номер в профиле: гостю нет, «мои подписки» — только тем, на кого подписан владелец', async () => {
+    await loginAs('marina');
+    await api.setFollow('demo', false);
+    await loginAs('demo');
+    expect((await api.profile('marina')).user.phone).toBeNull();
+    await loginAs('marina');
+    await api.setFollow('demo', true);
+    await loginAs('demo');
+    expect((await api.profile('marina')).user.phone).toBe('+996555000002');
+    await api.logout();
+    expect((await api.profile('marina')).user.phone).toBeNull();
+  });
+
+  it('настройки меняются по одной, без галочки при регистрации — не находят', async () => {
+    expect(await api.setPrivacy({ phoneFind: 'all' })).toMatchObject({ phoneFind: 'all', phoneShow: 'nobody', lastSeen: 'all' });
+    await expect(api.setPrivacy({})).rejects.toMatchObject({ status: 400 });
+    await api.logout();
+    const sent = await api.phoneStart('+996700123123');
+    const verdict = await api.phoneVerify(sent.phone, sent.demoCode!);
+    if (verdict.status !== 'signup') throw new Error(verdict.status);
+    await api.phoneSignup(verdict.ticket, 'tihij', 'Тихий');
+    expect((await api.account()).phoneFind).toBe('nobody');
   });
 });

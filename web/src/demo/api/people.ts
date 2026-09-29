@@ -3,6 +3,7 @@ import { type DbUser, db, tick, fail } from '../store';
 import { byId, byName, requireMe, author, blockedPair, hidden } from '../model/people';
 import { publicUser } from '../model/posts';
 import { notify, dropNotification } from '../model/notifications';
+import { findByPhones, visiblePhone } from '../model/phoneBook';
 
 /** Методы витрины: профиль, аватар, поиск людей, подписки, блокировки, жалобы. */
 
@@ -18,6 +19,7 @@ export const peopleApi = {
         ...publicUser(target),
         blockedByMe: db.blocks.some((b) => b.blockerId === db.meId && b.blockedId === target.id),
         blocksMe: db.blocks.some((b) => b.blockerId === target.id && b.blockedId === db.meId),
+        phone: visiblePhone(target, db.meId),
       },
     });
   },
@@ -65,6 +67,18 @@ export const peopleApi = {
       .slice(0, 20);
 
     return tick({ users: scored.map(({ u }) => author(u)) });
+  },
+
+  findByPhone: (phones: string[]) => {
+    const u = requireMe()!;
+    if (!Array.isArray(phones) || phones.length === 0 || phones.length > 50) fail(400, 'Номера — списком строк, от 1 до 50');
+    return tick({
+      users: findByPhones(u.id, phones).map((x) => ({
+        ...author(x),
+        phone: x.phone!,
+        followedByMe: db.follows.some((f) => f.followerId === u.id && f.followeeId === x.id),
+      })),
+    });
   },
 
   setFollow: (username: string, following: boolean) => {

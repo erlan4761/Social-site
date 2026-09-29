@@ -243,6 +243,8 @@ function CodeStep({ step, onBack, onResent, onVerdict }: CodeProps) {
 function SignupStep({ step, onDone }: { step: Extract<Step, { kind: 'signup' }>; onDone: (u: User) => void }) {
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
+  // Не отмечено: находиться по номеру человек решает сам, а не по умолчанию.
+  const [findable, setFindable] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -251,7 +253,7 @@ function SignupStep({ step, onDone }: { step: Extract<Step, { kind: 'signup' }>;
     setBusy(true);
     setError(null);
     try {
-      onDone((await api.phoneSignup(step.ticket, username, displayName || username)).user);
+      onDone((await api.phoneSignup(step.ticket, username, displayName || username, findable)).user);
     } catch (err) {
       setError(errorText(err));
       setBusy(false);
@@ -286,6 +288,13 @@ function SignupStep({ step, onDone }: { step: Extract<Step, { kind: 'signup' }>;
           autoComplete="name"
           maxLength={40}
         />
+      </label>
+      <label className="choice">
+        <input type="checkbox" checked={findable} onChange={(e) => setFindable(e.target.checked)} />
+        <span>
+          <strong>Находить меня по номеру</strong>
+          <span className="choice-hint">Кто знает ваш номер, найдёт вас в поиске. Поменять можно в настройках.</span>
+        </span>
       </label>
       <button className="btn block" type="submit" disabled={busy}>
         {busy ? 'Минуту…' : 'Создать аккаунт'}

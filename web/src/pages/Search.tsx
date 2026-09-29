@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api, ApiError, type Author, type Post } from '../api';
+import { api, ApiError, type Author, type PhoneMatch, type Post } from '../api';
 import { Monogram } from '../components/Monogram';
 import { PostRow } from '../components/PostRow';
+import { canPickContacts, pickContactPhones } from '../contacts';
 import { searchTerms } from '../highlight';
+import { dialOf, formatPhone, looksLikePhone } from '../phone';
 import { useSession } from '../session';
+import { plural } from '../time';
 
 /** Люди здесь — короткая подсказка сбоку от главного: их полный список живёт
  *  в выпадающем поиске в шапке, и второй бесконечной ленты тут не нужно. */
@@ -26,6 +29,9 @@ export function Search() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [people, setPeople] = useState<Author[] | null>(null);
+  // По номеру ищут только вошедшие: гостю сервер ответит 401.
+  const phoneQuery = user != null && looksLikePhone(query);
+  const [byPhone, setByPhone] = useState<PhoneMatch[] | null>(null);
 
   useEffect(() => {
     if (!query) {
@@ -85,6 +91,25 @@ export function Search() {
     };
   }, [query]);
 
+  // Набран номер с «+» — ищем человека и по нему. Отдельным блоком: ответ
+  // сервера не различает «номера нет» и «не разрешил находить», и подпись
+  // под пустым результатом говорит об этом честно.
+  useEffect(() => {
+    if (!phoneQuery) {
+      setByPhone(null);
+      return;
+    }
+    let cancelled = false;
+    setByPhone(null);
+    api
+      .findByPhone([query])
+      .then((res) => !cancelled && setByPhone(res.users))
+      .catch(() => !cancelled && setByPhone([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [query, phoneQuery]);
+
   const loadMore = useCallback(async () => {
     if (cursor == null || loadingMore) return;
     setLoadingMore(true);
@@ -130,55 +155,81 @@ export function Search() {
 
       {query ? (
         <p className="search-lede">
-          По запросу «{query}» — записи целиком и люди по имени.
+          {phoneQuery
+            ? `По номеру ${formatPhone(query.replace(/[^\d+]/g, ''))} — человек, если он разрешил находить себя по номеру.`
+            : `По запросу «${query}» — записи целиком и люди по имени.`}
         </p>
       ) : (
         <p className="search-lede">
-          Наберите слово в строке поиска наверху — найдутся записи, где оно есть.
+          Наберите слово в строке поиска наверху — найдутся записи, где оно есть. Номер телефона — целиком, с «+» и
+          кодом страны.
         </p>
       )}
 
       {error && <p className="error">{error}</p>}
 
-      <section className="search-section" aria-labelledby="search-posts">
-        <h2 className="search-section-title" id="search-posts">
-          Записи
-        </h2>
+      {phoneQuery && (
+        <section className="search-section" aria-labelledby="search-phone">
+          <h2 className="search-section-title" id="search-phone">
+            По номеру телефона
+          </h2>
+          {byPhone === null ? (
+            <p className="empty flush">Ищу…</p>
+          ) : byPhone.length === 0 ? (
+            <p className="empty flush">
+              <strong>Никого.</strong>
+              Либо этого номера нет в Хронике, либо человек не разрешил находить себя по номеру.
+            </p>
+          ) : (
+            <PeopleList people={byPhone} />
+          )}
+        </section>
+      )}
 
-        {!query ? (
-          <p className="empty flush">Поиск идёт по началу слова: «проявк» найдёт и «проявку», и «проявкой».</p>
-        ) : loading ? (
-          <p className="empty flush">Ищу…</p>
-        ) : posts.length === 0 ? (
-          <p className="empty flush">
-            <strong>Ничего не нашлось.</strong>
-            Попробуйте одно слово вместо двух — они ищутся вместе, а не по отдельности.
-          </p>
-        ) : (
-          <div className="rail">
-            {posts.map((post) => (
-              <PostRow
-                key={post.id}
-                post={post}
-                canDelete={post.author.id === user?.id}
-                highlight={terms}
-                onDelete={(id) => void remove(id)}
-                onPatch={patch}
-              />
-            ))}
-          </div>
-        )}
+      {!query && user && canPickContacts() && <FromContacts />}
 
-        {cursor != null && (
-          <div className="more">
-            <button className="btn ghost" type="button" onClick={() => void loadMore()} disabled={loadingMore}>
-              {loadingMore ? 'Загружаю…' : 'Показать ещё'}
-            </button>
-          </div>
-        )}
-      </section>
+      {/* Номер — не слово: записи и имена по нему искать незачем. */}
+      {!phoneQuery && (
+        <section className="search-section" aria-labelledby="search-posts">
+          <h2 className="search-section-title" id="search-posts">
+            Записи
+          </h2>
 
-      {query && (
+          {!query ? (
+            <p className="empty flush">Поиск идёт по началу слова: «проявк» найдёт и «проявку», и «проявкой».</p>
+          ) : loading ? (
+            <p className="empty flush">Ищу…</p>
+          ) : posts.length === 0 ? (
+            <p className="empty flush">
+              <strong>Ничего не нашлось.</strong>
+              Попробуйте одно слово вместо двух — они ищутся вместе, а не по отдельности.
+            </p>
+          ) : (
+            <div className="rail">
+              {posts.map((post) => (
+                <PostRow
+                  key={post.id}
+                  post={post}
+                  canDelete={post.author.id === user?.id}
+                  highlight={terms}
+                  onDelete={(id) => void remove(id)}
+                  onPatch={patch}
+                />
+              ))}
+            </div>
+          )}
+
+          {cursor != null && (
+            <div className="more">
+              <button className="btn ghost" type="button" onClick={() => void loadMore()} disabled={loadingMore}>
+                {loadingMore ? 'Загружаю…' : 'Показать ещё'}
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {query && !phoneQuery && (
         <section className="search-section" aria-labelledby="search-people">
           <h2 className="search-section-title" id="search-people">
             Люди
@@ -189,27 +240,79 @@ export function Search() {
           ) : people.length === 0 ? (
             <p className="empty flush">Никого с таким именем нет.</p>
           ) : (
-            <ul className="people-list">
-              {people.map((person) => (
-                <li key={person.id}>
-                  <Link className="people-hit" to={`/u/${person.username}`}>
-                    <Monogram
-                      username={person.username}
-                      displayName={person.displayName}
-                      avatarUrl={person.avatarUrl}
-                      size="sm"
-                    />
-                    <span>
-                      <strong>{person.displayName}</strong>
-                      <span className="people-handle">@{person.username}</span>
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
+            <PeopleList people={people} />
           )}
         </section>
       )}
     </>
+  );
+}
+
+function PeopleList({ people }: { people: Author[] }) {
+  return (
+    <ul className="people-list">
+      {people.map((person) => (
+        <li key={person.id}>
+          <Link className="people-hit" to={`/u/${person.username}`}>
+            <Monogram username={person.username} displayName={person.displayName} avatarUrl={person.avatarUrl} size="sm" />
+            <span>
+              <strong>{person.displayName}</strong>
+              <span className="people-handle">@{person.username}</span>
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * «Друзья из контактов» — только там, где браузер умеет открыть выбор
+ * контактов (Chrome на Android). Человек сам отмечает, кого искать; местные
+ * номера дополняются кодом страны его собственного номера.
+ */
+function FromContacts() {
+  const [found, setFound] = useState<PhoneMatch[] | null>(null);
+  const [asked, setAsked] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function pick() {
+    setBusy(true);
+    setError(null);
+    try {
+      const { phone } = await api.account();
+      const phones = await pickContactPhones(dialOf(phone));
+      if (phones.length === 0) return;
+      setAsked(phones.length);
+      setFound((await api.findByPhone(phones)).users);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось открыть контакты');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="search-section" aria-labelledby="search-contacts">
+      <h2 className="search-section-title" id="search-contacts">
+        Друзья из контактов
+      </h2>
+      <p className="empty flush">
+        Отметьте людей в контактах телефона — покажем, кто из них уже здесь. Адресная книга целиком на сервер не
+        уходит.
+      </p>
+      <button className="btn ghost" type="button" onClick={() => void pick()} disabled={busy}>
+        {busy ? 'Ищу…' : 'Выбрать контакты'}
+      </button>
+      {error && <p className="error">{error}</p>}
+      {found && found.length === 0 && (
+        <p className="empty flush">
+          Из {asked} {plural(asked, 'номера', 'номеров', 'номеров')} никого: либо их нет в Хронике, либо они не разрешили
+          находить себя по номеру.
+        </p>
+      )}
+      {found && found.length > 0 && <PeopleList people={found} />}
+    </section>
   );
 }

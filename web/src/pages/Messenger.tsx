@@ -14,6 +14,7 @@ import { folderUnread, inFolder, readActiveFolder, toggleInFolder, writeActiveFo
 import { useSession } from '../session';
 import { pollEvery, useLive, useLiveConnected } from '../live';
 import { plural } from '../time';
+import { looksLikePhone } from '../phone';
 import type { Row } from '../components/messenger/rows';
 
 /** Список обновляется сам: в две колонки он всё время на виду, и новое
@@ -147,9 +148,13 @@ export function Messenger() {
     }
     let cancelled = false;
     const timer = setTimeout(() => {
-      void Promise.allSettled([api.searchUsers(query.trim()), api.searchChannels(query.trim())]).then(([u, c]) => {
+      // Набран номер с «+» — ищем и по нему: написать человеку, зная только телефон.
+      const byPhone = looksLikePhone(query) ? api.findByPhone([query.trim()]) : Promise.resolve({ users: [] });
+      void Promise.allSettled([api.searchUsers(query.trim()), api.searchChannels(query.trim()), byPhone]).then(([u, c, ph]) => {
         if (cancelled) return;
-        setPeople(u.status === 'fulfilled' ? u.value.users : []);
+        const phoneHits = ph.status === 'fulfilled' ? ph.value.users : [];
+        const named = u.status === 'fulfilled' ? u.value.users : [];
+        setPeople([...phoneHits, ...named.filter((x) => !phoneHits.some((h) => h.id === x.id))]);
         setFoundChannels(c.status === 'fulfilled' ? c.value.channels : []);
       });
     }, SEARCH_DEBOUNCE_MS);

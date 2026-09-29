@@ -4,7 +4,8 @@ import { folderUnread, inFolder, toggleInFolder, type FolderRow } from './folder
 import { lastSeenLabel, plural } from './time';
 import { mergeLatest, previewText, revealOlder, typingLabel } from './components/chat/format';
 import { mentionQuery } from './components/chat/MessageText';
-import { formatPhone, toE164 } from './phone';
+import { dialOf, formatPhone, looksLikePhone, toE164 } from './phone';
+import { toPhones } from './contacts';
 import { deviceName } from './device';
 
 /** Правила интерфейса, которые проще проверить функцией, чем глазами. */
@@ -132,5 +133,29 @@ describe('устройство сеанса', () => {
   it('непонятное — «Неизвестное устройство»', () => {
     expect(deviceName(null)).toBe('Неизвестное устройство');
     expect(deviceName('curl/8.0')).toBe('Неизвестное устройство');
+  });
+});
+
+describe('номер в поиске и из контактов', () => {
+  it('поиск по номеру — только с «+» и восемью цифрами', () => {
+    expect(looksLikePhone('+996 555 12-34-56')).toBe(true);
+    expect(looksLikePhone('+7 (916) 123-45-67')).toBe(true);
+    expect(looksLikePhone('2024')).toBe(false);
+    expect(looksLikePhone('555123456')).toBe(false);
+    expect(looksLikePhone('+996 плёнка')).toBe(false);
+  });
+
+  it('код страны — по своему номеру', () => {
+    expect(dialOf('+996555000001')).toBe('+996');
+    expect(dialOf('+79161234567')).toBe('+7');
+    expect(dialOf(null)).toBe('+996');
+  });
+
+  it('контакты: местные номера дополняются кодом, повторы и обрывки отбрасываются', () => {
+    expect(toPhones(['0555 12 34 56', '+996555123456', '+7 916 123-45-67', '103'], '+996')).toEqual([
+      '+996555123456',
+      '+79161234567',
+    ]);
+    expect(toPhones(['8 (916) 123-45-67'], '+7')).toEqual(['+79161234567']);
   });
 });

@@ -1,4 +1,4 @@
-import { type LastSeenPrivacy } from '../../api';
+import { type LastSeenPrivacy, type Privacy } from '../../api';
 import { type DbUser, db, id, tick, fail } from '../store';
 import { openSession, endOtherSessions, dropUser } from '../model/account';
 import { byId, byName, byEmail, me, requireMe } from '../model/people';
@@ -8,6 +8,9 @@ import { checkCode, dropTicket, issueTicket, normalizePhone, readTicket, sendCod
 import type { PhoneVerdict } from '../../api';
 
 /** Методы витрины: вход, регистрация, пароль, настройки аккаунта. */
+
+const PRIVACY_KEYS = ['lastSeen', 'phoneFind', 'phoneShow'] as const;
+const OPTIONS: LastSeenPrivacy[] = ['all', 'follows', 'nobody'];
 
 export const authApi = {
   // Пуш-уведомлений у витрины нет: их доставляет сервер, а его здесь нет.
@@ -53,7 +56,7 @@ export const authApi = {
     return tick({ user: publicUser(u!) });
   },
 
-  phoneSignup: (token: string, rawName: string, displayName: string) => {
+  phoneSignup: (token: string, rawName: string, displayName: string, findable = false) => {
     const ticket = readTicket(token, 'signup');
     const username = rawName.trim().toLowerCase();
     if (!/^[a-z0-9_]{3,20}$/.test(username)) fail(400, 'Имя пользователя: 3–20 символов, только латиница, цифры и _');
@@ -66,6 +69,7 @@ export const authApi = {
       id: id(), username, displayName: displayName.trim() || username,
       bio: '', avatarUrl: null, createdAt: new Date().toISOString(), email: null, password: '',
       phone: ticket.phone, passwordLogin: false, lastSeenAt: new Date().toISOString(),
+      phoneFind: findable ? 'all' : 'nobody',
     };
     db.users.push(u);
     dropTicket(ticket.token);
@@ -145,6 +149,8 @@ export const authApi = {
       hasPassword: Boolean(u.password),
       passwordLogin: u.passwordLogin !== false,
       lastSeen: u.lastSeenPrivacy ?? 'all',
+      phoneFind: u.phoneFind ?? 'nobody',
+      phoneShow: u.phoneShow ?? 'nobody',
       createdAt: u.createdAt,
     });
   },
@@ -190,11 +196,15 @@ export const authApi = {
     return tick(sendCode(u.phone!, 'delete', u.id));
   },
 
-  setLastSeen: (lastSeen: LastSeenPrivacy) => {
+  setPrivacy: (patch: Partial<Privacy>) => {
     const u = requireMe()!;
-    if (!['all', 'follows', 'nobody'].includes(lastSeen)) fail(400, '«Кто видит время захода» — all, follows, nobody');
-    u.lastSeenPrivacy = lastSeen;
-    return tick({ lastSeen });
+    const given = PRIVACY_KEYS.filter((k) => patch[k] !== undefined);
+    if (given.length === 0) fail(400, 'Нечего менять');
+    if (given.some((k) => !OPTIONS.includes(patch[k]!))) fail(400, 'Настройка — all, follows, nobody');
+    if (patch.lastSeen) u.lastSeenPrivacy = patch.lastSeen;
+    if (patch.phoneFind) u.phoneFind = patch.phoneFind;
+    if (patch.phoneShow) u.phoneShow = patch.phoneShow;
+    return tick({ lastSeen: u.lastSeenPrivacy ?? 'all', phoneFind: u.phoneFind ?? 'nobody', phoneShow: u.phoneShow ?? 'nobody' });
   },
 
   changePassword: (currentPassword: string, newPassword: string) => {
