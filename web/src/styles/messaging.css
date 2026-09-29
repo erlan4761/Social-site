@@ -1281,6 +1281,76 @@ a.pane-who:hover { background: var(--surface-2); }
 .composer-attach,
 .composer-poll { align-self: flex-end; margin-bottom: 0.125rem; }
 
+/* ─ Отложенные сообщения ─────────────────────────────────────────────
+   Полоса над полем ввода — как полоса закреплённого, только внизу: это
+   очередь того, что ещё впереди, а не того, что уже было. */
+.scheduled-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-2) var(--s-4);
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.scheduled-bar:hover { background: var(--surface-2); }
+.scheduled-bar > span { display: grid; flex: 1; min-width: 0; }
+.scheduled-bar strong { font-size: var(--t-meta); font-weight: 600; }
+.scheduled-bar span span { font-size: var(--t-micro); color: var(--ink-2); }
+
+.schedule-sheet { width: min(24rem, calc(100vw - 2rem)); }
+
+.schedule-preview {
+  padding: var(--s-2) var(--s-3);
+  border-left: 2px solid var(--accent);
+  background: var(--surface-2);
+  border-radius: 0 var(--r-xs) var(--r-xs) 0;
+  white-space: pre-wrap;
+  max-height: 6rem;
+  overflow: hidden;
+}
+
+.schedule-presets { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-bottom: 1.125rem; }
+
+.scheduled-sheet { width: min(30rem, calc(100vw - 2rem)); }
+
+.scheduled-list {
+  list-style: none;
+  margin: 0 0 1.25rem;
+  padding: 0;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.scheduled-list li { padding: var(--s-3) 0; }
+.scheduled-list li + li { border-top: 1px solid var(--line); }
+
+.scheduled-when {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: var(--t-micro);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.scheduled-text {
+  margin: var(--s-1) 0 var(--s-2);
+  font-family: var(--read);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.scheduled-actions { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-4); }
+.scheduled-actions .btn.link { font-size: var(--t-meta); }
+.btn.link.danger-link { color: var(--danger); }
+
 /* ─ Опрос в пузыре ───────────────────────────────────────────────────
    Карточка на всю ширину пузыря: вопрос, пометка вида, варианты. До голоса —
    кнопки с кружком, после — полосы с процентами; лидер завершённого опроса

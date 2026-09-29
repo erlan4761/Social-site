@@ -6,6 +6,7 @@ import {
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
+import { ScheduledBar } from '../components/Scheduled';
 import { Icon } from '../components/Icon';
 import { SavedAvatar } from '../components/Monogram';
 import { useSession } from '../session';
@@ -45,6 +46,8 @@ function ThreadView({ username }: { username: string }) {
   /** Номер последнего своего изменения. Ответ опроса, ушедшего раньше него,
    *  не должен откатить только что поставленную реакцию или правку. */
   const edits = useRef(0);
+  /** Растёт, когда здесь что-то отложили, — полоса «Отложено» перечитывает очередь. */
+  const [scheduledVersion, setScheduledVersion] = useState(0);
   /** «Избранное» — переписка с самим собой: заметки, ссылки, пересланное. */
   const saved = user != null && user.username === username.toLowerCase();
 
@@ -389,16 +392,23 @@ function ThreadView({ username }: { username: string }) {
           остаётся на месте.
         </div>
       ) : (
-        <Composer
-          placeholder={saved ? 'Заметка для себя' : 'Сообщение'}
-          onSend={send}
-          onSendAttachment={sendAttachment}
-          mode={mode}
-          onCancelMode={() => setMode(null)}
-          onEditLast={editLast}
-          onTyping={saved ? undefined : () => void api.typing(username).catch(() => undefined)}
-          autoFocus
-        />
+        <>
+          <ScheduledBar kind="dm" target={username} version={scheduledVersion} onSent={refreshList} />
+          <Composer
+            placeholder={saved ? 'Заметка для себя' : 'Сообщение'}
+            onSchedule={async (text, at) => {
+              await api.schedule('dm', username, text, at.toISOString());
+              setScheduledVersion((n) => n + 1);
+            }}
+            onSend={send}
+            onSendAttachment={sendAttachment}
+            mode={mode}
+            onCancelMode={() => setMode(null)}
+            onEditLast={editLast}
+            onTyping={saved ? undefined : () => void api.typing(username).catch(() => undefined)}
+            autoFocus
+          />
+        </>
       )}
 
       {forwarding && (

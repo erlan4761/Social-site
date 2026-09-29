@@ -12,6 +12,7 @@ import { VIDEO_NOTE_MAX_S, canRecord, mmss, useRecorder } from '../voice';
 import { Icon } from './Icon';
 import { Monogram } from './Monogram';
 import { useSession } from '../session';
+import { ScheduleDialog } from './Scheduled';
 
 /* ─ Вложения ───────────────────────────────────────────────────────────── */
 
@@ -1160,6 +1161,9 @@ type ComposerProps = {
   mentionables?: Author[];
   /** Создать опрос — кнопка рядом со скрепкой, только в группах и каналах. */
   onCreatePoll?: () => void;
+  /** «Отправить позже»: правый клик или долгое нажатие на кнопку отправки.
+   *  Ошибку бросает — окно выбора времени её покажет. */
+  onSchedule?: (text: string, sendAt: Date) => Promise<void>;
 };
 
 export function Composer({
@@ -1173,7 +1177,9 @@ export function Composer({
   autoFocus = false,
   mentionables,
   onCreatePoll,
+  onSchedule,
 }: ComposerProps) {
+  const [scheduling, setScheduling] = useState<string | null>(null);
   const id = useId();
   const [caret, setCaret] = useState(0);
   const [pickIndex, setPickIndex] = useState(0);
@@ -1358,6 +1364,22 @@ export function Composer({
         </ul>
       )}
 
+      {scheduling != null && onSchedule && (
+        <ScheduleDialog
+          title="Отправить позже"
+          preview={scheduling}
+          submitLabel="Запланировать"
+          onSubmit={async (at) => {
+            await onSchedule(scheduling, at);
+            setText('');
+          }}
+          onClose={() => {
+            setScheduling(null);
+            field.current?.focus();
+          }}
+        />
+      )}
+
       {voice.recording === 'video' && voice.stream && (
         <VideoNotePreview stream={voice.stream} elapsed={voice.elapsed} />
       )}
@@ -1537,6 +1559,13 @@ export function Composer({
               type="submit"
               disabled={!ready}
               aria-label={editing ? 'Сохранить' : 'Отправить'}
+              title={onSchedule && !mode ? 'Отправить. Правый клик или долгое нажатие — отправить позже' : undefined}
+              onContextMenu={(e) => {
+                // Отложить можно обычное сообщение — без ответа, правки и файла.
+                if (!onSchedule || mode || pending || !ready) return;
+                e.preventDefault();
+                setScheduling(text.trim());
+              }}
             >
               <Icon name={editing ? 'check' : 'send'} size={20} />
             </button>

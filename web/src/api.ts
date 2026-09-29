@@ -181,6 +181,10 @@ export type Poll = {
   options: PollOption[];
 };
 
+/** Отложенное сообщение: ждёт sendAt и уходит само. Только текст. */
+export type ScheduledKind = 'dm' | 'chat' | 'channel';
+export type Scheduled = { id: number; kind: ScheduledKind; body: string; sendAt: string; createdAt: string };
+
 export type PollInput = { question: string; options: string[]; multiple?: boolean; anonymous?: boolean };
 
 export type ChannelPost = {
@@ -665,6 +669,22 @@ const realApi = {
   // ─ Каналы ───────────────────────────────────────────────────────────────
 
   channels: () => request<{ channels: ChannelSummary[]; unreadTotal: number }>('/channels'),
+
+  // ─ Отложенные ──────────────────────────────────────────────────────────
+
+  /** target — логин собеседника, номер группы или адрес канала. */
+  scheduled: (kind: ScheduledKind, target: string | number) =>
+    request<{ scheduled: Scheduled[] }>(`/scheduled?kind=${kind}&target=${encodeURIComponent(String(target))}`),
+
+  schedule: (kind: ScheduledKind, target: string | number, text: string, sendAt: string) =>
+    request<{ scheduled: Scheduled }>('/scheduled', { method: 'POST', body: body({ kind, target, body: text, sendAt }) }),
+
+  updateScheduled: (id: number, input: { body?: string; sendAt?: string }) =>
+    request<{ scheduled: Scheduled }>(`/scheduled/${id}`, { method: 'PATCH', body: body(input) }),
+
+  deleteScheduled: (id: number) => request<{ ok: true }>(`/scheduled/${id}`, { method: 'DELETE' }),
+
+  sendScheduledNow: (id: number) => request<{ ok: true; messageId: number }>(`/scheduled/${id}/send`, { method: 'POST' }),
 
   // ─ Опросы ──────────────────────────────────────────────────────────────
 

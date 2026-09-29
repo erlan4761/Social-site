@@ -12,7 +12,7 @@ import type {
   ArchiveMonth, Attachment, AttachmentInput, Author, Badges, Channel, ChannelComment, ChannelPost, ChannelSummary,
   ChatFolder, ConversationHit, FolderInput, ForwardedFrom, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
   Conversation, ForwardRef, ForwardTarget, Media, Message, Notification as NotificationItem,
-  LastSeenPrivacy, NotificationKind, Page, Person, PinnedPreview, Poll, PollInput, PrefKind, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
+  LastSeenPrivacy, NotificationKind, Page, Person, PinnedPreview, Poll, PollInput, PrefKind, Scheduled, ScheduledKind, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
 } from '../api';
 import { ApiError } from '../api';
 
@@ -148,6 +148,9 @@ type DbPoll = {
 };
 let polls: DbPoll[] = [];
 let pollVotes: { pollId: number; optionId: number; userId: number; createdAt: string }[] = [];
+/** Отложенные сообщения — как scheduled_messages: ждут sendAt и уходят сами. */
+type DbScheduled = Scheduled & { userId: number; targetId: number };
+let scheduledMessages: DbScheduled[] = [];
 /** Сеансы — чтобы в настройках было что показать и что завершить. */
 type DbSession = { id: number; userId: number; createdAt: string; userAgent: string | null };
 let sessions: DbSession[] = [];
@@ -280,6 +283,7 @@ function seed() {
   chatMentions = [];
   polls = [];
   pollVotes = [];
+  scheduledMessages = [];
   channels = [];
   channelSubs = [];
   channelPosts = [];
@@ -549,6 +553,15 @@ function seed() {
   // Событие от приглушённого Олега в «Событиях» не появилось бы — убираем.
   notifications = notifications.filter((n) => !(n.kind === 'message' && n.actorId === oleg.id));
 
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(9, 0, 0, 0);
+  scheduledMessages.push({
+    id: id(), userId: demo.id, kind: 'dm', targetId: marina.id,
+    body: 'Доброе утро! Не забудь плёнку — встречаемся в одиннадцать у Литейной.',
+    sendAt: tomorrow.toISOString(), createdAt: ago(30),
+  });
+
   // «Избранное»: заметка себе и пересланная реплика Марины.
   dm(demo, demo, 'Список на субботу: две плёнки Kodak Gold 200, фиксаж, забрать сканы с Литейной.', days(2));
   const kept = dm(demo, demo, 'Второй там и был весь смысл. Они его специально спрятали за лестницей.', 85);
@@ -581,7 +594,11 @@ function endOtherSessions(userId: number) {
 
 // Засев только в режиме витрины: в обычной сборке ветка мертва, и мок
 // вместе с этими данными выбрасывается из бандла целиком.
-if (import.meta.env.VITE_DEMO === '1') seed();
+if (import.meta.env.VITE_DEMO === '1') {
+  seed();
+  // Планировщик витрины — раз в секунду, как SCHEDULE_TICK_MS на сервере.
+  setInterval(() => deliverDueScheduled(), 1000);
+}
 
 const byId = (userId: number) => users.find((u) => u.id === userId);
 const byName = (username: string) => users.find((u) => u.username === username.toLowerCase());
@@ -928,6 +945,7 @@ function dropUser(uid: number) {
   polls = polls.filter((x) =>
     x.kind === 'chat' ? chatMessages.some((m) => m.id === x.messageId) : channelPosts.some((m) => m.id === x.messageId));
   pollVotes = pollVotes.filter((v) => v.userId !== uid && polls.some((x) => x.id === v.pollId));
+  scheduledMessages = scheduledMessages.filter((s) => s.userId !== uid);
 }
 
 const toFolder = ({ userId: _owner, ...f }: DbFolder): ChatFolder => ({ ...f, types: [...f.types], include: [...f.include], exclude: [...f.exclude] });
@@ -1196,6 +1214,70 @@ const visibleChatMessages = (chatId: number) =>
   chatMessages
     .filter((m) => m.chatId === chatId && !hidden(m.authorId))
     .sort((a, b) => a.id - b.id);
+
+// ─ Отложенные ───────────────────────────────────────────────────────────────
+
+const toScheduled = ({ userId: _u, targetId: _t, ...s }: DbScheduled): Scheduled => ({ ...s });
+
+/** Куда писать — как resolveTarget() в routes/scheduled.js. */
+function scheduleTarget(kind: ScheduledKind, raw: string | number, u: DbUser) {
+  if (kind === 'dm') {
+    const other = byName(String(raw));
+    return other && !blockedPair(u.id, other.id) ? other.id : null;
+  }
+  if (kind === 'chat') return memberRow(Number(raw), u.id) ? Number(raw) : null;
+  const c = channelBy(String(raw));
+  return c && c.ownerId === u.id ? c.id : null;
+}
+
+/** Отправка отложенного — те же проверки доступа, что в scheduled.js, в момент отправки. */
+function deliverScheduled(s: DbScheduled): number | null {
+  scheduledMessages = scheduledMessages.filter((x) => x.id !== s.id);
+  const at = new Date().toISOString();
+  if (s.kind === 'dm') {
+    const other = byId(s.targetId);
+    if (!other || blockedPair(s.userId, other.id)) return null;
+    const self = other.id === s.userId;
+    const m: DbMessage = { id: id(), fromId: s.userId, toId: other.id, body: s.body, createdAt: at, readAt: self ? at : null, ...NO_EXTRAS };
+    messages.push(m);
+    if (!self) notify({ userId: other.id, actorId: s.userId, kind: 'message' });
+    return m.id;
+  }
+  if (s.kind === 'chat') {
+    if (!memberRow(s.targetId, s.userId)) return null;
+    const m: DbChatMessage = { id: id(), chatId: s.targetId, authorId: s.userId, body: s.body, createdAt: at, ...NO_EXTRAS };
+    chatMessages.push(m);
+    for (const member of membersOf(s.targetId)) notify({ userId: member.userId, actorId: s.userId, kind: 'chat_message', chatId: s.targetId });
+    saveMentions(s.targetId, m.id, s.userId, s.body);
+    return m.id;
+  }
+  const c = channels.find((x) => x.id === s.targetId && x.ownerId === s.userId);
+  if (!c) return null;
+  const post: DbChannelPost = { id: id(), channelId: c.id, authorId: s.userId, body: s.body, createdAt: at, editedAt: null, attachment: null };
+  channelPosts.push(post);
+  const sub = subOf(c.id, s.userId);
+  if (sub) sub.lastReadId = post.id;
+  return post.id;
+}
+
+function deliverDueScheduled() {
+  const now = new Date().toISOString();
+  for (const s of scheduledMessages.filter((x) => x.sendAt <= now)) deliverScheduled(s);
+}
+
+function readSendAt(raw: string) {
+  const at = new Date(raw);
+  if (Number.isNaN(at.getTime())) fail(400, 'Время отправки — дата в формате ISO');
+  if (at.getTime() <= Date.now()) fail(400, 'Время отправки уже прошло');
+  if (at.getTime() - Date.now() > 365 * 864e5) fail(400, 'Отложить можно не больше чем на год');
+  return at.toISOString();
+}
+
+function requireScheduled(scheduledId: number) {
+  const u = requireMe()!;
+  const s = scheduledMessages.find((x) => x.id === scheduledId && x.userId === u.id);
+  return s ?? fail(404, 'Отложенное сообщение не найдено');
+}
 
 /** Опрос глазами смотрящего — как serializePoll() в polls.js. */
 function toPoll(poll: DbPoll, authorId: number): Poll {
@@ -2584,6 +2666,58 @@ export const mockApi = rejectInsteadOfThrow({
     const { c } = requireOwner(handle);
     setPin('channel', c.id, null);
     return tick({ ok: true as const });
+  },
+
+  // ─ Отложенные ──────────────────────────────────────────────────────────
+
+  scheduled: (kind: ScheduledKind, target: string | number) => {
+    const u = requireMe()!;
+    const targetId = scheduleTarget(kind, target, u);
+    const list = scheduledMessages
+      .filter((s) => s.userId === u.id && s.kind === kind && s.targetId === targetId)
+      .sort((a, b) => a.sendAt.localeCompare(b.sendAt) || a.id - b.id)
+      .map(toScheduled);
+    return tick({ scheduled: list });
+  },
+
+  schedule: (kind: ScheduledKind, target: string | number, text: string, sendAt: string) => {
+    const u = requireMe()!;
+    const targetId = scheduleTarget(kind, target, u);
+    if (targetId == null) fail(404, 'Переписка не найдена');
+    const body = text.trim();
+    const max = kind === 'channel' ? 4000 : BODY_MAX;
+    if (!body) fail(400, '«сообщение»: минимум 1 символов');
+    if (body.length > max) fail(400, `«сообщение»: максимум ${max} символов`);
+    if (scheduledMessages.filter((s) => s.userId === u.id).length >= 100) fail(400, 'Отложенных сообщений — не больше 100');
+    const s: DbScheduled = {
+      id: id(), userId: u.id, kind, targetId: targetId!, body, sendAt: readSendAt(sendAt), createdAt: new Date().toISOString(),
+    };
+    scheduledMessages.push(s);
+    return tick({ scheduled: toScheduled(s) });
+  },
+
+  updateScheduled: (scheduledId: number, input: { body?: string; sendAt?: string }) => {
+    const s = requireScheduled(scheduledId);
+    if (input.body !== undefined) {
+      const body = input.body.trim();
+      if (!body) fail(400, '«сообщение»: минимум 1 символов');
+      s.body = body;
+    }
+    if (input.sendAt !== undefined) s.sendAt = readSendAt(input.sendAt);
+    return tick({ scheduled: toScheduled(s) });
+  },
+
+  deleteScheduled: (scheduledId: number) => {
+    const s = requireScheduled(scheduledId);
+    scheduledMessages = scheduledMessages.filter((x) => x !== s);
+    return tick({ ok: true as const });
+  },
+
+  sendScheduledNow: (scheduledId: number) => {
+    const s = requireScheduled(scheduledId);
+    const messageId = deliverScheduled(s);
+    if (messageId == null) fail(403, 'Отправить уже нельзя — переписка недоступна');
+    return tick({ ok: true as const, messageId: messageId! });
   },
 
   // ─ Опросы ──────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import {
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
+import { ScheduledBar } from '../components/Scheduled';
 import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
 import { MemberSearch } from '../components/MemberSearch';
@@ -62,6 +63,8 @@ function ChatView({ idParam }: { idParam: string }) {
   const [jump, setJump] = useState<{ id: number; seq: number } | null>(null);
   /** Номер последнего своего изменения — см. Thread.tsx. */
   const edits = useRef(0);
+  /** Растёт, когда здесь что-то отложили, — полоса «Отложено» перечитывает очередь. */
+  const [scheduledVersion, setScheduledVersion] = useState(0);
   // `?m=` — открыть чат сразу на сообщении: так ведёт событие об упоминании.
   const [params, setParams] = useSearchParams();
   const wanted = Number.parseInt(params.get('m') ?? '', 10);
@@ -573,8 +576,13 @@ function ChatView({ idParam }: { idParam: string }) {
 
       {error && <p className="error pane-error">{error}</p>}
 
+      <ScheduledBar kind="chat" target={chatId} version={scheduledVersion} onSent={refreshList} />
       <Composer
         placeholder="Сообщение в чат"
+        onSchedule={async (text, at) => {
+          await api.schedule('chat', chatId, text, at.toISOString());
+          setScheduledVersion((n) => n + 1);
+        }}
         onSend={send}
         onSendAttachment={sendAttachment}
         mode={mode}

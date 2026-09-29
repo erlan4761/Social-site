@@ -7,6 +7,7 @@ import {
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
+import { ScheduledBar } from '../components/Scheduled';
 import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
 import { plural } from '../time';
@@ -47,6 +48,8 @@ function ChannelPane({ handle }: { handle: string }) {
   const [busy, setBusy] = useState(false);
   /** Номер последнего своего изменения — см. Thread.tsx. */
   const edits = useRef(0);
+  /** Растёт, когда здесь что-то отложили, — полоса «Отложено» перечитывает очередь. */
+  const [scheduledVersion, setScheduledVersion] = useState(0);
 
   const markRead = useCallback(
     (c: Channel) => {
@@ -369,15 +372,22 @@ function ChannelPane({ handle }: { handle: string }) {
       {error && <p className="error pane-error">{error}</p>}
 
       {owner ? (
-        <Composer
-          placeholder="Опубликовать…"
-          onSend={send}
-          onSendAttachment={sendAttachment}
-          onCreatePoll={() => setPollOpen(true)}
-          mode={mode}
-          onCancelMode={() => setMode(null)}
-          autoFocus
-        />
+        <>
+          <ScheduledBar kind="channel" target={handle} version={scheduledVersion} onSent={refreshList} />
+          <Composer
+            placeholder="Опубликовать…"
+            onSchedule={async (text, at) => {
+              await api.schedule('channel', handle, text, at.toISOString());
+              setScheduledVersion((n) => n + 1);
+            }}
+            onSend={send}
+            onSendAttachment={sendAttachment}
+            onCreatePoll={() => setPollOpen(true)}
+            mode={mode}
+            onCancelMode={() => setMode(null)}
+            autoFocus
+          />
+        </>
       ) : channel && !channel.subscribed ? (
         <div className="pane-subscribe">
           <button className="btn block" type="button" disabled={busy} onClick={() => void toggleSubscription(true)}>
