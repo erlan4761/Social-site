@@ -429,6 +429,37 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
 `);
+// Номер телефона — вход и регистрация «как в Телеграме» (см. phone.js).
+// password_login: 1 — аккаунт входит и по логину с паролем (все, кто
+// появился до входа по номеру), 0 — только по номеру; пароль у таких —
+// необязательная двухэтапная проверка, а не самостоятельный вход.
+ensureColumn('users', 'phone', 'TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone)');
+ensureColumn('users', 'password_login', 'INTEGER NOT NULL DEFAULT 1');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS phone_codes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone      TEXT NOT NULL,
+    purpose    TEXT NOT NULL,
+    user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    code_hash  TEXT NOT NULL,
+    salt       TEXT NOT NULL,
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    used_at    TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_phone_codes ON phone_codes(phone, purpose, id DESC);
+
+  CREATE TABLE IF NOT EXISTS phone_tickets (
+    token      TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL,
+    phone      TEXT NOT NULL,
+    user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT NOT NULL
+  );
+`);
 ensureColumn('notifications', 'message_id', 'INTEGER REFERENCES chat_messages(id) ON DELETE CASCADE');
 
 // Реакция — одна на человека на сообщение, как у Телеграма без подписки:

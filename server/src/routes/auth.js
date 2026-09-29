@@ -12,30 +12,13 @@ export const router = Router();
 
 const RESET_TTL_MS = 30 * 60_000;
 
-router.post('/register', async (req, res, next) => {
-  try {
-    const uname = v.username(req.body?.username);
-    const displayName = v.str(req.body?.displayName || req.body?.username, 'имя', { min: 1, max: 40 });
-    const mail = v.email(req.body?.email);
-    const pwd = v.password(req.body?.password);
-
-    const takenName = db.prepare('SELECT 1 FROM users WHERE username = ?').get(uname);
-    if (takenName) return res.status(409).json({ error: 'Это имя пользователя уже занято' });
-
-    const takenMail = db.prepare('SELECT 1 FROM users WHERE email = ?').get(mail);
-    if (takenMail) return res.status(409).json({ error: 'На этот email уже зарегистрирован аккаунт' });
-
-    const info = db.prepare(`
-      INSERT INTO users (username, display_name, bio, email, password_hash, created_at)
-      VALUES (?, ?, '', ?, ?, ?)
-    `).run(uname, displayName, mail, await hashPassword(pwd), nowIso());
-
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
-    setSessionCookie(res, createSession(user.id, req.get('user-agent')));
-    res.status(201).json({ user: publicUser(user) });
-  } catch (err) {
-    next(err);
-  }
+/**
+ * Регистрация по логину и почте закрыта: новые аккаунты — только по номеру
+ * телефона (routes/phone.js). Ответ 410 и подсказка, куда идти, — для старых
+ * клиентов и для тех, кто стучится сюда напрямую.
+ */
+router.post('/register', (_req, res) => {
+  res.status(410).json({ error: 'Регистрация — только по номеру телефона' });
 });
 
 router.post('/login', async (req, res, next) => {
@@ -45,7 +28,9 @@ router.post('/login', async (req, res, next) => {
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(uname);
 
     // Same response for unknown user and wrong password: no account enumeration.
-    if (!user || !(await verifyPassword(pwd, user.password_hash))) {
+    // Аккаунт, созданный по номеру, по логину не входит: его пароль — второй
+    // шаг после кода из SMS, а не замена ему.
+    if (!user || !user.password_login || !(await verifyPassword(pwd, user.password_hash))) {
       return res.status(401).json({ error: 'Неверное имя пользователя или пароль' });
     }
 

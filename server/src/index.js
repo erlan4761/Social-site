@@ -26,6 +26,7 @@ import { router as accountRoutes } from './routes/account.js';
 import { router as pollRoutes } from './routes/polls.js';
 import { router as scheduledRoutes } from './routes/scheduled.js';
 import { router as pushRoutes } from './routes/push.js';
+import { router as phoneRoutes } from './routes/phone.js';
 import { startScheduler } from './scheduled.js';
 import { dropDeadStreams, nudge, openStream } from './live.js';
 
@@ -66,6 +67,13 @@ app.use('/api/auth/reset-password', rateLimit({ windowMs: 15 * 60_000, max: rela
 // вход, и перебирать его через открытый чужой сеанс нельзя давать быстрее.
 const passwordCheckLimit = rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 20 });
 app.put('/api/account/password', passwordCheckLimit);
+app.delete('/api/account/password', passwordCheckLimit);
+app.use('/api/auth/phone/password', passwordCheckLimit);
+// Каждое SMS стоит денег: коды с одного адреса — не чаще десяти за четверть
+// часа (поверх потолка на сам номер в phone.js), попытки ввести код — 30.
+const smsLimit = rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 10 });
+for (const path of ['/api/auth/phone/start', '/api/account/phone/start', '/api/account/delete-code']) app.use(path, smsLimit);
+app.use('/api/auth/phone/verify', rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 30 }));
 app.delete('/api/account', passwordCheckLimit);
 
 // Писать может кто угодно кому угодно, поэтому отправку приходится ограничивать:
@@ -139,6 +147,7 @@ for (const path of ['/api/auth/logout', '/api/auth/reset-password', '/api/accoun
   });
 }
 
+app.use('/api/auth/phone', phoneRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/posts', postRoutes);

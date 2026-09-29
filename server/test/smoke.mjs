@@ -2,6 +2,7 @@
 // Сервер нужно поднять с RELAX_RATE_LIMITS=1, иначе лимит регистраций
 // (10 в час на IP) остановит прогон на середине.
 import { DatabaseSync } from 'node:sqlite';
+import { randomBytes, scryptSync } from 'node:crypto';
 
 // Сам прогон лимиты не проверяет — с RELAX_RATE_LIMITS=1 их и нет. Если такую
 // проверку когда-нибудь добавят, API_URL обязан быть http://127.0.0.1:<порт>,
@@ -32,6 +33,28 @@ function lastResetToken(email) {
   } finally {
     db.close();
   }
+}
+
+/*
+ * Старые аккаунты — как до входа по номеру: логин, почта, пароль. Через API
+ * их больше не создать (регистрация — только по номеру телефона), поэтому
+ * тест кладёт их прямо в базу — ровно такими, какими они остались у людей, —
+ * а входит обычным /auth/login. Регистрацию по номеру проверяет отдельная
+ * секция в конце, с поддельной службой SMS.
+ */
+const LEGACY_SALT = randomBytes(16);
+// Тот же формат, что у hashPassword() сервера: scrypt$соль$ключ.
+const LEGACY_HASH = ['scrypt', LEGACY_SALT.toString('hex'), scryptSync('parol12345', LEGACY_SALT, 64).toString('hex')].join('$');
+let legacyDb = null;
+function legacySignUp(client, username, displayName) {
+  if (!legacyDb) {
+    legacyDb = new DatabaseSync(process.env.DB_PATH);
+    legacyDb.exec('PRAGMA busy_timeout = 5000');
+  }
+  legacyDb.prepare(`
+    INSERT INTO users (username, display_name, bio, email, password_hash, created_at) VALUES (?, ?, '', ?, ?, ?)
+  `).run(username.toLowerCase(), displayName, `${username.toLowerCase()}@example.test`, LEGACY_HASH, new Date().toISOString());
+  return client('/auth/login', { method: 'POST', body: JSON.stringify({ username, password: 'parol12345' }) });
 }
 
 let pass = 0, fail = 0;
@@ -75,8 +98,8 @@ const userA = `alice_${stamp}`;
 const userB = `bob_${stamp}`;
 
 console.log('\n— регистрация и сессия —');
-let r = await a('/auth/register', { method: 'POST', body: JSON.stringify({ username: userA, displayName: 'Алиса Иванова', email: `${userA}@example.test`, password: 'parol12345' }) });
-check('register 201', r.status === 201, JSON.stringify(r.body));
+let r = await legacySignUp(a, userA, 'Алиса Иванова');
+check('старый аккаунт входит по логину и паролю', r.status === 200, JSON.stringify(r.body));
 check('вернулся пользователь', r.body.user?.username === userA, JSON.stringify(r.body));
 check('хэш пароля не утёк', !JSON.stringify(r.body).includes('scrypt'));
 
@@ -86,19 +109,15 @@ check('me видит сессию', r.body.user?.username === userA, JSON.string
 r = await anon('/auth/me');
 check('me без куки = null', r.body.user === null, JSON.stringify(r.body));
 
-console.log('\n— валидация —');
-r = await b('/auth/register', { method: 'POST', body: JSON.stringify({ username: 'ЮзерКириллица', displayName: 'x', email: `kir_${stamp}@example.test`, password: 'parol12345' }) });
-check('кириллица в логине отклонена', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
-
-r = await b('/auth/register', { method: 'POST', body: JSON.stringify({ username: `zed_${stamp}`, displayName: 'z', email: `zed_${stamp}@example.test`, password: 'korotk' }) });
-check('короткий пароль отклонён', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
-
-r = await b('/auth/register', { method: 'POST', body: JSON.stringify({ username: userA.toUpperCase(), displayName: 'дубль', email: `dup_${stamp}@example.test`, password: 'parol12345' }) });
-check('занятый логин (в другом регистре) отклонён', r.status === 409, `${r.status} ${JSON.stringify(r.body)}`);
+console.log('\n— регистрация по логину закрыта —');
+r = await b('/auth/register', { method: 'POST', body: JSON.stringify({ username: `zed_${stamp}`, displayName: 'z', email: `zed_${stamp}@example.test`, password: 'parol12345' }) });
+check('регистрация по логину и почте — 410, только по номеру', r.status === 410, `${r.status} ${JSON.stringify(r.body)}`);
+r = await anon('/auth/login', { method: 'POST', body: JSON.stringify({ username: `zed_${stamp}`, password: 'parol12345' }) });
+check('и аккаунт не появился', r.status === 401, `${r.status}`);
 
 console.log('\n— вход —');
-r = await b('/auth/register', { method: 'POST', body: JSON.stringify({ username: userB, displayName: 'Борис', email: `${userB}@example.test`, password: 'parol12345' }) });
-check('второй пользователь создан', r.status === 201, JSON.stringify(r.body));
+r = await legacySignUp(b, userB, 'Борис');
+check('второй пользователь создан', r.status === 200, JSON.stringify(r.body));
 
 r = await anon('/auth/login', { method: 'POST', body: JSON.stringify({ username: userA, password: 'nepravilny' }) });
 check('неверный пароль = 401', r.status === 401);
@@ -329,7 +348,7 @@ check('в результатах нет пароля', !JSON.stringify(r.body).t
 console.log('\n— своя лента —');
 const userC = `carl_${stamp}`;
 const c = makeClient();
-await c('/auth/register', { method: 'POST', body: JSON.stringify({ username: userC, displayName: 'Карл', email: `${userC}@example.test`, password: 'parol12345' }) });
+await legacySignUp(c, userC, 'Карл');
 r = await c('/posts', { method: 'POST', body: JSON.stringify({ body: 'Пост постороннего, на которого никто не подписан' }) });
 const outsiderPost = r.body.post.id;
 
@@ -510,15 +529,6 @@ const firstPageIds = r.body.messages.map(m => m.id);
 r = await a(`/messages/${userB}?cursor=${r.body.nextCursor}`);
 check('вторая страница — более старые', r.body.messages.every(m => !firstPageIds.includes(m.id)), JSON.stringify(r.body.messages.map(m => m.id)));
 
-console.log('\n— email при регистрации —');
-r = await anon('/auth/register', { method: 'POST', body: JSON.stringify({ username: `noemail_${stamp}`, displayName: 'x', password: 'parol12345' }) });
-check('регистрация без email отклонена', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
-
-r = await anon('/auth/register', { method: 'POST', body: JSON.stringify({ username: `bad_${stamp}`, displayName: 'x', email: 'не-похоже-на-почту', password: 'parol12345' }) });
-check('кривой email отклонён', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
-
-r = await anon('/auth/register', { method: 'POST', body: JSON.stringify({ username: `second_${stamp}`, displayName: 'x', email: `${userA}@example.test`, password: 'parol12345' }) });
-check('занятый email (другой логин) отклонён', r.status === 409, `${r.status} ${JSON.stringify(r.body)}`);
 
 console.log('\n— восстановление пароля —');
 r = await anon('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email: `net_takogo_${stamp}@example.test` }) });
@@ -592,20 +602,17 @@ const userO = `oleg_${stamp}`;
 const userP = `pavel_${stamp}`;
 const userD = `dina_${stamp}`;
 
-const signUp = (client, name, displayName) => client('/auth/register', {
-  method: 'POST',
-  body: JSON.stringify({ username: name, displayName, email: `${name}@example.test`, password: 'parol12345' }),
-});
+const signUp = (client, name, displayName) => legacySignUp(client, name, displayName);
 
 console.log('\n— уведомления —');
 r = await signUp(n, userN, 'Ника');
-check('Ника зарегистрирована', r.status === 201, JSON.stringify(r.body));
+check('Ника зарегистрирована', r.status === 200 && Boolean(r.body.user), JSON.stringify(r.body));
 r = await signUp(o, userO, 'Олег');
-check('Олег зарегистрирован', r.status === 201, JSON.stringify(r.body));
+check('Олег зарегистрирован', r.status === 200 && Boolean(r.body.user), JSON.stringify(r.body));
 r = await signUp(p, userP, 'Павел');
-check('Павел зарегистрирован', r.status === 201, JSON.stringify(r.body));
+check('Павел зарегистрирован', r.status === 200 && Boolean(r.body.user), JSON.stringify(r.body));
 r = await signUp(d, userD, 'Дина');
-check('Дина зарегистрирована', r.status === 201, JSON.stringify(r.body));
+check('Дина зарегистрирована', r.status === 200 && Boolean(r.body.user), JSON.stringify(r.body));
 
 r = await guest('/notifications');
 check('лента событий требует входа', r.status === 401, `${r.status}`);
@@ -1049,10 +1056,7 @@ check('после разблокировки реплики вернулись',
 const bulk = [];
 for (let i = 0; i < 17; i++) {
   const name = `m${i}_${stamp}`;
-  await makeClient()('/auth/register', {
-    method: 'POST',
-    body: JSON.stringify({ username: name, displayName: `Участник ${i}`, email: `${name}@example.test`, password: 'parol12345' }),
-  });
+  await legacySignUp(makeClient(), name, `Участник ${i}`);
   bulk.push(name);
 }
 r = await n('/chats', { method: 'POST', body: JSON.stringify({ title: 'Ровно двадцать', members: [userO, userP, ...bulk] }) });
@@ -1144,11 +1148,11 @@ const sorted = (arr) => [...arr].sort((x, y) => x - y);
 
 console.log('\n— поиск по записям —');
 r = await signUp(fed, userF, 'Фёдор');
-check('Фёдор зарегистрирован', r.status === 201, JSON.stringify(r.body));
+check('Фёдор зарегистрирован', r.status === 200 && Boolean(r.body.user), JSON.stringify(r.body));
 r = await signUp(gal, userG, 'Галина');
-check('Галина зарегистрирована', r.status === 201, JSON.stringify(r.body));
+check('Галина зарегистрирована', r.status === 200 && Boolean(r.body.user), JSON.stringify(r.body));
 r = await signUp(igr, userI, 'Игорь');
-check('Игорь зарегистрирован', r.status === 201, JSON.stringify(r.body));
+check('Игорь зарегистрирован', r.status === 200 && Boolean(r.body.user), JSON.stringify(r.body));
 
 const pFilm = await post(fed, `Плёнка и проявка, ${MARK}`);
 const pFilm2 = await post(fed, `Отдал плёнку в проявку вчера, ${MARK}`);
@@ -1283,9 +1287,9 @@ check('удалённая запись сразу уходит из индекс
 
 console.log('\n— архив по датам —');
 r = await signUp(mil, userM, 'Мила');
-check('Мила зарегистрирована', r.status === 201, JSON.stringify(r.body));
+check('Мила зарегистрирована', r.status === 200 && Boolean(r.body.user), JSON.stringify(r.body));
 r = await signUp(nul, userNo, 'Нора');
-check('Нора зарегистрирована', r.status === 201, JSON.stringify(r.body));
+check('Нора зарегистрирована', r.status === 200 && Boolean(r.body.user), JSON.stringify(r.body));
 
 // Раскладка: 3 записи в мае 2026, 1 в ноябре 2025, 2 в марте 2024.
 const archPlan = [
@@ -1536,8 +1540,8 @@ const vera = makeClient();
 const yan = makeClient();
 const userV = `vera_${stamp}`;
 const userY = `yan_${stamp}`;
-await vera('/auth/register', { method: 'POST', body: JSON.stringify({ username: userV, displayName: 'Вера', email: `${userV}@example.test`, password: 'parol12345' }) });
-await yan('/auth/register', { method: 'POST', body: JSON.stringify({ username: userY, displayName: 'Ян', email: `${userY}@example.test`, password: 'parol12345' }) });
+await legacySignUp(vera, userV, 'Вера');
+await legacySignUp(yan, userY, 'Ян');
 
 // Свежесть: запрос с сессией только что прошёл, значит «был в сети» — секунды
 // назад. Пять минут — запас на медленную машину, а не допуск логики.
@@ -2753,7 +2757,7 @@ console.log('\n— push-уведомления —');
 // Своя «служба доставки» на localhost: принимает письмо сервера и
 // расшифровывает его ключом подписчика (aes128gcm, RFC 8291), как браузер.
 const { createServer } = await import('node:http');
-const { createECDH, createDecipheriv, hkdfSync, randomBytes } = await import('node:crypto');
+const { createECDH, createDecipheriv, hkdfSync } = await import('node:crypto');
 
 const inbox = [];
 let pushStatus = 201;
@@ -2858,6 +2862,149 @@ await subscribe(pa, endpointA);
 await pa('/auth/logout', { method: 'POST' });
 check('вышли на устройстве — его подписка ушла вместе с сеансом', subsOf(endpointA) === 0, `${subsOf(endpointA)}`);
 pushService.close();
+
+console.log('\n— вход и регистрация по номеру —');
+// Поддельный Twilio: сервер поднят с SMS_PROVIDER=twilio и TWILIO_API_BASE на
+// этот порт (см. README, «Тесты»). Тест читает коды из «отправленных» SMS —
+// так проверяется настоящий путь отправки, а не обходная дверь.
+const smsBox = [];
+let smsStatus = 201;
+const fakeTwilio = createServer((req, res) => {
+  const chunks = [];
+  req.on('data', (ch) => chunks.push(ch));
+  req.on('end', () => {
+    smsBox.push({ path: req.url, auth: req.headers.authorization, form: new URLSearchParams(Buffer.concat(chunks).toString()) });
+    res.writeHead(smsStatus, { 'Content-Type': 'application/json' }).end(JSON.stringify(smsStatus < 300 ? { sid: 'SMfake' } : { message: 'поддельная ошибка' }));
+  });
+});
+await new Promise((resolve) => fakeTwilio.listen(Number(process.env.FAKE_SMS_PORT ?? 3097), '127.0.0.1', resolve));
+const RESEND_WAIT = Number(process.env.SMS_RESEND_MS ?? 1500) + 200;
+
+const lastCode = (phone) => {
+  const sms = [...smsBox].reverse().find((s) => s.form.get('To') === phone);
+  return sms?.form.get('Body').match(/код (\d{6})/)?.[1] ?? null;
+};
+const tail = String(Date.now()).slice(-7);
+const phoneNew = `+9965${tail}1`;
+const phoneOther = `+9965${tail}2`;
+const phoneFail = `+9965${tail}3`;
+const start = (client, phone) => client('/auth/phone/start', { method: 'POST', body: JSON.stringify({ phone }) });
+const verify = (client, phone, code) => client('/auth/phone/verify', { method: 'POST', body: JSON.stringify({ phone, code }) });
+const wrongOf = (code) => String((Number(code) + 1) % 1_000_000).padStart(6, '0');
+
+r = await start(anon, '123');
+check('номер не в международном формате — 400', r.status === 400, `${r.status}`);
+const ph = makeClient();
+r = await start(ph, `+996 (5${tail.slice(0, 2)}) ${tail.slice(2, 4)}-${tail.slice(4)}-1`);
+check('код отправлен, номер приведён к E.164', r.status === 200 && r.body.phone === phoneNew && r.body.expiresIn === 300, `${r.status} ${JSON.stringify(r.body)}`);
+const sms1 = smsBox.at(-1);
+check('SMS ушло через Twilio: учётка, отправитель, получатель', sms1?.path === '/2010-04-01/Accounts/ACsmoke/Messages.json'
+  && sms1.auth === `Basic ${Buffer.from('ACsmoke:smoke-token').toString('base64')}` && sms1.form.get('From') === '+15550000000' && sms1.form.get('To') === phoneNew, JSON.stringify({ path: sms1?.path, to: sms1?.form.get('To') }));
+const code1 = lastCode(phoneNew);
+check('в SMS — шестизначный код', /^\d{6}$/.test(code1 ?? ''), sms1?.form.get('Body'));
+r = await start(ph, phoneNew);
+check('повторный код сразу — 429', r.status === 429, `${r.status}`);
+
+r = await verify(ph, phoneNew, wrongOf(code1));
+check('неверный код — 400 и сколько попыток осталось', r.status === 400 && /Осталось попыток: 4/.test(r.body.error), JSON.stringify(r.body));
+r = await verify(ph, phoneNew, code1);
+check('верный код для нового номера — к регистрации', r.status === 200 && r.body.status === 'signup' && typeof r.body.ticket === 'string', JSON.stringify(r.body));
+const signupTicket = r.body.ticket;
+r = await verify(ph, phoneNew, code1);
+check('тот же код второй раз не проходит', r.status === 400, `${r.status}`);
+
+const signup = (client, ticket, username, displayName = 'Телефон') =>
+  client('/auth/phone/signup', { method: 'POST', body: JSON.stringify({ ticket, username, displayName }) });
+r = await signup(ph, signupTicket, 'ЮзерКириллица');
+check('кириллица в логине — 400', r.status === 400, `${r.status}`);
+r = await signup(ph, signupTicket, userA.toUpperCase());
+check('занятый логин (в другом регистре) — 409', r.status === 409, `${r.status}`);
+r = await signup(ph, 'выдуманный-билет', `tel_${stamp}`);
+check('чужой билет — 400', r.status === 400, `${r.status}`);
+const userTel = `tel_${stamp}`;
+r = await signup(ph, signupTicket, userTel, 'Тел Телефонов');
+check('регистрация по номеру — 201 и сразу вход', r.status === 201 && r.body.user?.username === userTel && (await ph('/auth/me')).body.user?.username === userTel, JSON.stringify(r.body));
+r = await ph('/account');
+check('в настройках — номер, без пароля и без входа по логину', r.body.phone === phoneNew && r.body.hasPassword === false && r.body.passwordLogin === false && r.body.email === null, JSON.stringify(r.body));
+r = await signup(makeClient(), signupTicket, `tel2_${stamp}`);
+check('билет одноразовый', r.status === 400, `${r.status}`);
+r = await anon('/auth/login', { method: 'POST', body: JSON.stringify({ username: userTel, password: '' }) });
+check('по логину аккаунт по номеру не входит', r.status === 401, `${r.status}`);
+
+// Вход тем же номером — сразу внутрь, пароля нет.
+await sleep(RESEND_WAIT);
+const ph2 = makeClient();
+await start(ph2, phoneNew);
+r = await verify(ph2, phoneNew, lastCode(phoneNew));
+check('знакомый номер без пароля — сразу вход', r.body.status === 'signed-in' && r.body.user?.username === userTel && (await ph2('/auth/me')).body.user?.username === userTel, JSON.stringify(r.body));
+
+// Двухэтапная проверка: пароль задаётся без текущего (его нет), дальше — после кода.
+r = await ph('/account/password', { method: 'PUT', body: JSON.stringify({ newPassword: 'dvuhetap12' }) });
+check('задать пароль впервые — без текущего', r.status === 200 && (await ph('/account')).body.hasPassword === true, `${r.status} ${JSON.stringify(r.body)}`);
+await sleep(RESEND_WAIT);
+const ph3 = makeClient();
+await start(ph3, phoneNew);
+r = await verify(ph3, phoneNew, lastCode(phoneNew));
+check('с паролем — после кода спрашивают его', r.body.status === 'password' && typeof r.body.ticket === 'string' && (await ph3('/auth/me')).body.user === null, JSON.stringify(r.body));
+const pwTicket = r.body.ticket;
+r = await ph3('/auth/phone/password', { method: 'POST', body: JSON.stringify({ ticket: pwTicket, password: 'ne-tot-parol' }) });
+check('неверный пароль — 403', r.status === 403, `${r.status}`);
+r = await ph3('/auth/phone/password', { method: 'POST', body: JSON.stringify({ ticket: pwTicket, password: 'dvuhetap12' }) });
+check('верный пароль — вход', r.status === 200 && (await ph3('/auth/me')).body.user?.username === userTel, `${r.status}`);
+r = await anon('/auth/login', { method: 'POST', body: JSON.stringify({ username: userTel, password: 'dvuhetap12' }) });
+check('пароль — второй шаг, а не вход по логину', r.status === 401, `${r.status}`);
+r = await ph('/account/password', { method: 'DELETE', body: JSON.stringify({ currentPassword: 'ne-tot' }) });
+check('выключить проверку без верного пароля — 403', r.status === 403, `${r.status}`);
+r = await ph('/account/password', { method: 'DELETE', body: JSON.stringify({ currentPassword: 'dvuhetap12' }) });
+check('выключить двухэтапную проверку', r.status === 200 && (await ph('/account')).body.hasPassword === false, `${r.status}`);
+// Старый аккаунт — логин, почта, пароль, как до входа по номеру.
+const oldie = makeClient();
+await legacySignUp(oldie, `oldie_${stamp}`, 'Старожил');
+r = await oldie('/account/password', { method: 'DELETE', body: JSON.stringify({ currentPassword: 'parol12345' }) });
+check('у старого аккаунта пароль не убрать — это его вход', r.status === 400, `${r.status}`);
+
+// Старый аккаунт привязывает номер.
+r = await oldie('/account/phone/start', { method: 'POST', body: JSON.stringify({ phone: phoneNew }) });
+check('чужой номер не привязать — 409', r.status === 409, `${r.status}`);
+r = await oldie('/account/phone/start', { method: 'POST', body: JSON.stringify({ phone: phoneOther }) });
+check('код на новый номер старого аккаунта', r.status === 200 && Boolean(lastCode(phoneOther)), `${r.status}`);
+r = await oldie('/account/phone', { method: 'PUT', body: JSON.stringify({ phone: phoneOther, code: wrongOf(lastCode(phoneOther)) }) });
+check('неверный код привязки — 400', r.status === 400, `${r.status}`);
+r = await oldie('/account/phone', { method: 'PUT', body: JSON.stringify({ phone: phoneOther, code: lastCode(phoneOther) }) });
+check('номер привязан', r.status === 200 && (await oldie('/account')).body.phone === phoneOther, `${r.status}`);
+await sleep(RESEND_WAIT);
+const aPhone = makeClient();
+await start(aPhone, phoneOther);
+r = await verify(aPhone, phoneOther, lastCode(phoneOther));
+check('старый аккаунт входит и по номеру — с паролем вторым шагом', r.body.status === 'password', JSON.stringify(r.body));
+r = await oldie('/account/phone', { method: 'DELETE' });
+check('старый аккаунт может отвязать номер', r.status === 200 && (await oldie('/account')).body.phone === null, `${r.status}`);
+r = await ph('/account/phone', { method: 'DELETE' });
+check('у аккаунта по номеру номер не убрать', r.status === 400, `${r.status}`);
+
+// Провайдер упал — честная ошибка, и код не «съеден».
+smsStatus = 500;
+r = await start(makeClient(), phoneFail);
+check('SMS не ушло — 502', r.status === 502, `${r.status}`);
+smsStatus = 201;
+r = await start(makeClient(), phoneFail);
+check('неудачная отправка не блокирует повтор', r.status === 200, `${r.status}`);
+const failCode = lastCode(phoneFail);
+for (let i = 0; i < 5; i++) await verify(anon, phoneFail, wrongOf(failCode));
+r = await verify(anon, phoneFail, failCode);
+check('после пяти промахов и верный код не принимается', r.status === 400 && /Слишком много попыток/.test(r.body.error), JSON.stringify(r.body));
+
+// Удаление аккаунта без пароля — кодом из SMS.
+r = await ph('/account/delete-code', { method: 'POST' });
+check('код для удаления', r.status === 200, `${r.status}`);
+const delCode = lastCode(phoneNew);
+r = await ph('/account', { method: 'DELETE', body: JSON.stringify({ code: wrongOf(delCode) }) });
+check('неверный код удаления — 400', r.status === 400, `${r.status}`);
+r = await ph('/account', { method: 'DELETE', body: JSON.stringify({ code: delCode }) });
+check('аккаунт по номеру удалён по коду', r.status === 200 && (await ph('/auth/me')).body.user === null, `${r.status}`);
+r = await oldie('/account/delete-code', { method: 'POST' });
+check('у аккаунта с паролем — удаление паролем, а не кодом', r.status === 400, `${r.status}`);
+fakeTwilio.close();
 
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
