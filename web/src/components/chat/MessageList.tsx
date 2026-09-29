@@ -9,7 +9,8 @@ import { StickerArt } from '../../stickers';
 import { AttachmentView, ImageViewer } from './attachments';
 import { Ticks, type Delivery } from './status';
 import { PollCard } from './PollCard';
-import { MessageText } from './MessageText';
+import { MessageText, firstUrl } from './MessageText';
+import { LinkPreview } from './LinkPreview';
 
 /* ─ Лента сообщений ─────────────────────────────────────────────────────
    Пузыри, серии, дни, прокрутка, меню действий и долгое нажатие. */
@@ -356,12 +357,16 @@ export function MessageList({
                         {m.reactions.length === 0 && <span className="bubble-foot" aria-hidden="true" />}
                       </>
                     ) : m.body ? (
-                      <p className="bubble-text">
-                        <MessageText text={m.body} me={me} />
-                        <span className="bubble-meta-space" aria-hidden="true">
-                          {meta}
-                        </span>
-                      </p>
+                      <>
+                        <p className="bubble-text">
+                          <MessageText text={m.body} me={me} />
+                          <span className="bubble-meta-space" aria-hidden="true">
+                            {meta}
+                          </span>
+                        </p>
+                        {/* У фото и файла своя картинка — карточка ссылки там лишняя. */}
+                        {!m.attachment && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} onLoad={onMediaLoad} />}
+                      </>
                     ) : (
                       m.reactions.length === 0 && <span className="bubble-foot" aria-hidden="true" />
                     )}

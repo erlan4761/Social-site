@@ -304,3 +304,10 @@ describe('витрина: кто прочитал', () => {
     expect(r.read.map((p) => p.username)).toEqual(['nina']);
   });
 });
+
+describe('витрина: предпросмотр ссылок', () => {
+  it('карточка только у заготовленной ссылки', async () => {
+    expect((await api.linkPreview('https://github.com/erlan4761/Social-site')).preview?.siteName).toBe('GitHub');
+    expect((await api.linkPreview('https://example.com/')).preview).toBeNull();
+  });
+});

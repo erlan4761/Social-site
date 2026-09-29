@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { api, type Poll } from '../../api';
 import { Composer } from './Composer';
-import { MessageText } from './MessageText';
+import { MessageText, firstUrl } from './MessageText';
 import { PollCard } from './PollCard';
 import { DRAFT_SAVE_MS } from './draft';
 
@@ -129,5 +129,30 @@ describe('черновик', () => {
       put.mockRestore();
       vi.useRealTimers();
     }
+  });
+});
+
+describe('ссылки в тексте', () => {
+  it('адрес — ссылка в новой вкладке, без точки в конце; упоминание рядом живо', () => {
+    render(
+      <MemoryRouter>
+        <p>
+          <MessageText text="Смотри https://example.com/a?b=1. И @nina (https://ru.wikipedia.org/wiki/Плёнка_(фото))" />
+        </p>
+      </MemoryRouter>,
+    );
+    const link = screen.getByRole('link', { name: 'https://example.com/a?b=1' });
+    expect(link).toHaveAttribute('href', 'https://example.com/a?b=1');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link.getAttribute('rel')).toContain('noopener');
+    expect(screen.getByRole('link', { name: 'https://ru.wikipedia.org/wiki/Плёнка_(фото)' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '@nina' })).toHaveAttribute('href', '/u/nina');
+  });
+
+  it('первая ссылка — для карточки; javascript: ссылкой не становится', () => {
+    expect(firstUrl('раз http://a.example/x, два https://b.example')).toBe('http://a.example/x');
+    expect(firstUrl('нет ссылок')).toBeNull();
+    render(<MemoryRouter><p><MessageText text="javascript:alert(1)" /></p></MemoryRouter>);
+    expect(screen.queryByRole('link')).toBeNull();
   });
 });

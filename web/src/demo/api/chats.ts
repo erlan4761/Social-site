@@ -328,6 +328,24 @@ export const chatsApi = {
     return tick({ results: findHits(q, visibleChatMessages(chat.id), (m) => m.authorId) });
   },
 
+  /**
+   * Предпросмотр: сервера у витрины нет, чужие страницы она не скачивает.
+   * Заготовлена карточка для одной ссылки — репозитория проекта, чтобы было
+   * видно, как карточка выглядит; остальные ссылки остаются просто ссылками.
+   */
+  linkPreview: (url: string) =>
+    tick({
+      preview: url.replace(/\/$/, '') === 'https://github.com/erlan4761/Social-site'
+        ? {
+            url: 'https://github.com/erlan4761/Social-site',
+            title: 'erlan4761/Social-site',
+            description: '«Хроника» — социальная сеть и мессенджер: React, Express и SQLite без внешних сервисов.',
+            siteName: 'GitHub',
+            image: null,
+          }
+        : null,
+    }),
+
   chatReaders: (chatId: number, messageId: number) => {
     const { u, chat } = requireChat(chatId);
     const m = requireChatMessage(chat.id, messageId);
