@@ -2558,5 +2558,82 @@ await pia(`/chats/${pChat}/messages/${pollMsg}`, { method: 'DELETE' });
 r = await vote(ron, poll1.id, [poll1.options[0].id]);
 check('удалили сообщение — опроса нет', r.status === 404, `${r.status}`);
 
+console.log('\n— отложенные сообщения —');
+// Сервер для прогона поднят с SCHEDULE_TICK_MS=500 — планировщик ходит дважды в секунду.
+const later = (ms) => new Date(Date.now() + ms).toISOString();
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const schedule = (client, payload) => client('/scheduled', { method: 'POST', body: JSON.stringify(payload) });
+const queued = async (client, kind, target) =>
+  (await client(`/scheduled?kind=${kind}&target=${encodeURIComponent(target)}`)).body.scheduled ?? [];
+const dmBodies = async (client, other) => (await client(`/messages/${other}`)).body.messages?.map((m) => m.body) ?? [];
+
+r = await guest('/scheduled?kind=dm&target=x');
+check('гостю — 401', r.status === 401, `${r.status}`);
+r = await schedule(pia, { kind: 'dm', target: userRo, body: 'Не забудь фиксаж!', sendAt: later(60 * 60_000) });
+const s1 = r.body.scheduled;
+check('отложено в личку', r.status === 201 && s1?.body === 'Не забудь фиксаж!' && s1.kind === 'dm', `${r.status} ${JSON.stringify(r.body)}`);
+check('в очереди у автора', (await queued(pia, 'dm', userRo)).some((x) => x.id === s1.id), '');
+check('получатель ещё ничего не видит', !(await dmBodies(ron, userPi)).includes('Не забудь фиксаж!'), '');
+
+for (const [payload, name, code] of [
+  [{ kind: 'dm', target: userRo, body: 'x', sendAt: later(-60_000) }, 'время в прошлом', 400],
+  [{ kind: 'dm', target: userRo, body: 'x', sendAt: later(400 * 864e5) }, 'дальше года', 400],
+  [{ kind: 'dm', target: userRo, body: 'x', sendAt: 'завтра' }, 'кривое время', 400],
+  [{ kind: 'dm', target: userRo, body: '   ', sendAt: later(60_000) }, 'пустой текст', 400],
+  [{ kind: 'sms', target: userRo, body: 'x', sendAt: later(60_000) }, 'неизвестный вид', 400],
+  [{ kind: 'dm', target: `nobody_${stamp}`, body: 'x', sendAt: later(60_000) }, 'несуществующему', 404],
+  [{ kind: 'chat', target: mChat, body: 'x', sendAt: later(60_000) }, 'в чужой чат', 404],
+]) {
+  r = await schedule(name === 'в чужой чат' ? tom : pia, payload);
+  check(`отложить: ${name} — ${code}`, r.status === code, `${r.status}`);
+}
+r = await schedule(ron, { kind: 'channel', target: pollHandle, body: 'x', sendAt: later(60_000) });
+check('в чужой канал — 404', r.status === 404, `${r.status}`);
+
+r = await pia(`/scheduled/${s1.id}`, { method: 'PATCH', body: JSON.stringify({ body: 'Не забудь фиксаж и бачок!' }) });
+check('текст изменён, время то же', r.status === 200 && r.body.scheduled.body === 'Не забудь фиксаж и бачок!' && r.body.scheduled.sendAt === s1.sendAt, JSON.stringify(r.body));
+r = await ron(`/scheduled/${s1.id}`, { method: 'PATCH', body: JSON.stringify({ body: 'взлом' }) });
+check('чужое не править — 404', r.status === 404, `${r.status}`);
+r = await ron(`/scheduled/${s1.id}`, { method: 'DELETE' });
+check('и не удалить — 404', r.status === 404, `${r.status}`);
+r = await ron(`/scheduled/${s1.id}/send`, { method: 'POST' });
+check('и не отправить — 404', r.status === 404, `${r.status}`);
+
+r = await pia(`/scheduled/${s1.id}/send`, { method: 'POST' });
+check('«отправить сейчас»', r.status === 200 && Number.isInteger(r.body.messageId), `${r.status}`);
+check('получатель видит сообщение', (await dmBodies(ron, userPi)).includes('Не забудь фиксаж и бачок!'), '');
+check('очередь пуста', (await queued(pia, 'dm', userRo)).length === 0, '');
+
+await schedule(pia, { kind: 'dm', target: userRo, body: 'Сработал планировщик', sendAt: later(700) });
+r = await schedule(pia, { kind: 'dm', target: userRo, body: 'Удалю до отправки', sendAt: later(700) });
+await pia(`/scheduled/${r.body.scheduled.id}`, { method: 'DELETE' });
+await sleep(2000);
+let got = await dmBodies(ron, userPi);
+check('планировщик отправил в срок', got.includes('Сработал планировщик'), JSON.stringify(got.slice(-3)));
+check('удалённое не ушло', !got.includes('Удалю до отправки'), '');
+check('у получателя — событие о сообщении', (await ron('/notifications')).body.notifications?.some((x) => x.kind === 'message' && x.actor.username === userPi), '');
+
+await schedule(pia, { kind: 'chat', target: pChat, body: `@${userRo}, завтра в десять!`, sendAt: later(700) });
+await schedule(pia, { kind: 'channel', target: pollHandle, body: 'Анонс по расписанию', sendAt: later(700) });
+await schedule(pia, { kind: 'dm', target: userPi, body: 'Напоминание себе', sendAt: later(700) });
+await sleep(2000);
+r = await ron(`/chats/${pChat}/messages`);
+check('в группу ушло, с упоминанием', r.body.messages?.at(-1)?.body === `@${userRo}, завтра в десять!` && (await ron('/chats')).body.chats.find((c) => c.id === pChat)?.mentions === 1, '');
+r = await ron(`/channels/${pollHandle}/posts`);
+check('в канал ушло', r.body.posts?.at(-1)?.body === 'Анонс по расписанию', JSON.stringify(r.body.posts?.map((x) => x.body)));
+r = await pia(`/messages/${userPi}`);
+check('в «Избранное» — сразу прочитано', r.body.messages?.at(-1)?.body === 'Напоминание себе' && r.body.messages.at(-1).readAt != null, '');
+
+// Доступ проверяется при отправке: заблокировали — сообщение отменяется.
+await schedule(pia, { kind: 'dm', target: userRo, body: 'Не должно дойти', sendAt: later(700) });
+r = await schedule(pia, { kind: 'dm', target: userRo, body: 'И это тоже', sendAt: later(60 * 60_000) });
+const s2 = r.body.scheduled.id;
+await ron(`/users/${userPi}/block`, { method: 'PUT' });
+await sleep(2000);
+check('после блокировки не дошло', !(await dmBodies(ron, userPi)).includes('Не должно дойти'), '');
+r = await pia(`/scheduled/${s2}/send`, { method: 'POST' });
+check('«отправить сейчас» при блокировке — 403, очередь чиста', r.status === 403 && (await pia(`/scheduled/${s2}`, { method: 'DELETE' })).status === 404, `${r.status}`);
+await ron(`/users/${userPi}/block`, { method: 'DELETE' });
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

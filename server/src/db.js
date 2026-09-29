@@ -396,6 +396,22 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_poll_options ON poll_options(poll_id, position);
   CREATE INDEX IF NOT EXISTS idx_poll_votes   ON poll_votes(poll_id, user_id);
 `);
+// Отложенные сообщения (см. scheduled.js): ждут своего времени и уходят обычным
+// путём. target_id — собеседник, группа или канал по kind; без внешнего ключа,
+// как у настроек чатов, — доступ проверяется в момент отправки.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS scheduled_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    target_id  INTEGER NOT NULL,
+    body       TEXT NOT NULL,
+    send_at    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_scheduled_due  ON scheduled_messages(send_at);
+  CREATE INDEX IF NOT EXISTS idx_scheduled_user ON scheduled_messages(user_id, kind, target_id);
+`);
 ensureColumn('notifications', 'message_id', 'INTEGER REFERENCES chat_messages(id) ON DELETE CASCADE');
 
 // Реакция — одна на человека на сообщение, как у Телеграма без подписки:
