@@ -586,6 +586,11 @@ function ChatRow({ c, meId }: { c: ChatSummary; meId?: number }) {
               `${c.memberCount} ${plural(c.memberCount, 'участник', 'участника', 'участников')}, сообщений пока нет`
             )}
           </span>
+          {c.mentions > 0 && (
+            <span className="badge at" title="Вас упомянули">
+              @<span className="sr-only">, вас упомянули</span>
+            </span>
+          )}
           <RowTail unread={c.unread} muted={c.muted} pinned={Boolean(c.pinnedAt)} />
         </span>
       </span>

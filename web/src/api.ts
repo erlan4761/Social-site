@@ -234,7 +234,9 @@ export type NotificationKind =
   | 'follow'
   | 'message'
   | 'chat_message'
-  | 'chat_invite';
+  | 'chat_invite'
+  /** Упомянули через @ в группе — приходит и из приглушённого чата. */
+  | 'mention';
 
 /** Обрезанный сервером кусок текста поста или комментария — 80 символов. */
 export type NotificationRef = { id: number; excerpt: string };
@@ -249,6 +251,8 @@ export type Notification = {
   post: NotificationRef | null;
   comment: NotificationRef | null;
   chat: { id: number; title: string } | null;
+  /** Сообщение группы, где упомянули, — у события «mention». */
+  message: NotificationRef | null;
 };
 
 /** Три счётчика одним запросом — иначе оболочка опрашивала бы три эндпоинта. */
@@ -280,6 +284,8 @@ export type ChatMessage = MessageExtras & {
 
 export type ChatSummary = Chat & ChatPrefs & {
   unread: number;
+  /** Непрочитанные сообщения, где упомянут смотрящий, — значок «@» в списке. */
+  mentions: number;
   lastMessage: ChatMessage | null;
   /** Самая дальняя отметка прочтения среди остальных участников: своё
    *  сообщение с id не больше неё кто-то уже прочитал. */

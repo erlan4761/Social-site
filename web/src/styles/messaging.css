@@ -1167,6 +1167,46 @@ a.pane-who:hover { background: var(--surface-2); }
 .composer-video { align-self: flex-end; margin-bottom: 0.125rem; }
 
 /* Полоса над полем: «ответ на …» или «редактирование». */
+/* ─ Упоминания ───────────────────────────────────────────────────────
+   @логин в тексте — ссылка на профиль цветом акцента; своё имя — плашкой,
+   чтобы упоминание себя находилось глазом в длинной ленте. */
+.mention { color: var(--accent); font-weight: 600; text-decoration: none; }
+.mention:hover { text-decoration: underline; text-underline-offset: 2px; }
+.mention.me {
+  /* Отрицательные поля — чтобы плашка не раздвигала строку: «@имя,» без зазора. */
+  margin: 0 -0.125rem;
+  padding: 0 0.125rem;
+  border-radius: var(--r-xs);
+  background: color-mix(in oklab, var(--accent) 16%, transparent);
+}
+
+/* Подсказка «кого упомянуть» — над полем ввода, в потоке, как полоса ответа. */
+.mention-pop {
+  list-style: none;
+  margin: 0;
+  padding: var(--s-1);
+  max-height: 14rem;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.mention-pop li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 0.375rem var(--s-3);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.mention-pop li.on,
+.mention-pop li:hover { background: var(--surface-2); }
+.mention-pop strong { font-weight: 600; }
+.mention-pop span { font-size: var(--t-meta); color: var(--ink-2); }
+
+/* «@» в строке списка: чат зовёт именно вас — даже приглушённый. */
+.dialog-foot .badge.at { padding: 0; min-width: 1.25rem; margin-right: var(--s-1); }
+
 .composer-mode {
   display: flex;
   align-items: center;

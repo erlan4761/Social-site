@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, type AttachmentInput, type Chat, type ChatMessage, type PinnedPreview } from '../api';
 import {
   Composer, ConversationSearch, MessageList, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText, typingLabel,
@@ -60,6 +60,9 @@ function ChatView({ idParam }: { idParam: string }) {
   const [jump, setJump] = useState<{ id: number; seq: number } | null>(null);
   /** Номер последнего своего изменения — см. Thread.tsx. */
   const edits = useRef(0);
+  // `?m=` — открыть чат сразу на сообщении: так ведёт событие об упоминании.
+  const [params, setParams] = useSearchParams();
+  const wanted = Number.parseInt(params.get('m') ?? '', 10);
 
   const markRead = useCallback(() => {
     if (!valid) return;
@@ -144,6 +147,14 @@ function ChatView({ idParam }: { idParam: string }) {
       setError(err instanceof ApiError ? err.message : 'Не удалось найти сообщение');
     }
   }
+
+  useEffect(() => {
+    if (loading || !Number.isSafeInteger(wanted)) return;
+    setParams({}, { replace: true });
+    void reveal(wanted);
+    // reveal читает текущую ленту — эффект нужен ровно раз, когда она загрузилась.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, wanted]);
 
   async function togglePin(id: number) {
     if (pinned?.id === id) {
@@ -560,6 +571,7 @@ function ChatView({ idParam }: { idParam: string }) {
         onCancelMode={() => setMode(null)}
         onEditLast={editLast}
         onTyping={() => void api.chatTyping(chatId).catch(() => undefined)}
+        mentionables={chat?.members.filter((m) => m.id !== user?.id)}
         autoFocus
       />
 

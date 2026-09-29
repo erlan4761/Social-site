@@ -75,6 +75,8 @@ type DbNotification = {
   postId: number | null;
   commentId: number | null;
   chatId: number | null;
+  /** Сообщение группы у события «упоминание». */
+  messageId?: number | null;
   createdAt: string;
   readAt: string | null;
 };
@@ -137,6 +139,8 @@ let pins: DbPin[] = [];
 /** Папки чатов — у каждого свои, в порядке вкладок. */
 type DbFolder = ChatFolder & { userId: number };
 let folders: DbFolder[] = [];
+/** Кого упомянули через @ в сообщении группы — как chat_mentions. */
+let chatMentions: { messageId: number; userId: number }[] = [];
 /** Сеансы — чтобы в настройках было что показать и что завершить. */
 type DbSession = { id: number; userId: number; createdAt: string; userAgent: string | null };
 let sessions: DbSession[] = [];
@@ -266,6 +270,7 @@ function seed() {
   chatMessages = [];
   dmReactions = [];
   chatReactions = [];
+  chatMentions = [];
   channels = [];
   channelSubs = [];
   channelPosts = [];
@@ -424,7 +429,8 @@ function seed() {
     kind: 'image', mime: 'image/svg+xml', name: 'bachok.jpg', size: null, duration: null, wave: null,
   };
   const mine = say(demo, 'Давайте. Принесу вторую плёнку и таймер, а то в прошлый раз считали вслух.', 65);
-  const last = say(marina, 'Я приду с камерой деда — она пролежала на антресолях лет десять, надо проверить затвор.', 59, invite);
+  const last = say(marina, '@demo, я приду с камерой деда — она пролежала на антресолях лет десять, надо проверить затвор.', 59, invite);
+  chatMentions.push({ messageId: last.id, userId: demo.id });
   chatReactions.push(
     { messageId: mine.id, userId: nina.id, emoji: '👍', createdAt: ago(64) },
     { messageId: mine.id, userId: marina.id, emoji: '👍', createdAt: ago(60) },
@@ -442,11 +448,12 @@ function seed() {
     kind: NotificationKind,
     minutes: number,
     read: boolean,
-    refs: { postId?: number; commentId?: number; chatId?: number } = {},
+    refs: { postId?: number; commentId?: number; chatId?: number; messageId?: number } = {},
   ) => {
     notifications.push({
       id: id(), userId: demo.id, actorId: actor.id, kind,
       postId: refs.postId ?? null, commentId: refs.commentId ?? null, chatId: refs.chatId ?? null,
+      messageId: refs.messageId ?? null,
       createdAt: ago(minutes), readAt: read ? ago(minutes - 1) : null,
     });
   };
@@ -454,7 +461,7 @@ function seed() {
   // Четыре вида событий и три непрочитанных — ровно то состояние, которое
   // описывают счётчики в сайдбаре витрины: 2 письма, 1 чат, 3 события.
   event(marina, 'like', 190, true, { postId: p4.id });
-  event(marina, 'chat_message', 59, false, { chatId: room.id });
+  event(marina, 'mention', 59, false, { chatId: room.id, messageId: last.id });
   event(oleg, 'comment', 39, false, { postId: p4.id, commentId: c4.id });
   event(oleg, 'message', 25, false);
 
@@ -898,6 +905,7 @@ function dropUser(uid: number) {
       exclude: f.exclude.filter((r) => !goneRef(r.kind, r.id)),
     }));
   sessions = sessions.filter((x) => x.userId !== uid);
+  chatMentions = chatMentions.filter((x) => x.userId !== uid && chatMessages.some((m) => m.id === x.messageId));
 }
 
 const toFolder = ({ userId: _owner, ...f }: DbFolder): ChatFolder => ({ ...f, types: [...f.types], include: [...f.include], exclude: [...f.exclude] });
@@ -1007,6 +1015,7 @@ type NotifyInput = {
   postId?: number;
   commentId?: number;
   chatId?: number;
+  messageId?: number;
 };
 
 /**
@@ -1060,10 +1069,35 @@ function notify(input: NotifyInput) {
 
   notifications.push({
     id: id(), userId, actorId, kind,
-    postId: post, commentId: comment, chatId: chat,
+    postId: post, commentId: comment, chatId: chat, messageId: input.messageId ?? null,
     createdAt: new Date().toISOString(), readAt: null,
   });
 }
+
+const MENTION_RE = /(^|[^\p{L}\p{N}_@])@([a-z0-9_]{3,20})(?![a-z0-9_])/giu;
+
+/** Упоминания сообщения заново — как saveMentions() в mentions.js. */
+function saveMentions(chatId: number, messageId: number, authorId: number, body: string) {
+  const names = new Set([...body.matchAll(MENTION_RE)].map((m) => m[2].toLowerCase()));
+  const targets = membersOf(chatId)
+    .map((m) => byId(m.userId)!)
+    .filter((u) => names.has(u.username) && u.id !== authorId && !blockedPair(authorId, u.id))
+    .map((u) => u.id);
+  const before = new Set(chatMentions.filter((x) => x.messageId === messageId).map((x) => x.userId));
+  chatMentions = [...chatMentions.filter((x) => x.messageId !== messageId), ...targets.map((userId) => ({ messageId, userId }))];
+  for (const userId of targets) {
+    if (!before.has(userId)) notify({ userId, actorId: authorId, kind: 'mention', chatId, messageId });
+  }
+  notifications = notifications.filter(
+    (n) => !(n.kind === 'mention' && n.messageId === messageId && !n.readAt && !targets.includes(n.userId)),
+  );
+}
+
+const unreadMentions = (chatId: number, userId: number) => {
+  const lastRead = memberRow(chatId, userId)?.lastReadId ?? 0;
+  return chatMentions.filter((x) => x.userId === userId && x.messageId > lastRead
+    && chatMessages.some((m) => m.id === x.messageId && m.chatId === chatId)).length;
+};
 
 /** Снятие лайка и отписка убирают только **непрочитанное** событие о себе. */
 function dropNotification(input: NotifyInput) {
@@ -1115,6 +1149,10 @@ const toNotification = (n: DbNotification): NotificationItem => {
     post: post ? { id: post.id, excerpt: excerpt(post.body) } : null,
     comment: comment ? { id: comment.id, excerpt: excerpt(comment.body) } : null,
     chat: room ? { id: room.id, title: room.title } : null,
+    message: (() => {
+      const m = n.messageId != null ? chatMessages.find((x) => x.id === n.messageId) : undefined;
+      return m ? { id: m.id, excerpt: excerpt(m.body) } : null;
+    })(),
   };
 };
 
@@ -1977,6 +2015,7 @@ export const mockApi = rejectInsteadOfThrow({
         return {
           ...toChat(c),
           unread: chatUnread(c.id, u.id),
+          mentions: unreadMentions(c.id, u.id),
           lastMessage: last ? toChatMessage(last) : null,
           readUpTo: othersReadUpTo(c.id, u.id),
           ...prefFields(u.id, 'chat', c.id),
@@ -2088,6 +2127,7 @@ export const mockApi = rejectInsteadOfThrow({
     for (const member of membersOf(chat.id)) {
       notify({ userId: member.userId, actorId: u.id, kind: 'chat_message', chatId: chat.id });
     }
+    if (!src) saveMentions(chat.id, m.id, u.id, body);
 
     return tick({ message: toChatMessage(m) });
   },
@@ -2105,6 +2145,7 @@ export const mockApi = rejectInsteadOfThrow({
     if (body !== m.body) {
       m.body = body;
       m.editedAt = new Date().toISOString();
+      saveMentions(chat.id, m.id, u.id, body);
     }
     return tick({ message: toChatMessage(m) });
   },
@@ -2117,6 +2158,8 @@ export const mockApi = rejectInsteadOfThrow({
     chatMessages = chatMessages.filter((x) => x.id !== m.id);
     if (pinnedOf('chat', chat.id)?.messageId === m.id) setPin('chat', chat.id, null);
     chatReactions = chatReactions.filter((r) => r.messageId !== m.id);
+    chatMentions = chatMentions.filter((x) => x.messageId !== m.id);
+    notifications = notifications.filter((n) => n.messageId !== m.id);
     return tick({ ok: true as const });
   },
 
@@ -2141,6 +2184,7 @@ export const mockApi = rejectInsteadOfThrow({
     const top = chatMessages.filter((m) => m.chatId === chat.id).reduce((max, m) => Math.max(max, m.id), 0);
     row.lastReadId = Math.max(row.lastReadId, top);
     markNotificationsRead({ userId: u.id, kind: 'chat_message', chatId: chat.id });
+    markNotificationsRead({ userId: u.id, kind: 'mention', chatId: chat.id });
     return tick({ ok: true as const, unread: 0 });
   },
 

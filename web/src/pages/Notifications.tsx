@@ -23,6 +23,9 @@ function targetOf(event: NotificationItem) {
     case 'chat_message':
     case 'chat_invite':
       return event.chat ? `/messages/c/${event.chat.id}` : '/messages';
+    case 'mention':
+      if (!event.chat) return '/messages';
+      return event.message ? `/messages/c/${event.chat.id}?m=${event.message.id}` : `/messages/c/${event.chat.id}`;
   }
 }
 
@@ -43,6 +46,8 @@ function lineOf(event: NotificationItem) {
       return event.chat ? `Новое сообщение в чате «${event.chat.title}»` : 'Новое сообщение в чате';
     case 'chat_invite':
       return event.chat ? `Вас добавили в чат «${event.chat.title}»` : 'Вас добавили в чат';
+    case 'mention':
+      return event.chat ? `${who} упомянул(а) вас в чате «${event.chat.title}»` : `${who} упомянул(а) вас`;
   }
 }
 
@@ -50,6 +55,7 @@ function lineOf(event: NotificationItem) {
 function quoteOf(event: NotificationItem) {
   if (event.kind === 'comment') return event.comment?.excerpt ?? null;
   if (event.kind === 'like') return event.post?.excerpt ?? null;
+  if (event.kind === 'mention') return event.message?.excerpt ?? null;
   return null;
 }
 

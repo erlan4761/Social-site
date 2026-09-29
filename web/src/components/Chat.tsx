@@ -11,6 +11,7 @@ import { highlight, searchTerms } from '../highlight';
 import { VIDEO_NOTE_MAX_S, canRecord, mmss, useRecorder } from '../voice';
 import { Icon } from './Icon';
 import { Monogram } from './Monogram';
+import { useSession } from '../session';
 
 /* ─ Вложения ───────────────────────────────────────────────────────────── */
 
@@ -457,6 +458,44 @@ type MenuState = { item: BubbleItem; x: number; y: number } | null;
  * переписки (`key`), иначе смена чата выглядела бы как «пришло 30 новых
  * сообщений» и прокрутка вела бы себя по правилам дозагрузки.
  */
+/* ─ Упоминания ─────────────────────────────────────────────────────── */
+
+// То же правило, что в mentions.js на сервере: перед «@» — не буква и не
+// цифра, так что адрес почты упоминанием не становится.
+const MENTION_RE = /(^|[^\p{L}\p{N}_@])@([a-z0-9_]{3,20})(?![a-z0-9_])/giu;
+
+/** Текст сообщения, где `@логин` — ссылка на профиль; своё имя — с подсветкой. */
+export function MessageText({ text, me }: { text: string; me?: string }) {
+  const out: ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(MENTION_RE)) {
+    const start = match.index + match[1].length;
+    const name = match[2];
+    if (start > last) out.push(text.slice(last, start));
+    out.push(
+      <Link
+        key={start}
+        className={name.toLowerCase() === me ? 'mention me' : 'mention'}
+        to={`/u/${name.toLowerCase()}`}
+      >
+        @{name}
+      </Link>,
+    );
+    last = start + 1 + name.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return <>{out}</>;
+}
+
+const fold = (s: string) => s.toLocaleLowerCase('ru').replace(/ё/g, 'е');
+
+/** Что набрано после «@» прямо перед кареткой — или null, если не упоминание. */
+function mentionQuery(text: string, caret: number) {
+  // После «@» — и кириллица: «@ни» находит Нину по имени, а вставится её логин.
+  const match = /(^|[^\p{L}\p{N}_@])@([\p{L}\p{N}_]{0,20})$/u.exec(text.slice(0, caret));
+  return match ? { q: fold(match[2]), start: caret - match[2].length - 1 } : null;
+}
+
 export function MessageList({
   items,
   loading,
@@ -472,6 +511,7 @@ export function MessageList({
   jump = null,
 }: ListProps) {
   const can = { ...ALL_ACTIONS, ...actions };
+  const me = useSession().user?.username;
   const box = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const prev = useRef<{ first?: number; last?: number; height: number }>({ height: 0 });
@@ -686,7 +726,7 @@ export function MessageList({
                         (фото, голосовое) подпись идёт отдельной строкой. */}
                     {m.body ? (
                       <p className="bubble-text">
-                        {m.body}
+                        <MessageText text={m.body} me={me} />
                         <span className="bubble-meta-space" aria-hidden="true">
                           {meta}
                         </span>
@@ -979,6 +1019,8 @@ type ComposerProps = {
   onEditLast?: () => void;
   onTyping?: () => void;
   autoFocus?: boolean;
+  /** Кого можно упомянуть через @ — участники группы без себя. */
+  mentionables?: Author[];
 };
 
 export function Composer({
@@ -990,8 +1032,12 @@ export function Composer({
   onEditLast,
   onTyping,
   autoFocus = false,
+  mentionables,
 }: ComposerProps) {
   const id = useId();
+  const [caret, setCaret] = useState(0);
+  const [pickIndex, setPickIndex] = useState(0);
+  const [dismissed, setDismissed] = useState<number | null>(null);
   const field = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const [text, setText] = useState('');
@@ -1070,6 +1116,31 @@ export function Composer({
     field.current?.focus();
   }
 
+  // Подсказка упоминаний: «@» и начало логина или имени — до шести участников.
+  const query = mentionables?.length ? mentionQuery(text, caret) : null;
+  const suggestions =
+    query && dismissed !== query.start
+      ? mentionables!
+          .filter((a) => a.username.startsWith(query.q) || fold(a.displayName).split(/\s+/).some((w) => w.startsWith(query.q)))
+          .slice(0, 6)
+      : [];
+  const active = Math.min(pickIndex, Math.max(0, suggestions.length - 1));
+
+  function insertMention(a: Author) {
+    if (!query) return;
+    const before = text.slice(0, query.start);
+    const after = text.slice(caret);
+    const next = `${before}@${a.username} ${after.replace(/^\s+/, '')}`;
+    const at = before.length + a.username.length + 2;
+    setText(next);
+    setCaret(at);
+    setPickIndex(0);
+    requestAnimationFrame(() => {
+      field.current?.focus();
+      field.current?.setSelectionRange(at, at);
+    });
+  }
+
   // Пустое поле без файла — вместо «Отправить» микрофон, как в Телеграме.
   const showMic = attachable && canRecord() && !text.trim() && !pending;
 
@@ -1122,6 +1193,29 @@ export function Composer({
         <p className="composer-error" role="alert">
           {fileError ?? voice.error}
         </p>
+      )}
+
+      {suggestions.length > 0 && (
+        <ul className="mention-pop" role="listbox" id={`${id}-mentions`} aria-label="Кого упомянуть">
+          {suggestions.map((a, i) => (
+            <li
+              key={a.id}
+              id={`${id}-mention-${a.id}`}
+              role="option"
+              aria-selected={i === active}
+              className={i === active ? 'on' : undefined}
+              // mousedown, а не click: поле не должно терять фокус и каретку.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                insertMention(a);
+              }}
+            >
+              <Monogram username={a.username} displayName={a.displayName} avatarUrl={a.avatarUrl} size="sm" />
+              <strong>{a.displayName}</strong>
+              <span>@{a.username}</span>
+            </li>
+          ))}
+        </ul>
       )}
 
       {voice.recording === 'video' && voice.stream && (
@@ -1193,8 +1287,14 @@ export function Composer({
             value={text}
             placeholder={pending ? 'Подпись' : placeholder}
             autoFocus={autoFocus && !touch()}
+            aria-autocomplete={mentionables ? 'list' : undefined}
+            aria-controls={suggestions.length ? `${id}-mentions` : undefined}
+            aria-activedescendant={suggestions.length ? `${id}-mention-${suggestions[active].id}` : undefined}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
             onChange={(e) => {
               setText(e.target.value);
+              setCaret(e.target.selectionStart);
+              setPickIndex(0);
               const now = Date.now();
               if (onTyping && e.target.value.trim() && !editing && now - lastTyping.current > TYPING_EVERY_MS) {
                 lastTyping.current = now;
@@ -1210,6 +1310,24 @@ export function Composer({
               }
             }}
             onKeyDown={(e) => {
+              if (suggestions.length > 0) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  const step = e.key === 'ArrowDown' ? 1 : -1;
+                  setPickIndex((active + step + suggestions.length) % suggestions.length);
+                  return;
+                }
+                if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+                  e.preventDefault();
+                  insertMention(suggestions[active]);
+                  return;
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setDismissed(query!.start);
+                  return;
+                }
+              }
               if (e.key === 'Escape' && (mode || pending)) {
                 e.preventDefault();
                 if (pending) setPending(null);
