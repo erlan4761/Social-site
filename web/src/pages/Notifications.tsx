@@ -26,6 +26,9 @@ function targetOf(event: NotificationItem) {
     case 'mention':
       if (!event.chat) return '/messages';
       return event.message ? `/messages/c/${event.chat.id}?m=${event.message.id}` : `/messages/c/${event.chat.id}`;
+    case 'new_login':
+      // Там список сеансов: чужой можно завершить.
+      return '/settings';
   }
 }
 
@@ -48,6 +51,8 @@ function lineOf(event: NotificationItem) {
       return event.chat ? `Вас добавили в чат «${event.chat.title}»` : 'Вас добавили в чат';
     case 'mention':
       return event.chat ? `${who} упомянул(а) вас в чате «${event.chat.title}»` : `${who} упомянул(а) вас`;
+    case 'new_login':
+      return `Вход в аккаунт: ${event.device ?? 'новое устройство'}`;
   }
 }
 
@@ -56,6 +61,7 @@ function quoteOf(event: NotificationItem) {
   if (event.kind === 'comment') return event.comment?.excerpt ?? null;
   if (event.kind === 'like') return event.post?.excerpt ?? null;
   if (event.kind === 'mention') return event.message?.excerpt ?? null;
+  if (event.kind === 'new_login') return 'Если это были не вы — завершите этот сеанс в настройках.';
   return null;
 }
 

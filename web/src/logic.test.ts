@@ -5,6 +5,7 @@ import { lastSeenLabel, plural } from './time';
 import { mergeLatest, previewText, revealOlder, typingLabel } from './components/chat/format';
 import { mentionQuery } from './components/chat/MessageText';
 import { formatPhone, toE164 } from './phone';
+import { deviceName } from './device';
 
 /** Правила интерфейса, которые проще проверить функцией, чем глазами. */
 
@@ -118,5 +119,18 @@ describe('номер телефона', () => {
     expect(formatPhone('+996555123456')).toBe('+996 555 12 34 56');
     expect(formatPhone('+79161234567')).toBe('+7 916 123-45-67');
     expect(formatPhone('+4915112345678')).toBe('+49 151 123 456 78');
+  });
+});
+
+describe('устройство сеанса', () => {
+  it('браузер и система из User-Agent', () => {
+    expect(deviceName('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36')).toBe('Chrome, Windows');
+    expect(deviceName('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1')).toBe('Safari, iPhone');
+    expect(deviceName('Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36 Edg/140.0')).toBe('Edge, Windows');
+  });
+
+  it('непонятное — «Неизвестное устройство»', () => {
+    expect(deviceName(null)).toBe('Неизвестное устройство');
+    expect(deviceName('curl/8.0')).toBe('Неизвестное устройство');
   });
 });

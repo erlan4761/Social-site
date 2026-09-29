@@ -135,6 +135,22 @@ describe('витрина: вход по номеру', () => {
     expect((await api.phonePassword(verdict.ticket, PASSWORD)).user.username).toBe('demo');
   });
 
+  it('вход — событие «вход в аккаунт», регистрация — без него', async () => {
+    await api.logout();
+    await loginAs('demo');
+    const { notifications } = await api.notifications();
+    expect(notifications[0]).toMatchObject({ kind: 'new_login', readAt: null });
+    expect(notifications[0].actor.username).toBe('demo');
+    expect(typeof notifications[0].device).toBe('string');
+
+    await api.logout();
+    const sent = await api.phoneStart('+996700998877');
+    const verdict = await api.phoneVerify(sent.phone, sent.demoCode!);
+    if (verdict.status !== 'signup') throw new Error(verdict.status);
+    await api.phoneSignup(verdict.ticket, 'bez_sobytiya', 'Новичок');
+    expect((await api.notifications()).notifications).toHaveLength(0);
+  });
+
   it('новый код сразу — 429, мусор вместо номера — 400', async () => {
     await api.phoneStart('+996700445566');
     await expect(api.phoneStart('+996700445566')).rejects.toMatchObject({ status: 429 });
