@@ -22,9 +22,10 @@ export function inFolder(folder: ChatFolder, row: FolderRow): boolean {
   return true;
 }
 
-/** Счётчик на вкладке папки — непрочитанное без приглушённых, как у «Сообщений». */
+/** Счётчик на вкладке папки — сколько чатов в ней ждут ответа, как в Телеграме:
+ *  чатов, а не сообщений, и без приглушённых. */
 export const folderUnread = (folder: ChatFolder, rows: FolderRow[]) =>
-  rows.filter((r) => !r.muted && inFolder(folder, r)).reduce((sum, r) => sum + r.unread, 0);
+  rows.filter((r) => !r.muted && r.unread > 0 && inFolder(folder, r)).length;
 
 /**
  * Положить чат в папку или убрать из неё — меняя списки так, как это понял бы

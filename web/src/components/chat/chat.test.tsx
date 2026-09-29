@@ -1,0 +1,100 @@
+import { fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { describe, expect, it, vi } from 'vitest';
+import type { Poll } from '../../api';
+import { Composer } from './Composer';
+import { MessageText } from './MessageText';
+import { PollCard } from './PollCard';
+
+/** Поведение деталей переписки — как его видит человек: кнопки, подсказки, ссылки. */
+
+const poll = (patch: Partial<Poll> = {}): Poll => ({
+  id: 1, multiple: false, anonymous: true, closed: false, total: 0, myVotes: [], canClose: false,
+  options: [
+    { id: 11, text: 'Kodak', votes: null, voters: [] },
+    { id: 12, text: 'Ilford', votes: null, voters: [] },
+  ],
+  ...patch,
+});
+
+describe('опрос', () => {
+  it('до голоса — варианты кнопками, щелчок голосует', () => {
+    const onVote = vi.fn();
+    render(<PollCard question="Что берём?" poll={poll()} readOnly={false} onVote={onVote} onClose={() => undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Ilford' }));
+    expect(onVote).toHaveBeenCalledWith([12]);
+  });
+
+  it('несколько ответов — флажки и «Голосовать» со всеми отмеченными', () => {
+    const onVote = vi.fn();
+    render(<PollCard question="Когда?" poll={poll({ multiple: true })} readOnly={false} onVote={onVote} onClose={() => undefined} />);
+    const vote = screen.getByRole('button', { name: 'Голосовать' });
+    expect(vote).toBeDisabled();
+    fireEvent.click(screen.getByLabelText('Kodak'));
+    fireEvent.click(screen.getByLabelText('Ilford'));
+    fireEvent.click(vote);
+    expect(onVote).toHaveBeenCalledWith([11, 12]);
+  });
+
+  it('после голоса — проценты, свой выбор и «Отменить голос»', () => {
+    const onVote = vi.fn();
+    const voted = poll({
+      total: 2, myVotes: [11],
+      options: [
+        { id: 11, text: 'Kodak', votes: 1, voters: [] },
+        { id: 12, text: 'Ilford', votes: 1, voters: [] },
+      ],
+    });
+    render(<PollCard question="Что берём?" poll={voted} readOnly={false} onVote={onVote} onClose={() => undefined} />);
+    expect(screen.getAllByText('50%')).toHaveLength(2);
+    expect(screen.getByText(/ваш выбор/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Отменить голос' }));
+    expect(onVote).toHaveBeenCalledWith([]);
+  });
+
+  it('автор видит итоги по кнопке, но голосует как все', () => {
+    const own = poll({ canClose: true, options: poll().options.map((o) => ({ ...o, votes: 0 })) });
+    render(<PollCard question="Что берём?" poll={own} readOnly={false} onVote={() => undefined} onClose={() => undefined} />);
+    expect(screen.getByRole('button', { name: 'Kodak' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Результаты' }));
+    expect(screen.getAllByText('0%')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Завершить опрос' })).toBeInTheDocument();
+  });
+});
+
+describe('упоминания', () => {
+  it('@логин — ссылка на профиль, своё имя выделено', () => {
+    render(
+      <MemoryRouter>
+        <p>
+          <MessageText text="@nina и @Demo, встречаемся. Почта a@b.ru" me="demo" />
+        </p>
+      </MemoryRouter>,
+    );
+    const nina = screen.getByRole('link', { name: '@nina' });
+    expect(nina).toHaveAttribute('href', '/u/nina');
+    expect(screen.getByRole('link', { name: '@Demo' })).toHaveClass('mention', 'me');
+    expect(screen.queryByRole('link', { name: /b\.ru/ })).toBeNull();
+  });
+
+  it('в поле ввода «@ни» подсказывает Нину, Enter вставляет логин', () => {
+    render(
+      <Composer
+        placeholder="Сообщение"
+        onSend={async () => true}
+        mentionables={[
+          { id: 2, username: 'nina', displayName: 'Нина Барто', avatarUrl: null },
+          { id: 3, username: 'oleg_k', displayName: 'Олег Кузьмин', avatarUrl: null },
+        ]}
+      />,
+    );
+    const field = screen.getByRole('textbox') as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: 'Привет, @ни', selectionStart: 11, selectionEnd: 11 } });
+    const options = screen.getAllByRole('option');
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveTextContent('Нина Барто');
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(field.value).toBe('Привет, @nina ');
+    expect(screen.queryByRole('option')).toBeNull();
+  });
+});
