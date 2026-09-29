@@ -77,14 +77,14 @@ export function quotesFor(kind, replyIds, scope, scopeParams) {
 
   const params = { ...scopeParams };
   const rows = db.prepare(`
-    SELECT m.id, m.body, m.attach_kind, m.attach_name, u.id AS author_id, u.display_name
+    SELECT m.id, m.body, m.attach_kind, m.attach_name, m.sticker, u.id AS author_id, u.display_name
     FROM ${TABLES[kind].messages} m JOIN users u ON u.id = m.${TABLES[kind].author}
     WHERE m.id IN (${inList(ids, params)}) AND ${scope}
   `).all(params);
 
   for (const row of rows) {
     // Ответ на фото без подписи цитирует не пустоту, а «Фото».
-    const text = row.body || attachmentLabel(row.attach_kind, row.attach_name);
+    const text = contentLabel(row);
     out.set(row.id, {
       id: row.id,
       author: { id: row.author_id, displayName: row.display_name },
@@ -118,6 +118,7 @@ export const extraFields = (row) => ({
       ? { kind: 'user', username: row.fwd_username, displayName: row.fwd_display_name }
       : null,
   replyToId: row.reply_to_id ?? null,
+  sticker: row.sticker ?? null,
 });
 
 /** Колонки и JOIN источника пересылки для выборки с `extraFields`. */
@@ -163,6 +164,26 @@ export function attachmentOf(kind, row) {
     wave: row.attach_wave ?? null,
   };
 }
+
+/* ─ Стикеры ───────────────────────────────────────────────────────────
+ * Встроенные наборы, нарисованные в клиенте (web/src/stickers.tsx), — без
+ * загрузки картинок и внешних сервисов. Сервер знает только имена: чужое имя
+ * не пройдёт, а новый стикер — это строка здесь и рисунок там.
+ */
+export const STICKERS = new Set([
+  ...['hi', 'ok', 'yay', 'lol', 'sad', 'love', 'think', 'thanks', 'sleep', 'wow', 'coffee', 'fire'].map((n) => `plenka/${n}`),
+  ...['joy', 'heart', 'clap', 'party', 'cry', 'angry', 'cool', 'star'].map((n) => `mood/${n}`),
+]);
+
+export function readSticker(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== 'string' || !STICKERS.has(raw)) throw bad('Такого стикера нет');
+  return raw;
+}
+
+/** Что показать вместо сообщения там, где его самого не видно: цитата, поиск, закреплённое. */
+export const contentLabel = (row) =>
+  row.body || (row.sticker ? 'Стикер' : attachmentLabel(row.attach_kind, row.attach_name));
 
 /** Подпись вложения там, где его самого не видно: цитата, превью в списке. */
 export function attachmentLabel(kind, name) {
@@ -289,7 +310,7 @@ export function searchRows(rows, terms) {
 
 export const searchResult = (row, author = null) => ({
   id: row.id,
-  body: row.body || attachmentLabel(row.attach_kind, row.attach_name),
+  body: contentLabel(row),
   createdAt: row.created_at,
   author,
 });
@@ -343,15 +364,15 @@ export function forwardSource(input, viewerId) {
 
   const sql = {
     dm: `
-      SELECT m.body, m.from_id AS author, m.fwd_user_id, m.fwd_channel_id, ${ATTACH_COLUMNS} FROM messages m
+      SELECT m.body, m.sticker, m.from_id AS author, m.fwd_user_id, m.fwd_channel_id, ${ATTACH_COLUMNS} FROM messages m
       WHERE m.id = :id AND (m.from_id = :viewerId OR m.to_id = :viewerId)`,
     chat: `
-      SELECT m.body, m.author_id AS author, m.fwd_user_id, m.fwd_channel_id, ${ATTACH_COLUMNS} FROM chat_messages m
+      SELECT m.body, m.sticker, m.author_id AS author, m.fwd_user_id, m.fwd_channel_id, ${ATTACH_COLUMNS} FROM chat_messages m
       JOIN chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = :viewerId
       WHERE m.id = :id AND ${blockPairSql('m.author_id')}`,
     // Автор публикации — канал, а не человек: подпись будет «из канала».
     channel: `
-      SELECT m.body, NULL AS author, NULL AS fwd_user_id, m.channel_id AS fwd_channel_id, ${ATTACH_COLUMNS}
+      SELECT m.body, NULL AS sticker, NULL AS author, NULL AS fwd_user_id, m.channel_id AS fwd_channel_id, ${ATTACH_COLUMNS}
       FROM channel_posts m WHERE m.id = :id`,
   }[input.from];
 
@@ -364,6 +385,7 @@ export function forwardSource(input, viewerId) {
   const fromChannel = row.fwd_channel_id != null;
   return {
     body: row.body,
+    sticker: row.sticker ?? null,
     fwdUserId: fromChannel ? null : row.fwd_user_id ?? row.author,
     fwdChannelId: fromChannel ? row.fwd_channel_id : null,
     attachment: attachmentFromRow(row),

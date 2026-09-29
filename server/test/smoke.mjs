@@ -2635,5 +2635,35 @@ r = await pia(`/scheduled/${s2}/send`, { method: 'POST' });
 check('«отправить сейчас» при блокировке — 403, очередь чиста', r.status === 403 && (await pia(`/scheduled/${s2}`, { method: 'DELETE' })).status === 404, `${r.status}`);
 await ron(`/users/${userPi}/block`, { method: 'DELETE' });
 
+console.log('\n— стикеры —');
+const stick = (client, path, payload) => client(path, { method: 'POST', body: JSON.stringify(payload) });
+
+r = await stick(pia, `/messages/${userRo}`, { sticker: 'plenka/hi' });
+const st1 = r.body.message;
+check('стикер в личку', r.status === 201 && st1?.sticker === 'plenka/hi' && st1.body === '', `${r.status} ${JSON.stringify(r.body)}`);
+r = await ron(`/messages/${userPi}`);
+check('получатель видит стикер', r.body.messages?.some((m) => m.id === st1.id && m.sticker === 'plenka/hi'), '');
+r = await stick(pia, `/messages/${userRo}`, { sticker: 'plenka/nope' });
+check('чужой стикер — 400', r.status === 400, `${r.status}`);
+r = await stick(pia, `/messages/${userRo}`, { sticker: '../../etc/passwd' });
+check('имя-путь — 400', r.status === 400, `${r.status}`);
+r = await stick(pia, `/messages/${userRo}`, { sticker: 'plenka/ok', body: 'и текст' });
+check('стикер с текстом — 400', r.status === 400, `${r.status}`);
+r = await pia(`/messages/${userRo}/${st1.id}`, { method: 'PATCH', body: JSON.stringify({ body: 'правка' }) });
+check('стикер не правится', r.status === 403, `${r.status}`);
+
+r = await ron(`/messages/${userPi}`, { method: 'POST', body: JSON.stringify({ body: 'Мне нравится!', replyTo: st1.id }) });
+check('ответ на стикер цитирует «Стикер»', r.body.message?.replyTo?.body === 'Стикер', JSON.stringify(r.body.message?.replyTo));
+
+r = await stick(pia, `/chats/${pChat}/messages`, { sticker: 'mood/party' });
+const st2 = r.body.message;
+check('стикер в группу', r.status === 201 && st2?.sticker === 'mood/party', `${r.status}`);
+r = await ron(`/chats/${pChat}/messages`, { method: 'POST', body: JSON.stringify({ forward: { from: 'chat', id: st2.id } }) });
+check('пересланный стикер остаётся стикером', r.status === 201 && r.body.message?.sticker === 'mood/party' && r.body.message.forwardedFrom?.username === userPi, `${r.status} ${JSON.stringify(r.body.message)}`);
+r = await ron(`/messages/${userRo}`, { method: 'POST', body: JSON.stringify({ forward: { from: 'chat', id: st2.id } }) });
+check('и в «Избранное» — тоже', r.status === 201 && r.body.message?.sticker === 'mood/party', `${r.status}`);
+r = await ron(`/messages/${userPi}`);
+check('обычные сообщения — без стикера', r.body.messages?.filter((m) => !m.sticker).every((m) => m.sticker === null), '');
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

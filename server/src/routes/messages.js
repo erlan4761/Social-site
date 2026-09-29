@@ -5,7 +5,7 @@ import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { publicUrl } from '../media.js';
 import {
   ATTACH_INSERT_COLUMNS, FWD_COLUMNS, assertEditable, attachmentOf, attachmentUpload, attachmentValues,
-  clearTyping, copyAttachment, decorate, dmKey, dropAttachment, emojiOf, extraFields, forwardSource, isForwarded, fwdJoin,
+  clearTyping, copyAttachment, decorate, readSticker, dmKey, dropAttachment, emojiOf, extraFields, forwardSource, isForwarded, fwdJoin,
   isTyping, readAttachment, replyIdOf, searchQuery, searchResult, searchRows, setTyping,
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
@@ -197,10 +197,15 @@ router.post('/:username', attachmentUpload.single('file'), async (req, res, next
       return res.status(403).json({ error: BLOCKED_CHAT_MESSAGE });
     }
 
-    const forward = req.file ? null : forwardSource(req.body?.forward, me);
+    // Стикер — JSON с полем sticker: без текста и файла, как в Телеграме.
+    const sticker = req.file ? null : readSticker(req.body?.sticker);
+    const forward = req.file || sticker ? null : forwardSource(req.body?.forward, me);
+    if (sticker && req.body?.body) return res.status(400).json({ error: 'Стикер отправляется без текста' });
     const body = forward
       ? forward.body
-      : v.str(req.body?.body ?? '', 'сообщение', { min: req.file ? 0 : 1, max: MAX_LEN });
+      : sticker
+        ? ''
+        : v.str(req.body?.body ?? '', 'сообщение', { min: req.file ? 0 : 1, max: MAX_LEN });
 
     const replyTo = forward ? null : replyIdOf(req.body?.replyTo);
     if (replyTo != null && !pairMessage(replyTo, me, other.id)) {
@@ -212,9 +217,9 @@ router.post('/:username', attachmentUpload.single('file'), async (req, res, next
     attachment = forward ? await copyAttachment(forward.attachment) : await readAttachment(req.file, req.body);
 
     const info = db.prepare(`
-      INSERT INTO messages (from_id, to_id, body, created_at, read_at, reply_to_id, fwd_user_id, fwd_channel_id, ${ATTACH_INSERT_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(me, other.id, body, nowIso(), saved ? nowIso() : null, replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, ...attachmentValues(attachment));
+      INSERT INTO messages (from_id, to_id, body, created_at, read_at, reply_to_id, fwd_user_id, fwd_channel_id, sticker, ${ATTACH_INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(me, other.id, body, nowIso(), saved ? nowIso() : null, replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, sticker ?? forward?.sticker ?? null, ...attachmentValues(attachment));
 
     clearTyping(dmKey(me, other.id), me);
 
@@ -314,6 +319,7 @@ router.patch('/:username/:id', (req, res, next) => {
     if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
     assertEditable(msg.from_id, msg.created_at, me);
     if (isForwarded(msg)) return res.status(403).json({ error: 'Пересланное сообщение изменить нельзя' });
+    if (msg.sticker) return res.status(403).json({ error: 'Стикер изменить нельзя' });
     if (isBlockedPair(me, other.id)) return res.status(403).json({ error: BLOCKED_CHAT_MESSAGE });
 
     // У сообщения с вложением подпись можно и убрать: фото остаётся сообщением.

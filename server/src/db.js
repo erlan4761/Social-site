@@ -350,6 +350,9 @@ for (const table of ['messages', 'chat_messages']) {
   ensureColumn(table, 'attach_size', 'INTEGER');
   ensureColumn(table, 'attach_duration', 'INTEGER');
   ensureColumn(table, 'attach_wave', 'TEXT');
+  // Стикер — id из встроенного набора («plenka/hi»): картинку рисует клиент,
+  // в базе только имя. Сообщение со стикером — без текста и вложения.
+  ensureColumn(table, 'sticker', 'TEXT');
 }
 
 // Упоминания в группах (см. mentions.js): кого назвали через @ в сообщении.

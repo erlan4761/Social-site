@@ -5,7 +5,7 @@ import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { publicUrl } from '../media.js';
 import {
   ATTACH_COLUMNS, ATTACH_INSERT_COLUMNS, FWD_COLUMNS, assertEditable, attachmentOf, attachmentUpload,
-  attachmentValues, chatKey, clearTyping, copyAttachment, decorate, dropAttachment, emojiOf, extraFields,
+  attachmentValues, chatKey, clearTyping, readSticker, copyAttachment, decorate, dropAttachment, emojiOf, extraFields,
   forwardSource, fwdJoin, isForwarded, isTyping, readAttachment, replyIdOf, searchQuery, searchResult, searchRows,
   setTyping,
 } from '../messageExtras.js';
@@ -61,7 +61,7 @@ const member = (row, viewerId) => ({
 });
 
 const MESSAGE_SELECT = `
-  SELECT m.id, m.chat_id, m.body, m.created_at, m.reply_to_id, m.edited_at, m.fwd_user_id, m.fwd_channel_id, ${ATTACH_COLUMNS},
+  SELECT m.id, m.chat_id, m.body, m.created_at, m.reply_to_id, m.edited_at, m.fwd_user_id, m.fwd_channel_id, m.sticker, ${ATTACH_COLUMNS},
          u.id AS author_id, u.username AS author_username,
          u.display_name AS author_display_name, u.avatar_path AS author_avatar_path,
          ${FWD_COLUMNS}
@@ -413,12 +413,16 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
 
     // Опрос — JSON с полем poll: вопрос становится текстом сообщения.
     const poll = req.file || req.body?.poll == null ? null : readPoll(req.body.poll);
-    const forward = req.file || poll ? null : forwardSource(req.body?.forward, me);
+    const sticker = req.file || poll ? null : readSticker(req.body?.sticker);
+    const forward = req.file || poll || sticker ? null : forwardSource(req.body?.forward, me);
+    if (sticker && req.body?.body) return res.status(400).json({ error: 'Стикер отправляется без текста' });
     const body = poll
       ? poll.question
       : forward
         ? forward.body
-        : v.str(req.body?.body ?? '', 'сообщение', { min: req.file ? 0 : 1, max: MAX_BODY });
+        : sticker
+          ? ''
+          : v.str(req.body?.body ?? '', 'сообщение', { min: req.file ? 0 : 1, max: MAX_BODY });
 
     const replyTo = forward ? null : replyIdOf(req.body?.replyTo);
     if (replyTo != null && !chatMessage(chat.id, replyTo, me)) {
@@ -429,9 +433,9 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
     attachment = forward ? await copyAttachment(forward.attachment) : await readAttachment(req.file, req.body);
 
     const info = db.prepare(`
-      INSERT INTO chat_messages (chat_id, author_id, body, created_at, reply_to_id, fwd_user_id, fwd_channel_id, ${ATTACH_INSERT_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(chat.id, me, body, nowIso(), replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, ...attachmentValues(attachment));
+      INSERT INTO chat_messages (chat_id, author_id, body, created_at, reply_to_id, fwd_user_id, fwd_channel_id, sticker, ${ATTACH_INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(chat.id, me, body, nowIso(), replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, sticker ?? forward?.sticker ?? null, ...attachmentValues(attachment));
 
     if (poll) createPoll('chat', Number(info.lastInsertRowid), poll);
     clearTyping(chatKey(chat.id), me);
@@ -495,6 +499,7 @@ router.patch('/:id/messages/:mid', (req, res, next) => {
     if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
     assertEditable(msg.author_id, msg.created_at, me);
     if (isForwarded(msg)) return res.status(403).json({ error: 'Пересланное сообщение изменить нельзя' });
+    if (msg.sticker) return res.status(403).json({ error: 'Стикер изменить нельзя' });
     if (hasPoll('chat', msg.id)) return res.status(403).json({ error: 'Опрос изменить нельзя — за него уже голосуют' });
 
     const body = v.str(req.body?.body ?? '', 'сообщение', { min: msg.attach_path ? 0 : 1, max: MAX_BODY });

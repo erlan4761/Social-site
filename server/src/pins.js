@@ -1,5 +1,5 @@
 import { db, nowIso } from './db.js';
-import { attachmentLabel } from './messageExtras.js';
+import { contentLabel } from './messageExtras.js';
 
 /**
  * Закреплённое сообщение — одно на переписку. Кто вправе закреплять, решает
@@ -45,7 +45,7 @@ export function pinnedPreview(kind, scopeId, lookup) {
   if (!row) return null;
   return {
     id,
-    body: row.body || attachmentLabel(row.attach_kind, row.attach_name),
+    body: contentLabel(row),
     attachmentKind: row.attach_kind ?? null,
   };
 }
