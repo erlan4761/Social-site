@@ -13,6 +13,7 @@ import { Icon } from '../components/Icon';
 import { MemberSearch } from '../components/MemberSearch';
 import { Monogram } from '../components/Monogram';
 import { useSession } from '../session';
+import { pollEvery, useLive, useLiveConnected } from '../live';
 import { isOnline, plural } from '../time';
 import type { MessengerContext } from './Messenger';
 
@@ -108,10 +109,18 @@ function ChatView({ idParam }: { idParam: string }) {
 
   // Опрос: новые реплики, состав, название и отметка прочтения — всё это
   // меняют другие участники.
+  // Живой поток: толчок — перечитать сразу; с ним опрос — редкая страховка.
+  const every = pollEvery(useLiveConnected(), POLL_MS);
+  const pullRef = useRef<() => void>(() => undefined);
+  const typingTimer = useRef<number | undefined>(undefined);
+  useLive((e) => {
+    if (e.t === 'ready' || (e.t === 'chat' && e.id === chatId)) pullRef.current();
+  });
+
   useEffect(() => {
     if (!valid || gone) return;
     let cancelled = false;
-    const timer = setInterval(() => {
+    const pull = () => {
       const startedAt = edits.current;
       api
         .chatMessages(chatId)
@@ -120,6 +129,8 @@ function ChatView({ idParam }: { idParam: string }) {
           setChat(res.chat);
           setReadUpTo(res.readUpTo);
           setTyping(res.typing.map((t) => t.displayName));
+          window.clearTimeout(typingTimer.current);
+          if (res.typing.length > 0) typingTimer.current = window.setTimeout(() => pullRef.current(), 6_500);
           setPinned(res.pinned);
           if (edits.current !== startedAt) return;
           setMessages((prev) => {
@@ -132,12 +143,14 @@ function ChatView({ idParam }: { idParam: string }) {
           // Пока экран был открыт, чат могли удалить или вас из него убрать.
           if (!cancelled && err instanceof ApiError && err.status === 404) setGone(err.message);
         });
-    }, POLL_MS);
+    };
+    pullRef.current = pull;
+    const timer = setInterval(pull, every);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [chatId, valid, gone, user?.id, markRead]);
+  }, [chatId, valid, gone, user?.id, markRead, every]);
 
   async function reveal(id: number) {
     try {

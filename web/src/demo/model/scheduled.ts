@@ -4,6 +4,7 @@ import { byId, byName, requireMe, blockedPair } from './people';
 import { notify, saveMentions } from './notifications';
 import { membersOf, memberRow } from './chats';
 import { channelBy, subOf } from './channels';
+import { dispatchLive } from '../../live';
 
 /** Отложенные сообщения и планировщик витрины — как scheduled.js. */
 
@@ -24,6 +25,15 @@ export function scheduleTarget(kind: ScheduledKind, raw: string | number, u: DbU
 
 /** Отправка отложенного — те же проверки доступа, что в scheduled.js, в момент отправки. */
 export function deliverScheduled(s: DbScheduled): number | null {
+  const sent = deliverNow(s);
+  // Ушло по часам — толчок экрану, как от живого потока сервера.
+  if (sent != null) {
+    dispatchLive(s.kind === 'dm' ? { t: 'dm', with: s.targetId } : s.kind === 'chat' ? { t: 'chat', id: s.targetId } : { t: 'channel', id: s.targetId });
+  }
+  return sent;
+}
+
+function deliverNow(s: DbScheduled): number | null {
   db.scheduledMessages = db.scheduledMessages.filter((x) => x.id !== s.id);
   const at = new Date().toISOString();
   if (s.kind === 'dm') {

@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, ApiError, type Channel, type ChannelComment, type ChannelPost } from '../api';
 import { Composer, MessageList, PaneHead, type BubbleItem, type MessageAction } from '../components/Chat';
 import { useSession } from '../session';
+import { pollEvery, useLive, useLiveConnected } from '../live';
 import { plural } from '../time';
 import { ChannelAvatar } from '../components/messenger/ListRows';
 
@@ -57,10 +58,17 @@ function CommentsPane({ handle, postId }: { handle: string; postId: number }) {
   }, [load, postId]);
 
   // Ветка приходит целиком — её и подставляем, так доходят и удаления.
+  // Живой поток: толчок — перечитать сразу; с ним опрос — редкая страховка.
+  const every = pollEvery(useLiveConnected(), POLL_MS);
+  const pullRef = useRef<() => void>(() => undefined);
+  useLive((e) => {
+    if (e.t === 'ready' || (e.t === 'channel' && e.id === channel?.id)) pullRef.current();
+  });
+
   useEffect(() => {
     if (gone) return;
     let cancelled = false;
-    const timer = setInterval(() => {
+    const pull = () => {
       const startedAt = edits.current;
       load()
         .then((list) => {
@@ -69,12 +77,14 @@ function CommentsPane({ handle, postId }: { handle: string; postId: number }) {
         .catch((err) => {
           if (!cancelled && err instanceof ApiError && err.status === 404) setGone(err.message);
         });
-    }, POLL_MS);
+    };
+    pullRef.current = pull;
+    const timer = setInterval(pull, every);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [load, gone]);
+  }, [load, gone, every]);
 
   async function send(text: string) {
     setError(null);

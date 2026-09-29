@@ -10,6 +10,7 @@ import { ScheduledBar } from '../components/Scheduled';
 import { Icon } from '../components/Icon';
 import { SavedAvatar } from '../components/Monogram';
 import { useSession } from '../session';
+import { pollEvery, useLive, useLiveConnected } from '../live';
 import { isOnline, lastSeenLabel } from '../time';
 import { SAVED_TITLE } from '../components/messenger/rows';
 import type { MessengerContext } from './Messenger';
@@ -91,11 +92,19 @@ function ThreadView({ username }: { username: string }) {
     };
   }, [username, markRead]);
 
-  // Опрос: без WebSocket ответ сам не появится. Вместе с новыми сообщениями
-  // приходят правки, реакции, удаления, галочки, «в сети» и «печатает…».
+  // Перечитывание переписки: вместе с новыми сообщениями приходят правки,
+  // реакции, удаления, галочки, «в сети» и «печатает…». Толчок живого потока —
+  // перечитать сразу; пока поток жив, опрос по таймеру — редкая страховка.
+  const every = pollEvery(useLiveConnected(), POLL_MS);
+  const pullRef = useRef<() => void>(() => undefined);
+  const typingTimer = useRef<number | undefined>(undefined);
+  useLive((e) => {
+    if (e.t === 'ready' || (e.t === 'dm' && other != null && e.with === other.id)) pullRef.current();
+  });
+
   useEffect(() => {
     let cancelled = false;
-    const timer = setInterval(() => {
+    const pull = () => {
       const startedAt = edits.current;
       api
         .thread(username)
@@ -104,7 +113,9 @@ function ThreadView({ username }: { username: string }) {
           setOther(res.user);
           setBlocked(Boolean(res.blocked));
           setTyping(res.typing);
-        setPinned(res.pinned);
+          window.clearTimeout(typingTimer.current);
+          if (res.typing) typingTimer.current = window.setTimeout(() => pullRef.current(), 6_500);
+          setPinned(res.pinned);
           if (edits.current !== startedAt) return;
           setMessages((prev) => {
             const newest = prev.at(-1)?.id ?? 0;
@@ -113,12 +124,14 @@ function ThreadView({ username }: { username: string }) {
           });
         })
         .catch(() => undefined);
-    }, POLL_MS);
+    };
+    pullRef.current = pull;
+    const timer = setInterval(pull, every);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [username, user?.id, markRead]);
+  }, [username, user?.id, markRead, every]);
 
   /** Показать сообщение: догрузить ленту до него и прокрутить. */
   async function reveal(id: number) {

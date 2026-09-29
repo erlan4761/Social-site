@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent, MouseEvent } from 'react';
 import { api, ApiError, type Scheduled, type ScheduledKind } from '../api';
+import { useLive } from '../live';
 import { fullDate, plural } from '../time';
 import { Icon } from './Icon';
 
@@ -151,6 +152,10 @@ export function ScheduledBar({ kind, target, version, onSent }: BarProps) {
       setItems(res.scheduled);
     }).catch(() => undefined);
   }, [kind, target, onSent]);
+
+  useLive((e) => {
+    if (e.t === kind) load();
+  });
 
   useEffect(() => {
     load();

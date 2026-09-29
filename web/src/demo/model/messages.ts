@@ -6,6 +6,7 @@ import { foldSearchText, wordsOf } from './posts';
 import { notify } from './notifications';
 import { memberRow } from './chats';
 import { pollOf } from './polls';
+import { dispatchLive } from '../../live';
 
 /** Общее для ЛС и групп: цитаты, реакции, вложения, пересылка, «печатает…», стикеры, живая Марина. */
 
@@ -230,6 +231,8 @@ export function marinaAnswers(me: DbUser) {
   window.setTimeout(() => {
     for (const m of db.messages) if (m.fromId === me.id && m.toId === marina.id && !m.readAt) m.readAt = new Date().toISOString();
     setTyping(key, marina.id);
+    // Толчок, как от живого потока сервера: галочки и «печатает…» — сразу.
+    dispatchLive({ t: 'dm', with: marina.id });
   }, 1_500);
   window.setTimeout(() => {
     clearTyping(key, marina.id);
@@ -240,6 +243,8 @@ export function marinaAnswers(me: DbUser) {
       createdAt: new Date().toISOString(), readAt: null, ...NO_EXTRAS,
     });
     notify({ userId: me.id, actorId: marina.id, kind: 'message' });
+    dispatchLive({ t: 'dm', with: marina.id });
+    dispatchLive({ t: 'badges' });
   }, 5_000);
 }
 

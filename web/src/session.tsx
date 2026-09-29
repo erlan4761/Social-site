@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { api, type Badges, type User } from './api';
+import { pollEvery, startLive, stopLive, useLive, useLiveConnected } from './live';
 
 /** Без WebSocket новые события находятся опросом. Полминуты — компромисс
  *  между «узнал вовремя» и «не долбим сервер вхолостую». */
@@ -57,6 +58,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       .catch(() => undefined); // молча: счётчик не повод показывать ошибку
   }, []);
 
+  // Поток открыт, пока человек вошёл: вход — открыть, выход — закрыть.
+  const signedInNow = user !== null;
+  useEffect(() => {
+    if (!signedInNow) return;
+    startLive();
+    return () => stopLive();
+  }, [signedInNow]);
+
+  // Счётчики — по толчку (раз на пачку толчков), опрос — страховка.
+  const every = pollEvery(useLiveConnected(), UNREAD_POLL_MS, 120_000);
+  const soon = useRef<number | undefined>(undefined);
+  useLive((e) => {
+    if (e.t === 'list') return;
+    window.clearTimeout(soon.current);
+    soon.current = window.setTimeout(refreshBadges, 250);
+  });
+
   useEffect(() => {
     if (!user) {
       setBadges(NO_BADGES);
@@ -64,9 +82,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
 
     refreshBadges();
-    const timer = setInterval(refreshBadges, UNREAD_POLL_MS);
+    const timer = setInterval(refreshBadges, every);
     return () => clearInterval(timer);
-  }, [user, refreshBadges]);
+  }, [user, refreshBadges, every]);
 
   const setUnreadTotal = useCallback((n: number) => {
     setBadges((prev) => ({ ...prev, messages: n }));

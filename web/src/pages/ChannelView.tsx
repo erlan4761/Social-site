@@ -12,6 +12,7 @@ import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
 import { plural } from '../time';
 import { ChannelAvatar } from '../components/messenger/ListRows';
+import { pollEvery, useLive, useLiveConnected } from '../live';
 import type { MessengerContext } from './Messenger';
 
 /** Канал — не переписка: публикации выходят редко, а «печатает…» здесь нет.
@@ -83,10 +84,17 @@ function ChannelPane({ handle }: { handle: string }) {
     };
   }, [handle, markRead]);
 
+  // Живой поток: толчок — перечитать сразу; с ним опрос — редкая страховка.
+  const every = pollEvery(useLiveConnected(), POLL_MS);
+  const pullRef = useRef<() => void>(() => undefined);
+  useLive((e) => {
+    if (e.t === 'ready' || (e.t === 'channel' && e.id === channel?.id)) pullRef.current();
+  });
+
   useEffect(() => {
     if (gone) return;
     let cancelled = false;
-    const timer = setInterval(() => {
+    const pull = () => {
       const startedAt = edits.current;
       api
         .channelPosts(handle)
@@ -104,12 +112,14 @@ function ChannelPane({ handle }: { handle: string }) {
         .catch((err) => {
           if (!cancelled && err instanceof ApiError && err.status === 404) setGone(err.message);
         });
-    }, POLL_MS);
+    };
+    pullRef.current = pull;
+    const timer = setInterval(pull, every);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [handle, gone, markRead]);
+  }, [handle, gone, markRead, every]);
 
   async function loadOlder() {
     if (cursor == null || loadingMore) return;

@@ -12,6 +12,7 @@ import { RowMenu } from '../components/messenger/RowMenu';
 import { fold, folderRow, matches, rows, SAVED_TITLE } from '../components/messenger/rows';
 import { folderUnread, inFolder, readActiveFolder, toggleInFolder, writeActiveFolder } from '../folders';
 import { useSession } from '../session';
+import { pollEvery, useLive, useLiveConnected } from '../live';
 import { plural } from '../time';
 import type { Row } from '../components/messenger/rows';
 
@@ -89,11 +90,20 @@ export function Messenger() {
     refreshBadges();
   }, [load, refreshBadges]);
 
+  // Любой толчок может поменять список: новое сообщение, прочтение в другой
+  // вкладке, настройки. Толчки идут пачками — перечитываем раз на пачку.
+  const every = pollEvery(useLiveConnected(), LIST_POLL_MS, 60_000);
+  const soon = useRef<number | undefined>(undefined);
+  useLive(() => {
+    window.clearTimeout(soon.current);
+    soon.current = window.setTimeout(() => void load(), 250);
+  });
+
   useEffect(() => {
     void load();
-    const timer = setInterval(() => void load(), LIST_POLL_MS);
+    const timer = setInterval(() => void load(), every);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [load, every]);
 
   // Меню «+» закрывается щелчком мимо и Esc.
   useEffect(() => {
