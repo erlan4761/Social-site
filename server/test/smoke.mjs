@@ -3698,5 +3698,91 @@ await ug('/account', { method: 'DELETE', body: JSON.stringify({ password: 'parol
 r = await rename(uo, renGone);
 check('логин удалённого аккаунта закреплён — 409', r.status === 409, `${r.status}`);
 
+console.log('\n— звонки: сигнализация —');
+// Сами звук и картинка идут между браузерами — здесь проверяется только, что
+// сервер сводит участников: кому что доходит, кто может звонить и когда звонок
+// кончается. Сервер для прогона поднят с CALL_RING_MS=1500 (см. README, «Тесты»).
+const ka = makeClient();
+const kb = makeClient();
+const kc = makeClient();
+const userKa = `calla_${stamp}`;
+const userKb = `callb_${stamp}`;
+const userKc = `callc_${stamp}`;
+await legacySignUp(ka, userKa, 'Звонящая');
+await legacySignUp(kb, userKb, 'Отвечающий');
+await legacySignUp(kc, userKc, 'Третий');
+const OFFER = { type: 'offer', sdp: 'v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\n' };
+const ANSWER = { type: 'answer', sdp: 'v=0\r\no=- 3 4 IN IP4 127.0.0.1\r\ns=-\r\n' };
+const dial = (client, to, extra = {}) => client('/calls', { method: 'POST', body: JSON.stringify({ to, sdp: OFFER, ...extra }) });
+const callPost = (client, id, action, body = {}) => client(`/calls/${id}/${action}`, { method: 'POST', body: JSON.stringify(body) });
+
+r = await guest('/calls/config');
+check('настройки звонков — гостю 401', r.status === 401, `${r.status}`);
+r = await ka('/calls/config');
+check('STUN по умолчанию', r.status === 200 && r.body.iceServers?.[0]?.urls?.some((u) => u.startsWith('stun:')), JSON.stringify(r.body));
+r = await dial(ka, userKa);
+check('себе не позвонить — 400', r.status === 400, `${r.status}`);
+r = await dial(ka, userKb);
+check('собеседник без открытой вкладки — 409', r.status === 409 && /не в сети/.test(r.body.error ?? ''), `${r.status} ${r.body.error}`);
+
+const kaLive = await listen(ka);
+const kbLive = await listen(kb);
+const kcLive = await listen(kc);
+await Promise.all([kaLive, kbLive, kcLive].map((s) => s.waitFor((e) => e.t === 'ready')));
+r = await ka('/calls', { method: 'POST', body: JSON.stringify({ to: userKb, sdp: { type: 'answer', sdp: 'x' } }) });
+check('без offer — 400', r.status === 400, `${r.status}`);
+r = await dial(ka, userKb, { video: true });
+const call1 = r.body.call?.id;
+check('звонок начат', r.status === 201 && typeof call1 === 'string' && r.body.call.video === true, `${r.status} ${JSON.stringify(r.body)}`);
+ev = await kbLive.waitFor((e) => e.t === 'call' && e.kind === 'ring');
+check('вызываемому приходит звонок: кто, видео и offer', ev?.id === call1 && ev.video === true && ev.from?.username === userKa && ev.sdp?.type === 'offer', JSON.stringify(ev));
+check('посторонний ничего не получает', !kcLive.events.some((e) => e.t === 'call'), '');
+r = await dial(kc, userKb);
+check('вызываемый уже в звонке — «занято»', r.status === 409 && /Занято/.test(r.body.error ?? ''), `${r.status} ${r.body.error}`);
+r = await dial(ka, userKc);
+check('звонящий уже в звонке — 409', r.status === 409, `${r.status}`);
+r = await callPost(ka, call1, 'answer', { sdp: ANSWER });
+check('ответить может только вызываемый', r.status === 409, `${r.status}`);
+r = await callPost(kc, call1, 'ice', { candidate: { candidate: 'candidate:1 1 udp 1 1.2.3.4 5 typ host' } });
+check('посторонний в звонок — 404', r.status === 404, `${r.status}`);
+r = await callPost(kb, call1, 'answer', { sdp: ANSWER });
+ev = await kaLive.waitFor((e) => e.t === 'call' && e.kind === 'answer');
+check('ответ доходит звонящему', r.status === 200 && ev?.sdp?.type === 'answer', JSON.stringify(ev));
+r = await callPost(ka, call1, 'ice', { candidate: { candidate: 'candidate:1 1 udp 2122260223 192.0.2.1 54321 typ host', sdpMid: '0', sdpMLineIndex: 0 } });
+ev = await kbLive.waitFor((e) => e.t === 'call' && e.kind === 'ice');
+check('кандидаты передаются собеседнику', r.status === 200 && ev?.candidate?.sdpMid === '0', JSON.stringify(ev));
+r = await callPost(kb, call1, 'ice', { candidate: { candidate: 'x'.repeat(2000) } });
+check('кривой кандидат — 400', r.status === 400, `${r.status}`);
+r = await callPost(kb, call1, 'end');
+ev = await kaLive.waitFor((e) => e.t === 'call' && e.kind === 'end');
+check('положил трубку — собеседник узнаёт, звонок «завершён»', r.status === 200 && r.body.reason === 'hangup' && ev?.reason === 'hangup', JSON.stringify(ev));
+r = await callPost(ka, call1, 'end');
+check('завершённый звонок — 404', r.status === 404, `${r.status}`);
+
+r = await dial(ka, userKb);
+const call2 = r.body.call?.id;
+r = await callPost(kb, call2, 'end');
+ev = await kaLive.waitFor((e) => e.t === 'call' && e.kind === 'end' && e.id === call2);
+check('отклонил до ответа — «отклонён»', r.body.reason === 'declined' && ev?.reason === 'declined', JSON.stringify(ev));
+
+r = await dial(ka, userKb);
+const call3 = r.body.call?.id;
+ev = await kaLive.waitFor((e) => e.t === 'call' && e.kind === 'end' && e.id === call3, 4000);
+const ev3b = kbLive.events.find((e) => e.t === 'call' && e.kind === 'end' && e.id === call3);
+check('никто не ответил — пропущенный у обоих', ev?.reason === 'missed' && ev3b?.reason === 'missed', JSON.stringify([ev, ev3b]));
+
+r = await dial(ka, userKb);
+const call4 = r.body.call?.id;
+await callPost(kb, call4, 'answer', { sdp: ANSWER });
+kbLive.stop();
+ev = await kaLive.waitFor((e) => e.t === 'call' && e.kind === 'end' && e.id === call4, 3000);
+check('вкладка собеседника закрылась — звонок завершается', ev?.reason === 'gone', JSON.stringify(ev));
+
+await kc(`/users/${userKa}/block`, { method: 'PUT' });
+r = await dial(ka, userKc);
+check('в блокировке — 403', r.status === 403, `${r.status}`);
+kaLive.stop();
+kcLive.stop();
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

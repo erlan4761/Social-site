@@ -788,6 +788,20 @@ const realApi = {
 
   // ─ Отложенные ──────────────────────────────────────────────────────────
 
+  // ─ Звонки: сервер только сводит браузеры (см. calls.tsx) ─────────────────
+  callConfig: () => request<{ iceServers: RTCIceServer[] }>('/calls/config'),
+
+  startCall: (to: string, video: boolean, sdp: RTCSessionDescriptionInit) =>
+    request<{ call: { id: string; video: boolean } }>('/calls', { method: 'POST', body: body({ to, video, sdp }) }),
+
+  answerCall: (id: string, sdp: RTCSessionDescriptionInit) =>
+    request<{ ok: true }>(`/calls/${encodeURIComponent(id)}/answer`, { method: 'POST', body: body({ sdp }) }),
+
+  sendIce: (id: string, candidate: RTCIceCandidateInit) =>
+    request<{ ok: true }>(`/calls/${encodeURIComponent(id)}/ice`, { method: 'POST', body: body({ candidate }) }),
+
+  endCall: (id: string) => request<{ ok: true; reason: string }>(`/calls/${encodeURIComponent(id)}/end`, { method: 'POST' }),
+
   /** Предпросмотр ссылки: страницу скачивает сервер; не вышло — null. */
   linkPreview: (url: string) => request<{ preview: LinkPreview | null }>(`/link-preview?url=${encodeURIComponent(url)}`),
 

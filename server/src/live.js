@@ -34,8 +34,17 @@ export function openStream(req, res) {
   const entry = { userId: req.user.id, token: req.sessionToken, res };
   streams.add(entry);
   write(entry, { t: 'ready' });
-  req.on('close', () => streams.delete(entry));
+  req.on('close', () => {
+    streams.delete(entry);
+    if (!hasStream(entry.userId)) goneListeners.forEach((fn) => fn(entry.userId));
+  });
 }
+
+/** Кто хочет знать, что у человека закрылась последняя вкладка (звонки). */
+const goneListeners = new Set();
+export const onStreamsGone = (fn) => goneListeners.add(fn);
+
+export const hasStream = (userId) => [...streams].some((e) => e.userId === userId);
 
 export function emit(userIds, event) {
   const to = new Set(userIds);
@@ -43,7 +52,7 @@ export function emit(userIds, event) {
 }
 
 /** Есть ли у человека открытая вкладка — тогда пуш на телефон не нужен. */
-export const isLive = (userId) => [...streams].some((e) => e.userId === userId);
+export const isLive = hasStream;
 
 /**
  * Закрывает потоки сеансов, которых больше нет: выход, «завершить сеанс»,
@@ -57,6 +66,7 @@ export function dropDeadStreams() {
     if (!valid.get(entry.token, now)) {
       entry.res.end();
       streams.delete(entry);
+      if (!hasStream(entry.userId)) goneListeners.forEach((fn) => fn(entry.userId));
     }
   }
 }

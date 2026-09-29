@@ -37,6 +37,7 @@ jobs:
       TWILIO_API_BASE: http://127.0.0.1:3097
       SMS_RESEND_MS: '1500'
       LINK_PREVIEW_ALLOW_LOOPBACK: '1'
+      CALL_RING_MS: '1500'
       API_URL: http://127.0.0.1:3099
     steps:
       - uses: actions/checkout@v4

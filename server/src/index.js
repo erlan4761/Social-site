@@ -31,6 +31,7 @@ import { startScheduler } from './scheduled.js';
 import { dropDeadStreams, nudge, openStream } from './live.js';
 import { router as draftRoutes } from './routes/drafts.js';
 import { router as linkPreviewRoutes } from './routes/linkPreview.js';
+import { router as callRoutes } from './routes/calls.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -129,6 +130,11 @@ app.get('/api/link-preview/image', rateLimit({ windowMs: 60_000, max: relaxed ? 
 // логин на две недели, и без потолка можно было бы заблокировать чужие имена.
 app.put('/api/account/username', rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 5 }));
 
+// Звонки: кандидатов на соединение — десятки за звонок, начать звонок —
+// заметно реже (иначе это способ «звонить» кому-то без остановки).
+app.post('/api/calls', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 10 }));
+app.post('/api/calls/*splat', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 400 }));
+
 const blockLimit = rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 30 });
 app.put('/api/users/:username/block', blockLimit);
 app.delete('/api/users/:username/block', blockLimit);
@@ -190,6 +196,7 @@ app.use('/api/scheduled', scheduledRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/drafts', draftRoutes);
 app.use('/api/link-preview', linkPreviewRoutes);
+app.use('/api/calls', callRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Нет такого эндпоинта' }));
 

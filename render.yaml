@@ -49,3 +49,10 @@ services:
         sync: false
       - key: SMSRU_API_ID
         sync: false
+      # Необязательно: TURN-сервер для звонков через строгие сети (см. README).
+      - key: TURN_URLS
+        sync: false
+      - key: TURN_USERNAME
+        sync: false
+      - key: TURN_CREDENTIAL
+        sync: false

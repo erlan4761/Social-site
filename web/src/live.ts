@@ -18,7 +18,19 @@ export type LiveEvent =
   | { t: 'chat'; id: number }
   | { t: 'channel'; id: number }
   | { t: 'badges' }
-  | { t: 'list' };
+  | { t: 'list' }
+  | CallEvent;
+
+/**
+ * Сигнализация звонка — единственное событие потока с данными, а не толчком:
+ * описание соединения и сетевые кандидаты живут секунды, перечитывать их
+ * запросом бессмысленно (см. calls.tsx).
+ */
+export type CallEvent =
+  | { t: 'call'; kind: 'ring'; id: string; video: boolean; sdp: RTCSessionDescriptionInit; from: { id: number; username: string; displayName: string; avatarUrl: string | null } }
+  | { t: 'call'; kind: 'answer'; id: string; sdp: RTCSessionDescriptionInit }
+  | { t: 'call'; kind: 'ice'; id: string; candidate: RTCIceCandidateInit }
+  | { t: 'call'; kind: 'end'; id: string; reason: string };
 
 const listeners = new Set<(event: LiveEvent) => void>();
 const connectionListeners = new Set<() => void>();
