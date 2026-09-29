@@ -1,4 +1,4 @@
-import { BrowserRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { Shell } from './components/Shell';
 import { DemoBanner } from './demo/DemoBanner';
@@ -9,6 +9,7 @@ import { ChannelComments } from './pages/ChannelComments';
 import { ChannelView } from './pages/ChannelView';
 import { ChatThread } from './pages/ChatThread';
 import { Feed } from './pages/Feed';
+import { Join } from './pages/Join';
 import { ForgotPassword } from './pages/ForgotPassword';
 import { Messenger, MessengerEmpty } from './pages/Messenger';
 import { Notifications } from './pages/Notifications';
@@ -21,8 +22,10 @@ import { SessionProvider, useSession } from './session';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user, ready } = useSession();
+  const location = useLocation();
   if (!ready) return <div className="center" />;
-  if (!user) return <Navigate to="/login" replace />;
+  // Куда шли — запоминаем: после входа ссылка-приглашение откроется, а не лента.
+  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   return <>{children}</>;
 }
 
@@ -70,6 +73,7 @@ export function App() {
             <Route path="u/:username" element={<Profile />} />
             <Route path="p/:id" element={<PostPage />} />
             <Route path="notifications" element={<Notifications />} />
+            <Route path="join/:token" element={<Join />} />
             {/* Мессенджер — список чатов и открытая переписка рядом, как в
                 Телеграме. Переписка вложена в него, поэтому список не
                 перерисовывается при переходе между чатами. */}

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { Router } from 'express';
 import { db, nowIso } from '../db.js';
 import { requireAuth } from '../auth.js';
@@ -150,6 +151,8 @@ const serializeChat = (chat, viewerId) => {
     members: members.map((row) => member(row, viewerId)),
     memberCount: members.length,
     iAmOwner: chat.owner_id === viewerId,
+    // Ссылку видит каждый участник: звать людей может любой (см. POST /:id/members).
+    invite: chat.invite_token ?? null,
   };
 };
 
@@ -308,6 +311,57 @@ router.post('/', (req, res, next) => {
   }
 });
 
+/* ─ Вступление по ссылке ──────────────────────────────────────────────────
+ * Код — 128 случайных бит: угадать его нельзя, а раздавать удобно. Ссылку
+ * создаёт, меняет и отключает владелец. По ней видно название и состав — ровно
+ * то, что нужно, чтобы решить, вступать ли; переписка — только после.
+ */
+
+const INVITE_RE = /^[A-Za-z0-9_-]{16,64}$/;
+
+function chatByInvite(raw) {
+  const token = String(raw ?? '');
+  return INVITE_RE.test(token) ? db.prepare('SELECT * FROM chats WHERE invite_token = ?').get(token) ?? null : null;
+}
+
+const INVITE_NOT_FOUND = 'Ссылка недействительна: её отключили или сменили';
+
+router.get('/join/:token', (req, res) => {
+  const chat = chatByInvite(req.params.token);
+  if (!chat) return res.status(404).json({ error: INVITE_NOT_FOUND });
+  const members = chatMembers(chat.id);
+  res.json({
+    chat: {
+      id: chat.id,
+      title: chat.title,
+      memberCount: members.length,
+      members: members.slice(0, 5).map((row) => member(row, req.user.id)),
+    },
+    member: members.some((m) => m.id === req.user.id),
+  });
+});
+
+router.post('/join/:token', (req, res) => {
+  const chat = chatByInvite(req.params.token);
+  if (!chat) return res.status(404).json({ error: INVITE_NOT_FOUND });
+  const me = req.user.id;
+  // Уже внутри — не ошибка: второй щелчок по ссылке просто открывает чат.
+  if (db.prepare('SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?').get(chat.id, me)) {
+    return res.json({ chat: serializeChat(chat, me) });
+  }
+  // С владельцем в блокировке — нельзя, как нельзя и добавить такого вручную.
+  if (isBlockedPair(me, chat.owner_id)) return res.status(403).json({ error: 'Вступить в этот чат нельзя' });
+  const { count } = db.prepare('SELECT COUNT(*) AS count FROM chat_members WHERE chat_id = ?').get(chat.id);
+  if (count + 1 > MAX_MEMBERS) return res.status(400).json({ error: TOO_MANY_MEMBERS });
+
+  // Пришедший по ссылке начинает с «сейчас»: история видна, но сотня старых
+  // сообщений не падает на него непрочитанными.
+  const top = db.prepare('SELECT COALESCE(MAX(id), 0) AS top FROM chat_messages WHERE chat_id = ?').get(chat.id).top;
+  db.prepare('INSERT INTO chat_members (chat_id, user_id, joined_at, last_read_id) VALUES (?, ?, ?, ?)')
+    .run(chat.id, me, nowIso(), top);
+  res.status(201).json({ chat: serializeChat(chat, me) });
+});
+
 /* ─ Один чат ───────────────────────────────────────────────────────────── */
 
 router.get('/:id', (req, res) => {
@@ -359,6 +413,24 @@ router.delete('/:id', (req, res) => {
   dropPrefs({ kind: 'chat', targetId: chat.id });
   dropDrafts('chat', chat.id);
   res.json({ ok: true });
+});
+
+/** Создать или сменить ссылку-приглашение: прежняя сразу перестаёт работать. */
+router.post('/:id/invite', (req, res) => {
+  const chat = memberChat(req.params.id, req.user.id);
+  if (!chat) return res.status(404).json({ error: NOT_FOUND });
+  if (chat.owner_id !== req.user.id) return res.status(403).json({ error: 'Ссылкой-приглашением управляет владелец' });
+  const token = randomBytes(16).toString('base64url');
+  db.prepare('UPDATE chats SET invite_token = ? WHERE id = ?').run(token, chat.id);
+  res.json({ invite: token });
+});
+
+router.delete('/:id/invite', (req, res) => {
+  const chat = memberChat(req.params.id, req.user.id);
+  if (!chat) return res.status(404).json({ error: NOT_FOUND });
+  if (chat.owner_id !== req.user.id) return res.status(403).json({ error: 'Ссылкой-приглашением управляет владелец' });
+  db.prepare('UPDATE chats SET invite_token = NULL WHERE id = ?').run(chat.id);
+  res.json({ invite: null });
 });
 
 /* ─ Сообщения ──────────────────────────────────────────────────────────── */

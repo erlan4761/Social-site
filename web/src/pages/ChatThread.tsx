@@ -11,6 +11,7 @@ import { ScheduledBar } from '../components/Scheduled';
 import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
 import { MemberSearch } from '../components/MemberSearch';
+import { ShareLink } from '../components/ShareLink';
 import { Monogram } from '../components/Monogram';
 import { useSession } from '../session';
 import { pollEvery, useLive, useLiveConnected } from '../live';
@@ -520,6 +521,8 @@ function ChatView({ idParam }: { idParam: string }) {
             />
           )}
 
+          <InviteBlock chat={chat} onChange={(invite) => setChat((c) => (c ? { ...c, invite } : c))} />
+
           {renaming ? (
             <form className="rename-form" onSubmit={rename}>
               <label className="field" htmlFor="chat-rename">
@@ -642,6 +645,53 @@ function ChatView({ idParam }: { idParam: string }) {
           preview={previewText(forwarding.body, forwarding.attachment, forwarding.sticker)}
           onClose={() => setForwarding(null)}
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Ссылка-приглашение: копирует любой участник (звать людей может каждый),
+ * создаёт, меняет и отключает владелец. Смена — когда ссылка ушла не туда:
+ * старая сразу перестаёт работать.
+ */
+function InviteBlock({ chat, onChange }: { chat: Chat; onChange: (invite: string | null) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run(action: () => Promise<{ invite: string | null }>) {
+    setBusy(true);
+    setError(null);
+    try {
+      onChange((await action()).invite);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не получилось');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!chat.invite && !chat.iAmOwner) return null;
+
+  return (
+    <div className="invite-block">
+      {error && <p className="error">{error}</p>}
+      {chat.invite ? (
+        <ShareLink path={`join/${chat.invite}`} label="Ссылка-приглашение: по ней вступает любой, кто вошёл" />
+      ) : (
+        <p className="settings-note">По ссылке в группу сможет вступить любой, кому вы её отправите.</p>
+      )}
+      {chat.iAmOwner && (
+        <div className="members-actions">
+          <button className="act" type="button" disabled={busy} onClick={() => void run(() => api.createInvite(chat.id))}>
+            {chat.invite ? 'Сменить ссылку' : 'Создать ссылку-приглашение'}
+          </button>
+          {chat.invite && (
+            <button className="act act-danger" type="button" disabled={busy} onClick={() => void run(() => api.revokeInvite(chat.id))}>
+              Отключить ссылку
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

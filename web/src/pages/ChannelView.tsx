@@ -10,6 +10,7 @@ import { ForwardDialog } from '../components/ForwardDialog';
 import { ScheduledBar } from '../components/Scheduled';
 import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
+import { ShareLink } from '../components/ShareLink';
 import { plural } from '../time';
 import { ChannelAvatar } from '../components/messenger/ListRows';
 import { pollEvery, useLive, useLiveConnected } from '../live';
@@ -525,6 +526,8 @@ function ChannelInfo({ channel, busy, onSubscribe, onUpdated, onDeleted }: InfoP
               <dd>{channel.subscriberCount}</dd>
             </div>
           </dl>
+          {/* Каналы открыты всем, кто вошёл: ссылка — просто адрес канала. */}
+          <ShareLink path={`messages/ch/${channel.handle}`} label="Ссылка на канал" />
           <div className="members-actions">
             {channel.iAmOwner ? (
               <>

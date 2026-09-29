@@ -109,7 +109,11 @@ const SCOPES = {
     return other == null ? null : () => touchDm(req.user.id, other);
   },
   chat: (req) => {
-    const id = Number.parseInt(firstSegment(req), 10);
+    const segment = firstSegment(req);
+    // Вступление по ссылке: чат — по коду приглашения из второго сегмента.
+    const id = segment === 'join'
+      ? db.prepare('SELECT id FROM chats WHERE invite_token = ?').get(decodeURIComponent(req.path.split('/')[2] ?? ''))?.id
+      : Number.parseInt(segment, 10);
     if (!Number.isSafeInteger(id) || id <= 0) return null;
     const before = chatMembers(id);
     return () => touchChat(id, before);

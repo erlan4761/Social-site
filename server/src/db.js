@@ -441,6 +441,12 @@ ensureColumn('users', 'password_login', 'INTEGER NOT NULL DEFAULT 1');
 ensureColumn('users', 'phone_find', "TEXT NOT NULL DEFAULT 'nobody'");
 ensureColumn('users', 'phone_show', "TEXT NOT NULL DEFAULT 'nobody'");
 
+// Ссылка-приглашение в группу: случайный код, по которому любой вошедший
+// может вступить. NULL — ссылки нет. Сменить код — старая ссылка перестаёт
+// работать.
+ensureColumn('chats', 'invite_token', 'TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_invite ON chats(invite_token)');
+
 // Черновики (см. drafts.js): по одному на человека и чат.
 db.exec(`
   CREATE TABLE IF NOT EXISTS drafts (
