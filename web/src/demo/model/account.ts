@@ -66,6 +66,7 @@ export function dropUser(uid: number) {
   db.postReactions = db.postReactions.filter((x) => x.userId !== uid && !goneChannelPosts.has(x.messageId));
   db.channelComments = db.channelComments.filter((x) => x.authorId !== uid && !goneChannelPosts.has(x.postId));
   db.prefs = db.prefs.filter((x) => x.userId !== uid && !goneRef(x.kind, x.targetId));
+  db.drafts = db.drafts.filter((x) => x.userId !== uid && !goneRef(x.kind, x.targetId));
   db.pins = db.pins.filter((x) =>
     !(x.kind === 'dm' && x.scope.split('-').map(Number).includes(uid)) &&
     !(x.kind === 'chat' && goneChats.has(Number(x.scope))) &&

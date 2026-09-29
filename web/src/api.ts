@@ -204,7 +204,7 @@ export type ChannelPost = {
   poll?: Poll | null;
 };
 
-export type ChannelSummary = Channel & ChatPrefs & { unread: number; lastPost: ChannelPost | null };
+export type ChannelSummary = Channel & ChatPrefs & WithDraft & { unread: number; lastPost: ChannelPost | null };
 
 export type ChannelComment = { id: number; body: string; createdAt: string; author: Author };
 
@@ -223,6 +223,10 @@ export type Message = MessageExtras & {
 /** Настройки чата в списке — у каждого свои: закреплён ли и приглушён ли. */
 export type ChatPrefs = { pinnedAt: string | null; muted: boolean };
 export type PrefKind = 'dm' | 'chat' | 'channel';
+
+/** Недописанное в поле ввода — хранится на сервере и видно в списке чатов. */
+export type Draft = { body: string; updatedAt: string };
+export type WithDraft = { draft: Draft | null };
 
 /** Чат в правилах папки: вид и id — собеседника, чата или канала. */
 export type ChatRef = { kind: PrefKind; id: number };
@@ -277,7 +281,7 @@ export type PhoneVerdict =
 /** Открытый вход в аккаунт. Токена здесь нет и не будет — только номер. */
 export type Session = { id: number; current: boolean; createdAt: string; userAgent: string | null };
 
-export type Conversation = ChatPrefs & {
+export type Conversation = ChatPrefs & WithDraft & {
   user: Person;
   unread: number;
   lastMessage: Message;
@@ -344,7 +348,7 @@ export type ChatMessage = MessageExtras & {
   poll?: Poll | null;
 };
 
-export type ChatSummary = Chat & ChatPrefs & {
+export type ChatSummary = Chat & ChatPrefs & WithDraft & {
   unread: number;
   /** Непрочитанные сообщения, где упомянут смотрящий, — значок «@» в списке. */
   mentions: number;
@@ -744,6 +748,17 @@ const realApi = {
     request<{ message: ChatMessage }>(`/chats/${chatId}/messages`, { method: 'POST', body: body({ sticker }) }),
 
   // ─ Отложенные ──────────────────────────────────────────────────────────
+
+  /** Черновик чата: target — логин собеседника, номер группы или адрес своего канала. */
+  draft: (kind: PrefKind, target: string | number) =>
+    request<{ draft: Draft | null }>(`/drafts/${kind}/${encodeURIComponent(String(target))}`),
+
+  /** Пустой текст — черновика больше нет. */
+  saveDraft: (kind: PrefKind, target: string | number, text: string) =>
+    request<{ draft: Draft | null }>(`/drafts/${kind}/${encodeURIComponent(String(target))}`, {
+      method: 'PUT',
+      body: body({ body: text }),
+    }),
 
   /** target — логин собеседника, номер группы или адрес канала. */
   scheduled: (kind: ScheduledKind, target: string | number) =>

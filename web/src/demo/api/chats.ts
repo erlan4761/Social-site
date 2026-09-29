@@ -4,6 +4,7 @@ import { byId, byName, requireMe, blockedPair, hidden } from '../model/people';
 import { attachmentFrom, assertEditable, setReaction, findHits, setTyping, clearTyping, isTyping, forwardSource, readSticker, CHAT_PAGE, BODY_MAX } from '../model/messages';
 import { pinnedOf, setPin, pinPreview } from '../model/folders';
 import { prefFields, dropPrefs, notify, saveMentions, unreadMentions, markNotificationsRead } from '../model/notifications';
+import { clearDraft, draftOf } from '../model/drafts';
 import { membersOf, memberRow, visibleChatMessages, toChatMessage, requireChatMessage, toChat, othersReadUpTo, chatUnread, requireChat, MEMBERS_MAX, checkTitle } from '../model/chats';
 import { pollOf, readPoll, addPoll } from '../model/polls';
 
@@ -30,6 +31,7 @@ export const chatsApi = {
           lastMessage: last ? toChatMessage(last) : null,
           readUpTo: othersReadUpTo(c.id, u.id),
           ...prefFields(u.id, 'chat', c.id),
+          draft: draftOf(u.id, 'chat', c.id),
         };
       })
       // Чат без сообщений встаёт по своему созданию, иначе только что
@@ -136,6 +138,7 @@ export const chatsApi = {
     };
     db.chatMessages.push(m);
     clearTyping(`chat:${chat.id}`, u.id);
+    if (!stick && !src) clearDraft(u.id, 'chat', chat.id);
 
     for (const member of membersOf(chat.id)) {
       notify({ userId: member.userId, actorId: u.id, kind: 'chat_message', chatId: chat.id });

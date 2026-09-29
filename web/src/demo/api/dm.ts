@@ -4,6 +4,7 @@ import { byId, byName, requireMe, person, blockedPair } from '../model/people';
 import { attachmentFrom, toMessage, assertEditable, setReaction, pairThread, requirePairMessage, findHits, dmKey, setTyping, clearTyping, isTyping, forwardSource, marinaAnswers, readSticker, CHAT_PAGE, BODY_MAX } from '../model/messages';
 import { pinScope, pinnedOf, setPin, pinPreview } from '../model/folders';
 import { prefFields, dmUnreadTotal, notify, markNotificationsRead } from '../model/notifications';
+import { clearDraft, draftOf } from '../model/drafts';
 import { chatsApi } from './chats';
 
 /** Методы витрины: личная переписка. */
@@ -26,6 +27,7 @@ export const dmApi = {
           // только возможность отвечать.
           blocked: blockedPair(u.id, otherId),
           ...prefFields(u.id, 'dm', otherId),
+          draft: draftOf(u.id, 'dm', otherId),
         };
       })
       .sort((a, b) => b.lastMessage.id - a.lastMessage.id);
@@ -87,6 +89,8 @@ export const dmApi = {
     };
     db.messages.push(m);
     clearTyping(dmKey(u.id, other!.id), u.id);
+    // Отправленный текст — больше не черновик; стикер и пересылка его не трогают.
+    if (!stick && !src) clearDraft(u.id, 'dm', other!.id);
     if (!saved) notify({ userId: other!.id, actorId: u.id, kind: 'message' });
     if (other!.username === 'marina') marinaAnswers(u);
     return tick({ message: toMessage(m) });

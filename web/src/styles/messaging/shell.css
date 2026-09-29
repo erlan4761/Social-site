@@ -224,6 +224,8 @@
 .dialog-foot .badge.muted { background: var(--ink-3); color: var(--surface); }
 .dialog-pin { display: inline-flex; flex: none; color: var(--ink-3); transform: rotate(-12deg); }
 .dialog-you { color: var(--ink-3); }
+/* «Черновик:» — красным, как в Телеграме: недописанное видно издалека. */
+.dialog-draft { color: var(--danger); }
 .dialog-foot .badge { margin-left: 0; }
 
 /* Пометка в списке: «блокировка» (одинаковая для обеих сторон), «владелец». */

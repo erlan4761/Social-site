@@ -199,3 +199,31 @@ describe('витрина: поиск по номеру', () => {
     expect((await api.account()).phoneFind).toBe('nobody');
   });
 });
+
+describe('витрина: черновики', () => {
+  it('засев: недописанное Олегу видно в списке, отправка снимает черновик', async () => {
+    const row = async () => (await api.conversations()).conversations.find((c) => c.user.username === 'oleg_k')!;
+    expect((await row()).draft?.body).toMatch(/^Да, Am7/);
+    await api.sendSticker('oleg_k', 'plenka/hi');
+    expect((await row()).draft).not.toBeNull();
+    await api.sendMessage('oleg_k', 'Да, Am7');
+    expect((await row()).draft).toBeNull();
+  });
+
+  it('пустой — удалён; в чужой группе и чужом канале черновика нет', async () => {
+    expect((await api.saveDraft('dm', 'marina', 'Марина, ')).draft?.body).toBe('Марина, ');
+    expect((await api.saveDraft('dm', 'marina', '   ')).draft).toBeNull();
+    expect((await api.draft('dm', 'marina')).draft).toBeNull();
+    await expect(api.saveDraft('chat', 999_999, 'x')).rejects.toMatchObject({ status: 404 });
+    // Канал Нины: смотрящий подписан, но публиковать в нём не может.
+    await expect(api.saveDraft('channel', 'plenka_notes', 'x')).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('черновик в группе — в списке; выход из группы его уносит', async () => {
+    const chat = await room();
+    await api.saveDraft('chat', chat.id, 'Про проявку: ');
+    expect((await room()).draft?.body).toBe('Про проявку: ');
+    await api.removeChatMember(chat.id, 'demo');
+    await expect(api.draft('chat', chat.id)).rejects.toMatchObject({ status: 404 });
+  });
+});

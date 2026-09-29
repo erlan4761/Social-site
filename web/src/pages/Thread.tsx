@@ -410,6 +410,8 @@ function ThreadView({ username }: { username: string }) {
         <>
           <ScheduledBar kind="dm" target={username} version={scheduledVersion} onSent={refreshList} />
           <Composer
+            key={`dm:${username}`}
+            draft={{ kind: 'dm', target: username }}
             placeholder={saved ? 'Заметка для себя' : 'Сообщение'}
             onSchedule={async (text, at) => {
               await api.schedule('dm', username, text, at.toISOString());

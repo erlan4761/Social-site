@@ -386,6 +386,8 @@ function ChannelPane({ handle }: { handle: string }) {
         <>
           <ScheduledBar kind="channel" target={handle} version={scheduledVersion} onSent={refreshList} />
           <Composer
+            key={`channel:${handle}`}
+            draft={{ kind: 'channel', target: handle }}
             placeholder="Опубликовать…"
             onSchedule={async (text, at) => {
               await api.schedule('channel', handle, text, at.toISOString());
