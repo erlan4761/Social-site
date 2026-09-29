@@ -26,8 +26,8 @@ jobs:
       # Как в README, раздел «Тесты»: ослабленные лимиты, частый планировщик и
       # поддельный Twilio, который поднимает сам смоук-тест.
       PORT: '3099'
-      DB_PATH: ${{ runner.temp }}/smoke.db
-      DATA_DIR: ${{ runner.temp }}/smoke-data
+      DB_PATH: /tmp/smoke.db
+      DATA_DIR: /tmp/smoke-data
       RELAX_RATE_LIMITS: '1'
       SCHEDULE_TICK_MS: '500'
       SMS_PROVIDER: twilio
@@ -54,19 +54,19 @@ jobs:
 
       - name: Запуск сервера
         run: |
-          node src/index.js > "$RUNNER_TEMP/server.log" 2>&1 &
+          node src/index.js > /tmp/server.log 2>&1 &
           for i in $(seq 1 30); do
             curl -sf "$API_URL/api/auth/me" > /dev/null && exit 0
             sleep 1
           done
-          echo "Сервер не поднялся за 30 секунд"; cat "$RUNNER_TEMP/server.log"; exit 1
+          echo "Сервер не поднялся за 30 секунд"; cat /tmp/server.log; exit 1
 
       - name: Смоук-тест всего API
         run: npm run test:smoke
 
       - name: Лог сервера
         if: failure()
-        run: cat "$RUNNER_TEMP/server.log"
+        run: cat /tmp/server.log
 
   web:
     name: Интерфейс — тесты и сборки
