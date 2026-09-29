@@ -74,10 +74,10 @@ const waitText = (seconds) => {
  * Почему этому человеку сейчас нельзя написать в группу — или null. Ответ
  * готов для клиента: статус, текст и, для медленного режима, через сколько.
  */
-export function postBlock(chat, userId) {
+export function postBlock(chat, userId, { ignoreSlowMode = false } = {}) {
   if (isAdmin(chat, userId)) return null;
   if (chat.admins_only) return { status: 403, error: 'Писать в эту группу могут только администраторы' };
-  const next = nextPostAt(chat, userId);
+  const next = ignoreSlowMode ? null : nextPostAt(chat, userId);
   if (next) {
     const retryAfter = Math.max(1, Math.ceil((Date.parse(next) - Date.now()) / 1000));
     return { status: 429, error: `Медленный режим: следующее сообщение — через ${waitText(retryAfter)}`, retryAfter };

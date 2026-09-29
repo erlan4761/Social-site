@@ -32,6 +32,11 @@ export type ComposerMode =
 
 /** Потолок вложения — как у сервера: больше он всё равно не примет. */
 const FILE_MAX = 40 * 1024 * 1024;
+/** Файлов за раз — как фото в альбоме у сервера и в Телеграме. */
+const FILES_MAX = 10;
+
+const isMedia = (f: File) => f.type.startsWith('image/') || f.type.startsWith('video/');
+const newAlbumId = () => crypto.randomUUID().replace(/-/g, '');
 /** Что предлагает окно выбора файла. Решает всё равно сервер — по содержимому. */
 const ACCEPT = 'image/*,video/*,audio/*,.pdf,.zip,.docx,.xlsx,.pptx';
 
@@ -60,6 +65,8 @@ type ComposerProps = {
   onSendSticker?: (id: string) => Promise<boolean>;
   /** Черновик этого чата на сервере. Родитель даёт полю `key` по чату. */
   draft?: DraftTarget;
+  /** Несколько фото и видео уходят альбомом (ЛС и группы); иначе — по одному. */
+  albums?: boolean;
 };
 
 export function Composer({
@@ -76,6 +83,7 @@ export function Composer({
   onSchedule,
   onSendSticker,
   draft,
+  albums = false,
 }: ComposerProps) {
   const [scheduling, setScheduling] = useState<string | null>(null);
   const [stickersOpen, setStickersOpen] = useState(false);
@@ -87,13 +95,14 @@ export function Composer({
   const picker = useRef<HTMLInputElement>(null);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
-  const [pending, setPending] = useState<File | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
+  const [pending, setPending] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<(string | null)[]>([]);
+  const [dropping, setDropping] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const lastTyping = useRef(0);
   const editing = mode?.kind === 'edit';
   const left = LIMIT - text.length;
-  const ready = (text.trim().length > 0 || pending != null) && left >= 0 && !sending;
+  const ready = (text.trim().length > 0 || pending.length > 0) && left >= 0 && !sending;
   const attachable = Boolean(onSendAttachment) && !editing;
   const drafts = useDraft(draft, text, setText, editing);
 
@@ -125,36 +134,58 @@ export function Composer({
     if (modeKey) field.current?.focus();
   }, [modeKey, editBody]);
 
-  // Миниатюра выбранного фото — через object URL, который надо отпускать.
+  // Миниатюры выбранных фото — через object URL, которые надо отпускать.
   useEffect(() => {
-    if (!pending || !pending.type.startsWith('image/')) {
-      setPreview(null);
-      return;
-    }
-    const url = URL.createObjectURL(pending);
-    setPreview(url);
-    return () => URL.revokeObjectURL(url);
+    const urls = pending.map((f) => (f.type.startsWith('image/') ? URL.createObjectURL(f) : null));
+    setPreviews(urls);
+    return () => urls.forEach((u) => u && URL.revokeObjectURL(u));
   }, [pending]);
 
-  function pick(file: File | null | undefined) {
+  /** Добавить файлы — из окна выбора, перетаскиванием или вставкой из буфера. */
+  function pick(files: FileList | File[] | null | undefined) {
     setFileError(null);
-    if (!file) return;
-    if (file.size > FILE_MAX) {
-      setFileError('Файл больше 40 МБ — такой не отправить.');
-      return;
+    const list = [...(files ?? [])];
+    if (list.length === 0) return;
+    const fits = list.filter((f) => f.size <= FILE_MAX);
+    const problems: string[] = [];
+    if (fits.length < list.length) problems.push('Файлы больше 40 МБ не отправить — их пропустили.');
+    let next = [...pending, ...fits];
+    if (next.length > FILES_MAX) {
+      next = next.slice(0, FILES_MAX);
+      problems.push(`За раз — не больше ${FILES_MAX} файлов.`);
     }
-    setPending(file);
+    if (problems.length) setFileError(problems.join(' '));
+    setPending(next);
     field.current?.focus();
+  }
+
+  /**
+   * Файлы по одному запросу на каждый. Фото и видео (два и больше) — альбомом:
+   * общий код, подпись у первого, как в Телеграме. Не ушёл какой-то — он и
+   * следующие остаются в поле, отправленные уже не повторяются.
+   */
+  async function sendFiles(caption: string) {
+    const album = albums && pending.length > 1 && pending.every(isMedia) ? newAlbumId() : undefined;
+    for (let i = 0; i < pending.length; i++) {
+      const f = pending[i];
+      const ok = await onSendAttachment!({ file: f, name: f.name, body: i === 0 ? caption : '', album });
+      if (!ok) {
+        if (i > 0) {
+          setPending(pending.slice(i));
+          drafts.clear();
+          setText('');
+        }
+        return false;
+      }
+    }
+    return true;
   }
 
   async function submit() {
     const trimmed = text.trim();
-    if ((!trimmed && !pending) || trimmed.length > LIMIT || sending) return;
+    if ((!trimmed && pending.length === 0) || trimmed.length > LIMIT || sending) return;
     setSending(true);
-    const ok =
-      pending && onSendAttachment && !editing
-        ? await onSendAttachment({ file: pending, name: pending.name, body: trimmed })
-        : await onSend(trimmed);
+    const ok = pending.length > 0 && onSendAttachment && !editing ? await sendFiles(trimmed) : await onSend(trimmed);
     setSending(false);
     if (ok) {
       if (editing) {
@@ -164,7 +195,7 @@ export function Composer({
         drafts.clear();
         setText('');
       }
-      setPending(null);
+      setPending([]);
       wasEditing.current = false;
     }
     field.current?.focus();
@@ -195,11 +226,57 @@ export function Composer({
     });
   }
 
+  // Перетащить файлы можно на всю переписку, а не только на поле ввода:
+  // слушаем ближайшую панель чата (.pane), подсветка — там же.
+  const wrap = useRef<HTMLDivElement>(null);
+  const pickRef = useRef(pick);
+  pickRef.current = pick;
+  useEffect(() => {
+    const zone = wrap.current?.closest<HTMLElement>('.pane');
+    if (!zone || !attachable) return;
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => Boolean(e.dataTransfer?.types.includes('Files'));
+    const enter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth += 1;
+      setDropping(true);
+    };
+    const over = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    const leave = () => {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDropping(false);
+    };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDropping(false);
+      pickRef.current(e.dataTransfer?.files);
+    };
+    zone.addEventListener('dragenter', enter);
+    zone.addEventListener('dragover', over);
+    zone.addEventListener('dragleave', leave);
+    zone.addEventListener('drop', drop);
+    return () => {
+      zone.removeEventListener('dragenter', enter);
+      zone.removeEventListener('dragover', over);
+      zone.removeEventListener('dragleave', leave);
+      zone.removeEventListener('drop', drop);
+    };
+  }, [attachable]);
+
   // Пустое поле без файла — вместо «Отправить» микрофон, как в Телеграме.
-  const showMic = attachable && canRecord() && !text.trim() && !pending;
+  const showMic = attachable && canRecord() && !text.trim() && pending.length === 0;
 
   return (
-    <div className="composer-wrap">
+    <div className="composer-wrap" ref={wrap}>
+      {dropping && (
+        <div className="drop-hint" aria-hidden="true">
+          Отпустите — файлы прикрепятся{albums ? ' (фото и видео уйдут альбомом)' : ''}
+        </div>
+      )}
       {mode && (
         <div className={mode.kind === 'edit' ? 'composer-mode edit' : 'composer-mode'}>
           <Icon name={mode.kind === 'edit' ? 'edit' : 'reply'} size={20} />
@@ -224,22 +301,50 @@ export function Composer({
         </div>
       )}
 
-      {pending && (
+      {pending.length === 1 && (
         <div className="composer-file">
-          {preview ? (
-            <img className="composer-file-thumb" src={preview} alt="" />
+          {previews[0] ? (
+            <img className="composer-file-thumb" src={previews[0]} alt="" />
           ) : (
             <span className="composer-file-icon">
-              <Icon name={pending.type.startsWith('audio/') ? 'music' : 'file'} size={22} />
+              <Icon name={pending[0].type.startsWith('audio/') ? 'music' : 'file'} size={22} />
             </span>
           )}
           <span className="composer-file-text">
-            <strong>{pending.name}</strong>
-            <span>{fileSize(pending.size)}</span>
+            <strong>{pending[0].name}</strong>
+            <span>{fileSize(pending[0].size)}</span>
           </span>
-          <button className="icon-btn" type="button" aria-label="Убрать файл" onClick={() => setPending(null)}>
+          <button className="icon-btn" type="button" aria-label="Убрать файл" onClick={() => setPending([])}>
             <Icon name="close" size={18} />
           </button>
+        </div>
+      )}
+      {pending.length > 1 && (
+        <div className="composer-files">
+          <ul>
+            {pending.map((f, i) => (
+              <li key={`${f.name}-${i}`}>
+                {previews[i] ? (
+                  <img className="composer-file-thumb" src={previews[i]!} alt="" />
+                ) : (
+                  <span className="composer-file-icon" title={f.name}>
+                    <Icon name={f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'music' : 'file'} size={20} />
+                  </span>
+                )}
+                <button
+                  className="composer-files-remove"
+                  type="button"
+                  aria-label={`Убрать «${f.name}»`}
+                  onClick={() => setPending((prev) => prev.filter((_, j) => j !== i))}
+                >
+                  <Icon name="close" size={14} />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <span className="composer-files-note">
+            {albums && pending.every(isMedia) ? `Альбом: ${pending.length} — подпись будет у первого` : `Файлов: ${pending.length} — каждый отдельным сообщением`}
+          </span>
         </div>
       )}
 
@@ -362,9 +467,10 @@ export function Composer({
                 ref={picker}
                 type="file"
                 accept={ACCEPT}
+                multiple
                 hidden
                 onChange={(e) => {
-                  pick(e.target.files?.[0]);
+                  pick(e.target.files);
                   e.target.value = '';
                 }}
               />
@@ -372,14 +478,14 @@ export function Composer({
           )}
 
           <label className="sr-only" htmlFor={id}>
-            {editing ? 'Новый текст сообщения' : pending ? 'Подпись к файлу' : 'Сообщение'}
+            {editing ? 'Новый текст сообщения' : pending.length ? 'Подпись к файлу' : 'Сообщение'}
           </label>
           <textarea
             id={id}
             ref={field}
             rows={1}
             value={text}
-            placeholder={pending ? 'Подпись' : placeholder}
+            placeholder={pending.length ? 'Подпись' : placeholder}
             autoFocus={autoFocus && !touch()}
             aria-autocomplete={mentionables ? 'list' : undefined}
             aria-controls={suggestions.length ? `${id}-mentions` : undefined}
@@ -397,10 +503,9 @@ export function Composer({
             }}
             // Вставка картинки из буфера (скриншот) — сразу вложение, как в Телеграме.
             onPaste={(e) => {
-              const file = attachable ? e.clipboardData.files[0] : undefined;
-              if (file) {
+              if (attachable && e.clipboardData.files.length > 0) {
                 e.preventDefault();
-                pick(file);
+                pick(e.clipboardData.files);
               }
             }}
             onKeyDown={(e) => {
@@ -422,13 +527,13 @@ export function Composer({
                   return;
                 }
               }
-              if (e.key === 'Escape' && (mode || pending)) {
+              if (e.key === 'Escape' && (mode || pending.length)) {
                 e.preventDefault();
-                if (pending) setPending(null);
+                if (pending.length) setPending([]);
                 else onCancelMode?.();
                 return;
               }
-              if (e.key === 'ArrowUp' && !text && !mode && !pending && onEditLast) {
+              if (e.key === 'ArrowUp' && !text && !mode && !pending.length && onEditLast) {
                 e.preventDefault();
                 onEditLast();
                 return;
@@ -495,7 +600,7 @@ export function Composer({
               title={onSchedule && !mode ? 'Отправить. Правый клик или долгое нажатие — отправить позже' : undefined}
               onContextMenu={(e) => {
                 // Отложить можно обычное сообщение — без ответа, правки и файла.
-                if (!onSchedule || mode || pending || !ready) return;
+                if (!onSchedule || mode || pending.length || !ready) return;
                 e.preventDefault();
                 setScheduling(text.trim());
               }}

@@ -311,3 +311,17 @@ describe('витрина: предпросмотр ссылок', () => {
     expect((await api.linkPreview('https://example.com/')).preview).toBeNull();
   });
 });
+
+describe('витрина: альбомы', () => {
+  const photo = (name: string) => new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], name, { type: 'image/png' });
+  it('снимки с одним кодом — альбом; документ и чужой альбом — 400', async () => {
+    const album = 'albumdemo0001';
+    await api.sendAttachment('marina', { file: photo('1.png'), name: '1.png', body: 'Два кадра', album });
+    const { message } = await api.sendAttachment('marina', { file: photo('2.png'), name: '2.png', album });
+    expect(message.albumId).toBe(album);
+    await expect(api.sendAttachment('marina', { file: new File(['x'], 'a.pdf', { type: 'application/pdf' }), name: 'a.pdf', album })).rejects.toMatchObject({ status: 400 });
+    await expect(api.sendAttachment('oleg_k', { file: photo('3.png'), name: '3.png', album })).rejects.toMatchObject({ status: 400 });
+    const { messages } = await api.thread('marina');
+    expect(messages.filter((m) => m.albumId === album)).toHaveLength(2);
+  });
+});

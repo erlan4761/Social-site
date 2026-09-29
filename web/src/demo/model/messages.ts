@@ -117,7 +117,18 @@ export const toMessage = (m: DbMessage): Message => ({
   reactions: reactionsOf(db.dmReactions, m.id),
   attachment: m.attachment,
   sticker: m.sticker ?? null,
+  albumId: m.albumId ?? null,
 });
+
+/** Альбом — как checkAlbum() на сервере: только фото и видео, до десяти, и не в чужой. */
+export function checkAlbum(album: string | undefined, attachment: Attachment | null, others: { mine: boolean }[]) {
+  if (!album) return null;
+  if (!/^[A-Za-z0-9_-]{8,40}$/.test(album)) fail(400, 'Некорректный код альбома');
+  if (!attachment || !['image', 'video'].includes(attachment.kind)) fail(400, 'В альбоме — только фото и видео');
+  if (!others.every((x) => x.mine)) fail(400, 'Альбом не найден');
+  if (others.length >= 10) fail(400, 'В альбоме не больше 10 фото и видео');
+  return album;
+}
 
 /** Правка: своё, не пересланное, в первые двое суток — те же правила, что на сервере. */
 export function assertEditable(authorId: number, createdAt: string, fwdUserId: number | null, u: DbUser, fwdChannelId: number | null = null) {

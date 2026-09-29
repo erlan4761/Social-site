@@ -49,6 +49,8 @@ export type DbExtras = {
   attachment: Attachment | null;
   /** Стикер из встроенного набора — тогда текста нет. */
   sticker?: string | null;
+  /** Код альбома — как album_id. */
+  albumId?: string | null;
 };
 
 export type DbChannel = { id: number; handle: string; title: string; description: string; ownerId: number; createdAt: string };

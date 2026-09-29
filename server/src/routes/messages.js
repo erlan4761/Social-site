@@ -4,7 +4,7 @@ import { requireAuth } from '../auth.js';
 import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { publicUrl } from '../media.js';
 import {
-  ATTACH_INSERT_COLUMNS, FWD_COLUMNS, assertEditable, attachmentOf, attachmentUpload, attachmentValues,
+  ATTACH_INSERT_COLUMNS, FWD_COLUMNS, assertEditable, checkAlbum, readAlbum, attachmentOf, attachmentUpload, attachmentValues,
   clearTyping, copyAttachment, decorate, readSticker, dmKey, dropAttachment, emojiOf, extraFields, forwardSource, isForwarded, fwdJoin,
   isTyping, readAttachment, replyIdOf, searchQuery, searchResult, searchRows, setTyping,
 } from '../messageExtras.js';
@@ -217,12 +217,17 @@ router.post('/:username', attachmentUpload.single('file'), async (req, res, next
 
     // Файл — последним: всё, что может отказать без него, уже проверено, и
     // на диск не попадёт вложение к сообщению, которого не будет.
+    const album = req.file ? readAlbum(req.body?.album) : null;
     attachment = forward ? await copyAttachment(forward.attachment) : await readAttachment(req.file, req.body);
+    if (album) {
+      const rows = db.prepare('SELECT from_id, to_id FROM messages WHERE album_id = ?').all(album);
+      checkAlbum(album, attachment, rows, (r) => r.from_id === me && r.to_id === other.id);
+    }
 
     const info = db.prepare(`
-      INSERT INTO messages (from_id, to_id, body, created_at, read_at, reply_to_id, fwd_user_id, fwd_channel_id, sticker, ${ATTACH_INSERT_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(me, other.id, body, nowIso(), saved ? nowIso() : null, replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, sticker ?? forward?.sticker ?? null, ...attachmentValues(attachment));
+      INSERT INTO messages (from_id, to_id, body, created_at, read_at, reply_to_id, fwd_user_id, fwd_channel_id, sticker, album_id, ${ATTACH_INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(me, other.id, body, nowIso(), saved ? nowIso() : null, replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, sticker ?? forward?.sticker ?? null, album, ...attachmentValues(attachment));
 
     clearTyping(dmKey(me, other.id), me);
     // Отправленный текст — больше не черновик. Стикер и пересылка его не трогают.

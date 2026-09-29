@@ -284,12 +284,14 @@ function ChatView({ idParam }: { idParam: string }) {
           if (msg.poll) put({ ...msg, poll: (await api.closePoll(msg.poll.id)).poll });
           break;
         case 'delete': {
+          const ids = action.ids ?? [msg.id];
+          const what = ids.length > 1 ? `альбом — ${ids.length} снимков` : 'сообщение';
           const others = msg.author.id !== user?.id;
-          if (!window.confirm(others ? `Удалить сообщение ${msg.author.displayName}? Оно исчезнет у всех участников.` : 'Удалить сообщение? Оно исчезнет у всех участников.')) return;
-          await api.deleteChatMessage(chatId, msg.id);
+          if (!window.confirm(others ? `Удалить ${what} от ${msg.author.displayName}? Исчезнет у всех участников.` : `Удалить ${what}? Исчезнет у всех участников.`)) return;
+          for (const id of ids) await api.deleteChatMessage(chatId, id);
           edits.current += 1;
-          setMessages((prev) => prev.filter((m) => m.id !== msg.id));
-          if (mode?.id === msg.id) setMode(null);
+          setMessages((prev) => prev.filter((m) => !ids.includes(m.id)));
+          if (mode && ids.includes(mode.id)) setMode(null);
           refreshList();
           break;
         }
@@ -434,6 +436,7 @@ function ChatView({ idParam }: { idParam: string }) {
       attachment: m.attachment,
       poll: m.poll,
       sticker: m.sticker,
+      albumId: m.albumId,
       // Опрос и стикер не правятся.
       canEdit: mine && !m.forwardedFrom && !m.poll && !m.sticker && editable(m.createdAt),
       // Владелец удаляет любое сообщение, администратор — сообщения участников.
@@ -653,6 +656,7 @@ function ChatView({ idParam }: { idParam: string }) {
       <Composer
         key={`chat:${chatId}`}
         draft={{ kind: 'chat', target: chatId }}
+        albums
         placeholder="Сообщение в чат"
         onSchedule={async (text, at) => {
           await api.schedule('chat', chatId, text, at.toISOString());

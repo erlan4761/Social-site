@@ -5,7 +5,7 @@ import { requireAuth } from '../auth.js';
 import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { publicUrl } from '../media.js';
 import {
-  ATTACH_COLUMNS, ATTACH_INSERT_COLUMNS, FWD_COLUMNS, assertEditable, attachmentOf, attachmentUpload,
+  ATTACH_COLUMNS, ATTACH_INSERT_COLUMNS, checkAlbum, readAlbum, FWD_COLUMNS, assertEditable, attachmentOf, attachmentUpload,
   attachmentValues, chatKey, clearTyping, readSticker, copyAttachment, decorate, dropAttachment, emojiOf, extraFields,
   forwardSource, fwdJoin, isForwarded, isTyping, readAttachment, replyIdOf, searchQuery, searchResult, searchRows,
   setTyping,
@@ -64,7 +64,7 @@ const member = (row, viewerId) => ({
 });
 
 const MESSAGE_SELECT = `
-  SELECT m.id, m.chat_id, m.body, m.created_at, m.reply_to_id, m.edited_at, m.fwd_user_id, m.fwd_channel_id, m.sticker, ${ATTACH_COLUMNS},
+  SELECT m.id, m.chat_id, m.body, m.created_at, m.reply_to_id, m.edited_at, m.fwd_user_id, m.fwd_channel_id, m.sticker, m.album_id, ${ATTACH_COLUMNS},
          u.id AS author_id, u.username AS author_username,
          u.display_name AS author_display_name, u.avatar_path AS author_avatar_path,
          ${FWD_COLUMNS}
@@ -510,7 +510,12 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
     const me = req.user.id;
     const chat = memberChat(req.params.id, me);
     if (!chat) return res.status(404).json({ error: NOT_FOUND });
-    const blocked = postBlock(chat, me);
+    // Альбом в медленном режиме — одно сообщение, как в Телеграме: второй и
+    // следующие снимки того же альбома режим не задерживает (их не больше десяти).
+    const album = req.file ? readAlbum(req.body?.album) : null;
+    const albumRows = album ? db.prepare('SELECT author_id, chat_id FROM chat_messages WHERE album_id = ?').all(album) : [];
+    const continuing = albumRows.length > 0 && albumRows.every((r) => r.author_id === me && r.chat_id === chat.id);
+    const blocked = postBlock(chat, me, { ignoreSlowMode: continuing });
     if (blocked) {
       if (blocked.retryAfter) res.set('Retry-After', String(blocked.retryAfter));
       return res.status(blocked.status).json({ error: blocked.error });
@@ -536,11 +541,12 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
 
     // Файл — последним, как в ЛС: отказ не должен оставлять сироту на диске.
     attachment = forward ? await copyAttachment(forward.attachment) : await readAttachment(req.file, req.body);
+    checkAlbum(album, attachment, albumRows, (r) => r.author_id === me && r.chat_id === chat.id);
 
     const info = db.prepare(`
-      INSERT INTO chat_messages (chat_id, author_id, body, created_at, reply_to_id, fwd_user_id, fwd_channel_id, sticker, ${ATTACH_INSERT_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(chat.id, me, body, nowIso(), replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, sticker ?? forward?.sticker ?? null, ...attachmentValues(attachment));
+      INSERT INTO chat_messages (chat_id, author_id, body, created_at, reply_to_id, fwd_user_id, fwd_channel_id, sticker, album_id, ${ATTACH_INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(chat.id, me, body, nowIso(), replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, sticker ?? forward?.sticker ?? null, album, ...attachmentValues(attachment));
 
     if (poll) createPoll('chat', Number(info.lastInsertRowid), poll);
     clearTyping(chatKey(chat.id), me);

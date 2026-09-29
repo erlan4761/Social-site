@@ -1,7 +1,7 @@
 import { type AttachmentInput, type ChatSummary, type ForwardRef, type PollInput } from '../../api';
 import { type DbUser, type DbChat, NO_EXTRAS, type DbChatMessage, db, id, tick, fail } from '../store';
 import { byId, byName, requireMe, blockedPair, hidden } from '../model/people';
-import { attachmentFrom, assertEditable, setReaction, findHits, setTyping, clearTyping, isTyping, forwardSource, readSticker, CHAT_PAGE, BODY_MAX } from '../model/messages';
+import { attachmentFrom, assertEditable, setReaction, findHits, setTyping, clearTyping, isTyping, forwardSource, readSticker, CHAT_PAGE, BODY_MAX, checkAlbum } from '../model/messages';
 import { pinnedOf, setPin, pinPreview } from '../model/folders';
 import { prefFields, dropPrefs, notify, saveMentions, unreadMentions, markNotificationsRead } from '../model/notifications';
 import { clearDraft, draftOf } from '../model/drafts';
@@ -146,7 +146,8 @@ export const chatsApi = {
 
   sendChatMessage: (chatId: number, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput, sticker?: string) => {
     const { u, chat } = requireChat(chatId);
-    postBlock(chat, u.id);
+    const continuing = Boolean(file?.album) && db.chatMessages.some((x) => x.albumId === file!.album && x.authorId === u.id && x.chatId === chat.id);
+    postBlock(chat, u.id, continuing);
     const src = forward ? forwardSource(forward, u) : null;
     const body = src ? src.body : text.trim();
     const attachment = src ? src.attachment : file ? attachmentFrom(file) : null;
@@ -157,8 +158,10 @@ export const chatsApi = {
       fail(400, 'Сообщение, на которое вы отвечаете, не найдено');
     }
 
+    const albumId = checkAlbum(file?.album, attachment,
+      db.chatMessages.filter((x) => x.albumId && x.albumId === file?.album).map((x) => ({ mine: x.authorId === u.id && x.chatId === chat.id })));
     const m: DbChatMessage = {
-      id: id(), chatId: chat.id, authorId: u.id, body, createdAt: new Date().toISOString(),
+      id: id(), chatId: chat.id, authorId: u.id, body, createdAt: new Date().toISOString(), albumId,
       replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, fwdChannelId: src?.fwdChannelId ?? null, attachment,
       sticker: stick,
     };
