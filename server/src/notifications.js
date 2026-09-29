@@ -3,7 +3,7 @@ import { isBlockedPair } from './blocks.js';
 import { publicUrl } from './media.js';
 import { isMuted } from './prefs.js';
 
-export const NOTIFICATION_KINDS = ['like', 'comment', 'follow', 'message', 'chat_message', 'chat_invite'];
+export const NOTIFICATION_KINDS = ['like', 'comment', 'follow', 'message', 'chat_message', 'chat_invite', 'mention'];
 
 // Лайк и подписка — переключатели: их можно снять и поставить заново сколько
 // угодно раз. Если каждое включение порождало бы событие, это был бы готовый
@@ -24,12 +24,14 @@ export const NOTIFICATION_SELECT = `
          a.display_name AS actor_display_name, a.avatar_path AS actor_avatar_path,
          p.id AS post_id, p.body AS post_body,
          c.id AS comment_id, c.body AS comment_body,
-         g.id AS chat_id, g.title AS chat_title
+         g.id AS chat_id, g.title AS chat_title,
+         cmsg.id AS message_id, cmsg.body AS message_body
   FROM notifications n
   JOIN users a ON a.id = n.actor_id
   LEFT JOIN posts    p ON p.id = n.post_id
   LEFT JOIN comments c ON c.id = n.comment_id
   LEFT JOIN chats    g ON g.id = n.chat_id
+  LEFT JOIN chat_messages cmsg ON cmsg.id = n.message_id
 `;
 
 // Идентичность объекта, о котором событие: у лайка это пост, у комментария —
@@ -47,7 +49,7 @@ const asId = (value) => (Number.isSafeInteger(value) && value > 0 ? value : null
  *
  * Возвращает id созданного уведомления или null, если создавать было нечего.
  */
-export function notify({ userId, actorId, kind, postId = null, commentId = null, chatId = null }) {
+export function notify({ userId, actorId, kind, postId = null, commentId = null, chatId = null, messageId = null }) {
   if (!NOTIFICATION_KINDS.includes(kind)) {
     throw new Error(`notify: неизвестный вид уведомления «${kind}»`);
   }
@@ -60,7 +62,8 @@ export function notify({ userId, actorId, kind, postId = null, commentId = null,
   if (isBlockedPair(user, actor)) return null;
 
   // Приглушённая переписка событий не создаёт — ради этого её и приглушают.
-  // Приглашение в чат — не переписка, его приглушить нельзя.
+  // Приглашение в чат — не переписка, его приглушить нельзя; упоминание
+  // пробивает приглушение, как в Телеграме, — ради этого и упоминают.
   if (kind === 'message' && isMuted(user, 'dm', actor)) return null;
   if (kind === 'chat_message' && isMuted(user, 'chat', asId(chatId))) return null;
 
@@ -91,9 +94,9 @@ export function notify({ userId, actorId, kind, postId = null, commentId = null,
   }
 
   const info = db.prepare(`
-    INSERT INTO notifications (user_id, actor_id, kind, post_id, comment_id, chat_id, created_at)
-    VALUES (:userId, :actorId, :kind, :postId, :commentId, :chatId, :createdAt)
-  `).run({ ...params, createdAt: nowIso() });
+    INSERT INTO notifications (user_id, actor_id, kind, post_id, comment_id, chat_id, message_id, created_at)
+    VALUES (:userId, :actorId, :kind, :postId, :commentId, :chatId, :messageId, :createdAt)
+  `).run({ ...params, messageId: asId(messageId), createdAt: nowIso() });
 
   return Number(info.lastInsertRowid);
 }
@@ -186,4 +189,6 @@ export const serializeNotification = (row) => ({
   post: row.post_id ? { id: row.post_id, excerpt: excerpt(row.post_body) } : null,
   comment: row.comment_id ? { id: row.comment_id, excerpt: excerpt(row.comment_body) } : null,
   chat: row.chat_id ? { id: row.chat_id, title: row.chat_title } : null,
+  // Упоминание — с самим сообщением: цитата и переход прямо к нему.
+  message: row.message_id ? { id: row.message_id, excerpt: excerpt(row.message_body) } : null,
 });

@@ -352,6 +352,19 @@ for (const table of ['messages', 'chat_messages']) {
   ensureColumn(table, 'attach_wave', 'TEXT');
 }
 
+// Упоминания в группах (см. mentions.js): кого назвали через @ в сообщении.
+// Событию об упоминании нужно само сообщение — чтобы процитировать его и
+// погаснуть вместе с ним, если его удалят.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_mentions (
+    message_id INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (message_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_mentions_user ON chat_mentions(user_id, message_id);
+`);
+ensureColumn('notifications', 'message_id', 'INTEGER REFERENCES chat_messages(id) ON DELETE CASCADE');
+
 // Реакция — одна на человека на сообщение, как у Телеграма без подписки:
 // новая заменяет старую. Первичный ключ держит это правило схемой.
 db.exec(`

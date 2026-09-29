@@ -12,6 +12,7 @@ import {
 import { markNotificationsRead, notify } from '../notifications.js';
 import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
 import { presenceFor } from '../presence.js';
+import { saveMentions, unreadMentions } from '../mentions.js';
 import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import * as v from '../validate.js';
 
@@ -215,6 +216,7 @@ router.get('/', (req, res) => {
     return {
       ...serializeChat(row, me),
       unread: unreadIn(row.id, me, row.last_read_id),
+      mentions: unreadMentions(row.id, me, row.last_read_id),
       lastMessage,
       readUpTo: othersReadUpTo(row.id, me),
       pinnedAt: pref.pinnedAt,
@@ -435,6 +437,8 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
     for (const member of others) {
       notify({ userId: member.user_id, actorId: me, kind: 'chat_message', chatId: chat.id });
     }
+    // У пересланного чужие слова: упоминания в них не зовут никого.
+    if (!forward) saveMentions({ chatId: chat.id, messageId: Number(info.lastInsertRowid), authorId: me, body });
 
     const row = db.prepare(`${MESSAGE_SELECT} WHERE m.id = ?`).get(Number(info.lastInsertRowid));
     res.status(201).json({ message: decorateChat([serializeMessage(row)], chat.id, me)[0] });
@@ -488,6 +492,7 @@ router.patch('/:id/messages/:mid', (req, res, next) => {
     const body = v.str(req.body?.body ?? '', 'сообщение', { min: msg.attach_path ? 0 : 1, max: MAX_BODY });
     if (body !== msg.body) {
       db.prepare('UPDATE chat_messages SET body = ?, edited_at = ? WHERE id = ?').run(body, nowIso(), msg.id);
+      saveMentions({ chatId: chat.id, messageId: msg.id, authorId: me, body });
     }
 
     const row = db.prepare(`${MESSAGE_SELECT} WHERE m.id = ?`).get(msg.id);
@@ -593,6 +598,7 @@ router.put('/:id/read', (req, res) => {
   // Прочитанный чат гасит и событие о нём — иначе счётчик событий висел бы
   // после того, как переписка уже открыта и прочитана.
   markNotificationsRead({ userId: me, kind: 'chat_message', chatId: chat.id });
+  markNotificationsRead({ userId: me, kind: 'mention', chatId: chat.id });
 
   res.json({ ok: true, unread: 0 });
 });

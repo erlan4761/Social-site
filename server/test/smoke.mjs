@@ -2431,5 +2431,56 @@ check('поиск её записей не находит', r.status === 200 && 
   }
 }
 
+console.log('\n— упоминания —');
+const pia = makeClient();
+const ron = makeClient();
+const sol = makeClient();
+const userPi = `pia_${stamp}`;
+const userRo = `ron_${stamp}`;
+const userSo = `sol_${stamp}`;
+await signUp(pia, userPi, 'Пия');
+await signUp(ron, userRo, 'Рон');
+await signUp(sol, userSo, 'Соль');
+r = await pia('/chats', { method: 'POST', body: JSON.stringify({ title: 'Проявка', members: [userRo, userSo] }) });
+const mChat = r.body.chat.id;
+const mSend = (client, body) => client(`/chats/${mChat}/messages`, { method: 'POST', body: JSON.stringify({ body }) });
+const mentionsOf = async (client) => (await client('/chats')).body.chats?.find((c) => c.id === mChat)?.mentions;
+const mentionEvents = async (client) => (await client('/notifications')).body.notifications?.filter((x) => x.kind === 'mention') ?? [];
+
+await pref(ron, 'chat', mChat, { muted: true });
+r = await mSend(pia, `@${userRo.toUpperCase()}, принесёшь фиксаж? А ты, @${userSo}, — бачок. Почта pia@${userRo}.ru не в счёт.`);
+const m1 = r.body.message.id;
+check('упоминание в чате отправлено', r.status === 201, `${r.status}`);
+check('у упомянутого — «@» в списке', (await mentionsOf(ron)) === 1 && (await mentionsOf(sol)) === 1, `${await mentionsOf(ron)} ${await mentionsOf(sol)}`);
+check('у автора — нет', (await mentionsOf(pia)) === 0, `${await mentionsOf(pia)}`);
+let evs = await mentionEvents(ron);
+check('приглушённому упоминание всё равно приходит', evs.length === 1 && evs[0].message?.id === m1 && evs[0].chat?.id === mChat, JSON.stringify(evs));
+check('в событии — цитата сообщения', evs[0]?.message?.excerpt?.startsWith(`@${userRo.toUpperCase()}`), JSON.stringify(evs[0]?.message));
+evs = (await ron('/notifications')).body.notifications?.filter((x) => x.kind === 'chat_message') ?? [];
+check('а обычного события о сообщении у приглушённого нет', evs.length === 0, JSON.stringify(evs.map((x) => x.kind)));
+
+r = await mSend(pia, `@nobody_${stamp} и @${userPi} — никто из них не участник-другой`);
+check('несуществующий и сам автор — без упоминаний', (await mentionsOf(pia)) === 0 && (await mentionEvents(pia)).length === 0, '');
+
+r = await pia(`/chats/${mChat}/messages/${m1}`, { method: 'PATCH', body: JSON.stringify({ body: `@${userRo}, принесёшь фиксаж? И бачок тоже.` }) });
+check('правка: у убранного из текста упоминание погасло', (await mentionsOf(sol)) === 0 && (await mentionEvents(sol)).length === 0, `${await mentionsOf(sol)}`);
+check('правка: оставшийся не получил второго события', (await mentionEvents(ron)).length === 1 && (await mentionsOf(ron)) === 1, '');
+
+await ron(`/chats/${mChat}/read`, { method: 'PUT' });
+check('прочитал чат — «@» пропал', (await mentionsOf(ron)) === 0, `${await mentionsOf(ron)}`);
+evs = await mentionEvents(ron);
+check('и событие упоминания прочитано', evs.length === 1 && evs[0].readAt != null, JSON.stringify(evs));
+
+await sol(`/users/${userPi}/block`, { method: 'PUT' });
+await mSend(pia, `@${userSo}, ты тут?`);
+check('заблокировавшему упоминание не приходит', (await mentionsOf(sol)) === 0 && (await mentionEvents(sol)).length === 0, '');
+
+r = await mSend(pia, `Пересылаю: @${userRo}`);
+r = await pia(`/chats/${mChat}/messages`, { method: 'POST', body: JSON.stringify({ forward: { from: 'chat', id: r.body.message.id } }) });
+check('в пересланном упоминания не зовут', r.status === 201 && (await mentionEvents(ron)).length === 2, `${r.status} ${(await mentionEvents(ron)).length}`);
+const mLast = (await pia(`/chats/${mChat}/messages`)).body.messages.at(-2);
+await pia(`/chats/${mChat}/messages/${mLast.id}`, { method: 'DELETE' });
+check('удалили сообщение — упоминание и событие ушли', (await mentionsOf(ron)) === 0 && (await mentionEvents(ron)).length === 1, `${await mentionsOf(ron)} ${(await mentionEvents(ron)).length}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
