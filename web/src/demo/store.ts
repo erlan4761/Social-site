@@ -185,6 +185,8 @@ export const db = {
   currentSession: null as number | null,
   /** Коды «из SMS» и билеты незаконченного входа — как phone_codes и phone_tickets. */
   phoneCodes: [] as { phone: string; purpose: 'login' | 'link' | 'delete'; userId: number | null; code: string; attempts: number; expiresAt: number; createdAt: number; used: boolean }[],
+  /** Закреплённые старые логины — как username_holds. */
+  usernameHolds: [] as { username: string; userId: number; until: number }[],
   phoneTickets: [] as { token: string; kind: 'signup' | 'password'; phone: string; userId: number | null; attempts: number; expiresAt: number }[],
   /** Кто вошёл в витрину; null — гость. */
   meId: null as number | null,

@@ -325,3 +325,17 @@ describe('витрина: альбомы', () => {
     expect(messages.filter((m) => m.albumId === album)).toHaveLength(2);
   });
 });
+
+describe('витрина: смена логина', () => {
+  it('новый логин — сразу, старый закреплён за прежним владельцем', async () => {
+    const res = await api.changeUsername('Erlan_New');
+    expect(res.user.username).toBe('erlan_new');
+    expect(res.previous).toBe('demo');
+    expect((await api.me()).user?.username).toBe('erlan_new');
+    await expect(api.changeUsername('marina')).rejects.toMatchObject({ status: 409 });
+    await loginAs('marina');
+    await expect(api.changeUsername('demo')).rejects.toMatchObject({ status: 409 });
+    await loginAs('erlan_new');
+    expect((await api.changeUsername('demo')).user.username).toBe('demo');
+  });
+});

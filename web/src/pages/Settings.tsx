@@ -39,6 +39,7 @@ const errorText = (err: unknown, fallback: string) => (err instanceof ApiError ?
 export function Settings() {
   const { user } = useSession();
   const [account, setAccount] = useState<AccountSettings | null>(null);
+  const [renaming, setRenaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
@@ -68,7 +69,14 @@ export function Settings() {
             <dl className="settings-facts">
               <div>
                 <dt>Логин</dt>
-                <dd>@{user?.username}</dd>
+                <dd>
+                  @{user?.username}{' '}
+                  {!renaming && (
+                    <button className="btn link" type="button" onClick={() => setRenaming(true)}>
+                      Изменить
+                    </button>
+                  )}
+                </dd>
               </div>
               <div>
                 <dt>Телефон</dt>
@@ -83,6 +91,7 @@ export function Settings() {
                 <dd>{joinedOn(account.createdAt)}</dd>
               </div>
             </dl>
+            {renaming && <UsernameForm onDone={() => setRenaming(false)} />}
           </section>
         )}
 
@@ -119,6 +128,77 @@ export function Settings() {
         {account && <DeleteAccount account={account} />}
       </div>
     </>
+  );
+}
+
+/* ─ Логин ──────────────────────────────────────────────────────────────── */
+
+/**
+ * Сменить логин. Старый две недели закреплён за вами: занять его никто не
+ * сможет, а вы — вернуться к нему. Упоминания в старых сообщениях и старые
+ * ссылки на профиль ведут в никуда — как в Телеграме.
+ */
+function UsernameForm({ onDone }: { onDone: () => void }) {
+  const { user, setUser } = useSession();
+  const [value, setValue] = useState(user?.username ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.changeUsername(value.trim());
+      setUser(res.user);
+      setDone(`Готово: теперь вы @${res.user.username}. Прежний логин @${res.previous} ещё ${res.holdDays} дней закреплён за вами — занять его никто не сможет.`);
+    } catch (err) {
+      setError(errorText(err, 'Не удалось сменить логин'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (done) {
+    return (
+      <div className="settings-form">
+        <p className="settings-status" role="status">{done}</p>
+        <button className="btn ghost small" type="button" onClick={onDone}>
+          Закрыть
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form className="settings-form" onSubmit={submit}>
+      {error && <p className="error">{error}</p>}
+      <label className="field">
+        <span>Новый логин</span>
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          autoComplete="username"
+          autoCapitalize="none"
+          spellCheck={false}
+          maxLength={20}
+          autoFocus
+          required
+        />
+      </label>
+      <p className="settings-note">
+        3–20 символов: латиница, цифры и _. Входить по логину (если вы входите по нему) нужно будет уже с новым.
+      </p>
+      <div className="settings-actions">
+        <button className="btn" type="submit" disabled={busy || !value.trim()}>
+          {busy ? 'Сохраняю…' : 'Сменить логин'}
+        </button>
+        <button className="btn ghost" type="button" onClick={onDone}>
+          Отмена
+        </button>
+      </div>
+    </form>
   );
 }
 
