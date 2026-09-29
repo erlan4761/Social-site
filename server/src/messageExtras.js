@@ -325,6 +325,15 @@ export function assertEditable(authorId, createdAt, viewerId) {
  * несуществующее неразличимы (404), как везде в проекте. Пересылка
  * пересланного указывает на первоисточник — человека или канал, как в Телеграме.
  */
+/**
+ * Опрос не пересылается: у него свои голоса и свой автор, а копия вопроса без
+ * вариантов выглядела бы как обрывок. В ЛС опросов нет — проверять там нечего.
+ */
+const POLL_OF = {
+  chat: 'SELECT 1 FROM polls WHERE chat_message_id = ?',
+  channel: 'SELECT 1 FROM polls WHERE channel_post_id = ?',
+};
+
 export function forwardSource(input, viewerId) {
   if (input == null) return null;
   const id = Number(input.id);
@@ -350,6 +359,7 @@ export function forwardSource(input, viewerId) {
   // смотрящий не нужен: канал открыт всем, кто вошёл.
   const row = db.prepare(sql).get(input.from === 'channel' ? { id } : { id, viewerId });
   if (!row) throw new HttpError(404, 'Сообщение для пересылки не найдено');
+  if (POLL_OF[input.from] && db.prepare(POLL_OF[input.from]).get(id)) throw bad('Опрос переслать нельзя');
 
   const fromChannel = row.fwd_channel_id != null;
   return {

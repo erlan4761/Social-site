@@ -13,6 +13,7 @@ import { markNotificationsRead, notify } from '../notifications.js';
 import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
 import { presenceFor } from '../presence.js';
 import { saveMentions, unreadMentions } from '../mentions.js';
+import { createPoll, hasPoll, readPoll, withPolls } from '../polls.js';
 import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import * as v from '../validate.js';
 
@@ -90,7 +91,7 @@ const serializeMessage = (row) => ({
 const CHAT_SCOPE = `m.chat_id = :chatId AND ${blockPairSql('m.author_id')}`;
 
 const decorateChat = (messages, chatId, viewerId) =>
-  decorate('chat', messages, { viewerId, scope: CHAT_SCOPE, scopeParams: { chatId, viewerId } });
+  withPolls('chat', decorate('chat', messages, { viewerId, scope: CHAT_SCOPE, scopeParams: { chatId, viewerId } }), viewerId, (m) => m.author.id);
 
 /** Сообщение этого чата по id из пути, видимое смотрящему, или null. */
 function chatMessage(chatId, rawId, viewerId) {
@@ -189,7 +190,8 @@ function lastVisibleMessage(chatId, viewerId) {
 
   // Превью в списке: цитата и реакции там не показываются, запросы за ними не нужны.
   const { replyToId, ...last } = serializeMessage(row);
-  return { ...last, replyTo: null, reactions: [] };
+  // Опрос нужен и превью: по нему список пишет «Опрос: вопрос».
+  return withPolls('chat', [{ ...last, replyTo: null, reactions: [] }], viewerId, (m) => m.author.id)[0];
 }
 
 /* ─ Список и создание ──────────────────────────────────────────────────── */
@@ -409,10 +411,14 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
     const chat = memberChat(req.params.id, me);
     if (!chat) return res.status(404).json({ error: NOT_FOUND });
 
-    const forward = req.file ? null : forwardSource(req.body?.forward, me);
-    const body = forward
-      ? forward.body
-      : v.str(req.body?.body ?? '', 'сообщение', { min: req.file ? 0 : 1, max: MAX_BODY });
+    // Опрос — JSON с полем poll: вопрос становится текстом сообщения.
+    const poll = req.file || req.body?.poll == null ? null : readPoll(req.body.poll);
+    const forward = req.file || poll ? null : forwardSource(req.body?.forward, me);
+    const body = poll
+      ? poll.question
+      : forward
+        ? forward.body
+        : v.str(req.body?.body ?? '', 'сообщение', { min: req.file ? 0 : 1, max: MAX_BODY });
 
     const replyTo = forward ? null : replyIdOf(req.body?.replyTo);
     if (replyTo != null && !chatMessage(chat.id, replyTo, me)) {
@@ -427,6 +433,7 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(chat.id, me, body, nowIso(), replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, ...attachmentValues(attachment));
 
+    if (poll) createPoll('chat', Number(info.lastInsertRowid), poll);
     clearTyping(chatKey(chat.id), me);
 
     // Событие каждому участнику, кроме автора. Блокировку и схлопывание по
@@ -488,6 +495,7 @@ router.patch('/:id/messages/:mid', (req, res, next) => {
     if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
     assertEditable(msg.author_id, msg.created_at, me);
     if (isForwarded(msg)) return res.status(403).json({ error: 'Пересланное сообщение изменить нельзя' });
+    if (hasPoll('chat', msg.id)) return res.status(403).json({ error: 'Опрос изменить нельзя — за него уже голосуют' });
 
     const body = v.str(req.body?.body ?? '', 'сообщение', { min: msg.attach_path ? 0 : 1, max: MAX_BODY });
     if (body !== msg.body) {

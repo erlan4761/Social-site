@@ -2482,5 +2482,81 @@ const mLast = (await pia(`/chats/${mChat}/messages`)).body.messages.at(-2);
 await pia(`/chats/${mChat}/messages/${mLast.id}`, { method: 'DELETE' });
 check('удалили сообщение — упоминание и событие ушли', (await mentionsOf(ron)) === 0 && (await mentionEvents(ron)).length === 1, `${await mentionsOf(ron)} ${(await mentionEvents(ron)).length}`);
 
+console.log('\n— опросы —');
+// Пия, Рон и Соль из «упоминаний»: Соль заблокировала Пию, поэтому опросы — в новом чате Пии и Рона.
+r = await pia('/chats', { method: 'POST', body: JSON.stringify({ title: 'Выбор плёнки', members: [userRo] }) });
+const pChat = r.body.chat.id;
+const pollPost = (client, poll) => client(`/chats/${pChat}/messages`, { method: 'POST', body: JSON.stringify({ poll }) });
+const vote = (client, pollId, options) => client(`/polls/${pollId}/vote`, { method: 'PUT', body: JSON.stringify({ options }) });
+
+r = await guest('/polls/1/vote', { method: 'PUT', body: JSON.stringify({ options: [] }) });
+check('голос гостя — 401', r.status === 401, `${r.status}`);
+r = await pollPost(pia, { question: 'Какую плёнку берём?', options: ['Kodak Gold', 'Ilford HP5', 'Fomapan'] });
+const poll1 = r.body.message?.poll;
+const pollMsg = r.body.message?.id;
+check('опрос в группе создан: вопрос — текст сообщения', r.status === 201 && r.body.message.body === 'Какую плёнку берём?' && poll1?.options.length === 3, `${r.status} ${JSON.stringify(r.body)}`);
+check('по умолчанию анонимный, один ответ, автору видны нули', poll1?.anonymous === true && poll1.multiple === false && poll1.options.every((o) => o.votes === 0) && poll1.canClose === true, JSON.stringify(poll1));
+
+for (const [bodyPoll, name] of [
+  [{ question: '', options: ['a', 'b'] }, 'без вопроса'],
+  [{ question: 'Один?', options: ['только'] }, 'один вариант'],
+  [{ question: 'Много?', options: Array.from({ length: 11 }, (_, i) => `в${i}`) }, 'одиннадцать вариантов'],
+  [{ question: 'Повтор?', options: ['Да', 'да'] }, 'повтор варианта'],
+  [{ question: 'Флаг?', options: ['a', 'b'], multiple: 'yes' }, 'кривой флаг'],
+]) {
+  r = await pollPost(pia, bodyPoll);
+  check(`опрос: ${name} — 400`, r.status === 400, `${r.status}`);
+}
+
+r = await ron(`/chats/${pChat}/messages`);
+let seenPoll = r.body.messages?.find((m) => m.id === pollMsg)?.poll;
+check('до голоса участник не видит результатов', seenPoll && seenPoll.options.every((o) => o.votes === null) && seenPoll.canClose === false, JSON.stringify(seenPoll));
+r = await vote(ron, poll1.id, [poll1.options[0].id, poll1.options[1].id]);
+check('два ответа в опросе с одним — 400', r.status === 400, `${r.status}`);
+r = await vote(ron, poll1.id, [999999]);
+check('чужой вариант — 400', r.status === 400, `${r.status}`);
+r = await vote(ron, poll1.id, [poll1.options[1].id]);
+check('голос принят, результаты открылись', r.status === 200 && r.body.poll.options[1].votes === 1 && r.body.poll.total === 1 && r.body.poll.myVotes[0] === poll1.options[1].id, JSON.stringify(r.body));
+check('в анонимном — без имён', r.body.poll.options.every((o) => o.voters.length === 0), JSON.stringify(r.body.poll));
+r = await vote(ron, poll1.id, [poll1.options[2].id]);
+check('переголосовать — голос заменяется', r.body.poll.options[1].votes === 0 && r.body.poll.options[2].votes === 1 && r.body.poll.total === 1, JSON.stringify(r.body.poll));
+r = await vote(ron, poll1.id, []);
+check('отозвать голос — результаты снова скрыты', r.status === 200 && r.body.poll.myVotes.length === 0 && r.body.poll.options.every((o) => o.votes === null), JSON.stringify(r.body.poll));
+r = await vote(sol, poll1.id, [poll1.options[0].id]);
+check('не участник — 404', r.status === 404, `${r.status}`);
+
+r = await pollPost(pia, { question: 'Когда встречаемся?', options: ['Суббота', 'Воскресенье'], multiple: true, anonymous: false });
+const poll2 = r.body.message.poll;
+r = await vote(ron, poll2.id, [poll2.options[0].id, poll2.options[1].id]);
+check('несколько ответов и открытое голосование — видно, кто за что', r.status === 200 && r.body.poll.options.every((o) => o.votes === 1 && o.voters[0]?.username === userRo), JSON.stringify(r.body.poll));
+r = await vote(pia, poll2.id, [poll2.options[0].id]);
+check('считаются люди, а не голоса', r.body.poll.total === 2 && r.body.poll.options[0].votes === 2, JSON.stringify(r.body.poll));
+
+r = await ron(`/polls/${poll2.id}/close`, { method: 'PUT' });
+check('завершить чужой опрос — 403', r.status === 403, `${r.status}`);
+r = await pia(`/polls/${poll2.id}/close`, { method: 'PUT' });
+check('автор завершил опрос', r.status === 200 && r.body.poll.closed === true && r.body.poll.canClose === false, JSON.stringify(r.body.poll));
+r = await vote(ron, poll2.id, [poll2.options[1].id]);
+check('в завершённом голосовать нельзя', r.status === 400, `${r.status}`);
+
+r = await pia(`/chats/${pChat}/messages/${pollMsg}`, { method: 'PATCH', body: JSON.stringify({ body: 'Другой вопрос' }) });
+check('опрос не редактируется', r.status === 403, `${r.status}`);
+r = await ron(`/chats/${pChat}/messages`, { method: 'POST', body: JSON.stringify({ forward: { from: 'chat', id: pollMsg } }) });
+check('опрос не пересылается', r.status === 400, `${r.status}`);
+r = await ron('/chats');
+check('в списке чатов у превью есть опрос', r.body.chats?.find((c) => c.id === pChat)?.lastMessage?.poll?.closed === true, '');
+
+r = await chCreate(pia, { title: 'Опросы Пии', handle: `pia_polls_${stamp}` });
+const pollHandle = r.body.channel?.handle;
+r = await pia(`/channels/${pollHandle}/posts`, { method: 'POST', body: JSON.stringify({ poll: { question: 'Что снимать дальше?', options: ['Город', 'Портреты'] } }) });
+const chPoll = r.body.post?.poll;
+check('опрос в канале — от владельца', r.status === 201 && chPoll?.options.length === 2 && chPoll.canClose === true, `${r.status} ${JSON.stringify(r.body)}`);
+r = await vote(ron, chPoll.id, [chPoll.options[1].id]);
+check('в канале голосует любой читатель', r.status === 200 && r.body.poll.options[1].votes === 1, `${r.status}`);
+
+await pia(`/chats/${pChat}/messages/${pollMsg}`, { method: 'DELETE' });
+r = await vote(ron, poll1.id, [poll1.options[0].id]);
+check('удалили сообщение — опроса нет', r.status === 404, `${r.status}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

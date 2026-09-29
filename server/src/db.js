@@ -363,6 +363,39 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_chat_mentions_user ON chat_mentions(user_id, message_id);
 `);
+// Опросы (см. polls.js): приложение к сообщению группы или публикации канала.
+// Два внешних ключа с каскадом, из них заполнен ровно один: опрос уходит
+// вместе со своим сообщением, чатом или каналом, и голоса — вместе с ним.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS polls (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_message_id INTEGER UNIQUE REFERENCES chat_messages(id) ON DELETE CASCADE,
+    channel_post_id INTEGER UNIQUE REFERENCES channel_posts(id) ON DELETE CASCADE,
+    multiple        INTEGER NOT NULL DEFAULT 0,
+    anonymous       INTEGER NOT NULL DEFAULT 1,
+    closed_at       TEXT,
+    created_at      TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS poll_options (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    poll_id  INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    text     TEXT NOT NULL
+  );
+
+  -- Голос — пара (вариант, человек): при «нескольких ответах» их у человека несколько.
+  CREATE TABLE IF NOT EXISTS poll_votes (
+    poll_id    INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+    option_id  INTEGER NOT NULL REFERENCES poll_options(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (option_id, user_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_poll_options ON poll_options(poll_id, position);
+  CREATE INDEX IF NOT EXISTS idx_poll_votes   ON poll_votes(poll_id, user_id);
+`);
 ensureColumn('notifications', 'message_id', 'INTEGER REFERENCES chat_messages(id) ON DELETE CASCADE');
 
 // Реакция — одна на человека на сообщение, как у Телеграма без подписки:

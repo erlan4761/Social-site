@@ -23,6 +23,7 @@ import { router as channelRoutes } from './routes/channels.js';
 import { router as prefRoutes } from './routes/prefs.js';
 import { router as folderRoutes } from './routes/folders.js';
 import { router as accountRoutes } from './routes/account.js';
+import { router as pollRoutes } from './routes/polls.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -106,7 +107,7 @@ app.post('/api/channels/*splat', rateLimit({ windowMs: 60_000, max: relaxed ? 10
 // три секунды, прочтение — на каждое новое сообщение, — но скрипт, который
 // правит или реагирует без остановки, в него упрётся.
 const conversationLimit = rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 120 });
-for (const path of ['/api/messages/*splat', '/api/chats/*splat', '/api/channels/*splat', '/api/prefs/*splat', '/api/folders/*splat', '/api/account/*splat']) {
+for (const path of ['/api/messages/*splat', '/api/chats/*splat', '/api/channels/*splat', '/api/prefs/*splat', '/api/folders/*splat', '/api/account/*splat', '/api/polls/*splat']) {
   app.put(path, conversationLimit);
   app.patch(path, conversationLimit);
   app.delete(path, conversationLimit);
@@ -130,6 +131,7 @@ app.use('/api/channels', channelRoutes);
 app.use('/api/prefs', prefRoutes);
 app.use('/api/folders', folderRoutes);
 app.use('/api/account', accountRoutes);
+app.use('/api/polls', pollRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Нет такого эндпоинта' }));
 

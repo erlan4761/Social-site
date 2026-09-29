@@ -8,6 +8,7 @@ import {
   dropAttachment, emojiOf, reactionsFor, readAttachment, searchQuery, searchResult, searchRows,
 } from '../messageExtras.js';
 import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
+import { createPoll, hasPoll, readPoll, withPolls } from '../polls.js';
 import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import * as v from '../validate.js';
 
@@ -102,7 +103,13 @@ const POST_SELECT = `
 /** Публикации с реакциями — одним запросом на страницу, как у переписки. */
 function serializePosts(rows, viewerId) {
   const reactions = reactionsFor('channel', rows.map((r) => r.id), viewerId);
-  return rows.map((row) => ({
+  // Автор опроса в канале — его владелец: ему видны результаты и «Завершить».
+  const owners = new Map();
+  const ownerOf = (channelId) => {
+    if (!owners.has(channelId)) owners.set(channelId, db.prepare('SELECT owner_id FROM channels WHERE id = ?').get(channelId)?.owner_id);
+    return owners.get(channelId);
+  };
+  return withPolls('channel', rows.map((row) => ({
     id: row.id,
     channelId: row.channel_id,
     body: row.body,
@@ -112,7 +119,7 @@ function serializePosts(rows, viewerId) {
     commentCount: row.comment_count,
     attachment: attachmentOf('channel', row),
     reactions: reactions.get(row.id) ?? [],
-  }));
+  })), viewerId, (post) => ownerOf(post.channelId));
 }
 
 function channelPost(channelId, rawId, viewerId) {
@@ -355,7 +362,8 @@ router.post('/:handle/posts', attachmentUpload.single('file'), async (req, res, 
     const channel = channelOr404(req, res);
     if (!channel || !ownerOr403(channel, req, res)) return;
 
-    const body = v.str(req.body?.body ?? '', 'публикация', { min: req.file ? 0 : 1, max: MAX_POST });
+    const poll = req.file || req.body?.poll == null ? null : readPoll(req.body.poll);
+    const body = poll ? poll.question : v.str(req.body?.body ?? '', 'публикация', { min: req.file ? 0 : 1, max: MAX_POST });
     attachment = await readAttachment(req.file, req.body);
 
     const info = db.prepare(`
@@ -364,6 +372,7 @@ router.post('/:handle/posts', attachmentUpload.single('file'), async (req, res, 
     `).run(channel.id, req.user.id, body, nowIso(), ...attachmentValues(attachment));
 
     const id = Number(info.lastInsertRowid);
+    if (poll) createPoll('channel', id, poll);
     // Автор свою публикацию видел — она не «непрочитанная» для него самого.
     db.prepare('UPDATE channel_subscribers SET last_read_id = ? WHERE channel_id = ? AND user_id = ?')
       .run(id, channel.id, req.user.id);
@@ -383,6 +392,7 @@ router.patch('/:handle/posts/:id', (req, res, next) => {
     if (!post) return res.status(404).json({ error: POST_NOT_FOUND });
     // Те же двое суток, что у сообщений: публикацию читали, на неё ссылаются.
     assertEditable(req.user.id, post.created_at, req.user.id);
+    if (hasPoll('channel', post.id)) return res.status(403).json({ error: 'Опрос изменить нельзя — за него уже голосуют' });
 
     const body = v.str(req.body?.body ?? '', 'публикация', { min: post.attach_path ? 0 : 1, max: MAX_POST });
     if (body !== post.body) {
