@@ -1,0 +1,97 @@
+name: Тесты
+
+# На каждый PR и на каждую ветку, кроме main: main проверяет workflow витрины
+# (pages.yml) перед выкладкой. Здесь — чтобы сломанное не доехало до main.
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+
+permissions:
+  contents: read
+
+# Новый push в ту же ветку отменяет недоделанный прогон старого.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Сервер — смоук-тест и SMS
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    env:
+      # Как в README, раздел «Тесты»: ослабленные лимиты, частый планировщик и
+      # поддельный Twilio, который поднимает сам смоук-тест.
+      PORT: '3099'
+      DB_PATH: ${{ runner.temp }}/smoke.db
+      DATA_DIR: ${{ runner.temp }}/smoke-data
+      RELAX_RATE_LIMITS: '1'
+      SCHEDULE_TICK_MS: '500'
+      SMS_PROVIDER: twilio
+      TWILIO_ACCOUNT_SID: ACsmoke
+      TWILIO_AUTH_TOKEN: smoke-token
+      TWILIO_FROM: '+15550000000'
+      TWILIO_API_BASE: http://127.0.0.1:3097
+      SMS_RESEND_MS: '1500'
+      API_URL: http://127.0.0.1:3099
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # node:sqlite без флагов — с 22.13; берём ту же 24, что на Render.
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - run: npm ci
+
+      - name: Адаптер SMS.ru
+        run: npm run test:sms
+
+      - name: Запуск сервера
+        run: |
+          node src/index.js > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf "$API_URL/api/auth/me" > /dev/null && exit 0
+            sleep 1
+          done
+          echo "Сервер не поднялся за 30 секунд"; cat "$RUNNER_TEMP/server.log"; exit 1
+
+      - name: Смоук-тест всего API
+        run: npm run test:smoke
+
+      - name: Лог сервера
+        if: failure()
+        run: cat "$RUNNER_TEMP/server.log"
+
+  web:
+    name: Интерфейс — тесты и сборки
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Тесты интерфейса и витрины
+        run: npm test
+
+      # Обычная сборка начинается с tsc --noEmit: типы, в том числе то, что
+      # витрина отвечает теми же методами и формами, что настоящий API.
+      - name: Сборка
+        run: npm run build
+
+      - name: Сборка витрины
+        run: npm run build:demo
