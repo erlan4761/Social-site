@@ -30,6 +30,7 @@ import { router as phoneRoutes } from './routes/phone.js';
 import { startScheduler } from './scheduled.js';
 import { dropDeadStreams, nudge, openStream } from './live.js';
 import { router as draftRoutes } from './routes/drafts.js';
+import { router as linkPreviewRoutes } from './routes/linkPreview.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -120,6 +121,10 @@ app.post('/api/users/by-phone', rateLimit({
   cost: (req) => (Array.isArray(req.body?.phones) ? Math.max(1, req.body.phones.length) : 1),
 }));
 
+// Предпросмотр ходит по чужим сайтам — не чаще, чем нужно читающему глазами.
+app.get('/api/link-preview', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 60 }));
+app.get('/api/link-preview/image', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 120 }));
+
 const blockLimit = rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 30 });
 app.put('/api/users/:username/block', blockLimit);
 app.delete('/api/users/:username/block', blockLimit);
@@ -180,6 +185,7 @@ app.use('/api/polls', pollRoutes);
 app.use('/api/scheduled', scheduledRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/drafts', draftRoutes);
+app.use('/api/link-preview', linkPreviewRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Нет такого эндпоинта' }));
 

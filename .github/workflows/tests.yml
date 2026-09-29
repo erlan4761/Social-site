@@ -36,6 +36,7 @@ jobs:
       TWILIO_FROM: '+15550000000'
       TWILIO_API_BASE: http://127.0.0.1:3097
       SMS_RESEND_MS: '1500'
+      LINK_PREVIEW_ALLOW_LOOPBACK: '1'
       API_URL: http://127.0.0.1:3099
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +52,9 @@ jobs:
 
       - name: Адаптер SMS.ru
         run: npm run test:sms
+
+      - name: Юнит-тесты предпросмотра ссылок
+        run: npm run test:preview
 
       - name: Запуск сервера
         run: |

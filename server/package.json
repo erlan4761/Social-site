@@ -10,7 +10,8 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "test:smoke": "node test/smoke.mjs",
-    "test:sms": "node --test test/sms.test.mjs"
+    "test:sms": "node --test test/sms.test.mjs",
+    "test:preview": "node --test test/linkPreview.test.mjs"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",
