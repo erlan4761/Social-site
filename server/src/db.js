@@ -445,6 +445,12 @@ ensureColumn('users', 'phone_show', "TEXT NOT NULL DEFAULT 'nobody'");
 // может вступить. NULL — ссылки нет. Сменить код — старая ссылка перестаёт
 // работать.
 ensureColumn('chats', 'invite_token', 'TEXT');
+
+// Роли и порядок в группе (см. chatRoles.js): администраторы, медленный режим
+// в секундах (0 — выключен), «пишут только администраторы».
+ensureColumn('chat_members', 'role', "TEXT NOT NULL DEFAULT 'member'");
+ensureColumn('chats', 'slow_mode', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('chats', 'admins_only', 'INTEGER NOT NULL DEFAULT 0');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_invite ON chats(invite_token)');
 
 // Черновики (см. drafts.js): по одному на человека и чат.

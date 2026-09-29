@@ -5,6 +5,7 @@ import { dropAttachment } from '../messageExtras.js';
 import { deleteUpload } from '../media.js';
 import { dropPrefs } from '../prefs.js';
 import { dropDrafts } from '../drafts.js';
+import { heirOf } from '../chatRoles.js';
 import { unpin } from '../pins.js';
 import { LAST_SEEN_OPTIONS } from '../presence.js';
 import { checkCode, hasPassword, normalizePhone, sendCode } from '../phone.js';
@@ -232,11 +233,12 @@ function deleteAccount(me) {
       SELECT c.id, c.owner_id FROM chats c JOIN chat_members m ON m.chat_id = c.id AND m.user_id = ?
     `).all(me);
     for (const chat of chats) {
-      const heir = db.prepare(`
-        SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id <> ? ORDER BY joined_at, user_id LIMIT 1
-      `).get(chat.id, me);
-      if (heir) {
-        if (chat.owner_id === me) db.prepare('UPDATE chats SET owner_id = ? WHERE id = ?').run(heir.user_id, chat.id);
+      const heir = heirOf(chat.id, me);
+      if (heir != null) {
+        if (chat.owner_id === me) {
+          db.prepare('UPDATE chats SET owner_id = ? WHERE id = ?').run(heir, chat.id);
+          db.prepare("UPDATE chat_members SET role = 'member' WHERE chat_id = ? AND user_id = ?").run(chat.id, heir);
+        }
         continue;
       }
       files.attachment.push(...paths('SELECT attach_path AS p FROM chat_messages WHERE chat_id = ?', chat.id));

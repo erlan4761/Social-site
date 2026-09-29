@@ -3,6 +3,7 @@ import { db, nowIso } from '../db.js';
 import { requireAuth } from '../auth.js';
 import { isBlockedPair } from '../blocks.js';
 import { SCHEDULE_KINDS, deliver } from '../scheduled.js';
+import { isAdmin } from '../chatRoles.js';
 import * as v from '../validate.js';
 
 /**
@@ -72,6 +73,15 @@ router.post('/', (req, res, next) => {
     if (!SCHEDULE_KINDS.includes(kind)) return res.status(400).json({ error: 'kind — dm, chat или channel' });
     const targetId = resolveTarget(kind, req.body?.target ?? '', me);
     if (!targetId) return res.status(404).json({ error: 'Переписка не найдена' });
+    if (kind === 'chat') {
+      // Иначе медленный режим обходился бы пачкой отложенных на одну минуту.
+      const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(targetId);
+      if (!isAdmin(chat, me) && (chat.admins_only || chat.slow_mode)) {
+        return res.status(403).json({ error: chat.admins_only
+          ? 'Писать в эту группу могут только администраторы'
+          : 'В медленном режиме отложенные сообщения недоступны' });
+      }
+    }
 
     const body = v.str(req.body?.body, 'сообщение', { min: 1, max: BODY_MAX[kind] });
     const sendAt = readSendAt(req.body?.sendAt);

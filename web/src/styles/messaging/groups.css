@@ -78,3 +78,14 @@
 }
 .join-members li { display: flex; align-items: center; gap: var(--s-2); font-size: 0.875rem; }
 .join-more { color: var(--ink-3); padding-left: 2.5rem; }
+
+/* ─ Порядок в группе ──────────────────────────────────────────────────── */
+.group-rules { margin-bottom: 1.125rem; max-width: 30rem; }
+.group-rules .field { margin-bottom: var(--s-2); }
+.group-rules select { max-width: 12rem; }
+.slow-note {
+  margin: 0;
+  padding: var(--s-1) var(--s-4);
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+}

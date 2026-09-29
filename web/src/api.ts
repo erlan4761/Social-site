@@ -329,14 +329,28 @@ export type BlockedUser = Author;
 export type ReportTargetType = 'post' | 'comment' | 'user';
 export type ReportReason = 'spam' | 'abuse' | 'adult' | 'other';
 
+/** Роль в группе: владелец, администратор, участник. */
+export type ChatRole = 'owner' | 'admin' | 'member';
+export type ChatMember = Person & { role: ChatRole };
+
+/** Ступени медленного режима, секунды; 0 — выключен. */
+export const SLOW_MODE_OPTIONS = [0, 10, 30, 60, 300, 900, 3600] as const;
+
 export type Chat = {
   id: number;
   title: string;
   ownerId: number;
   createdAt: string;
-  members: Person[];
+  members: ChatMember[];
   memberCount: number;
   iAmOwner: boolean;
+  myRole: ChatRole;
+  /** Медленный режим: одно сообщение участника в столько секунд; 0 — выключен. */
+  slowMode: number;
+  /** Пишут только владелец и администраторы, остальным — реакции. */
+  adminsOnly: boolean;
+  /** Когда смотрящему снова можно написать в медленном режиме; null — уже можно. */
+  nextPostAt: string | null;
   /** Код ссылки-приглашения (`/join/<код>`) или null — ссылки нет. */
   invite: string | null;
 };
@@ -676,6 +690,14 @@ const realApi = {
 
   renameChat: (id: number, title: string) =>
     request<{ chat: Chat }>(`/chats/${id}`, { method: 'PATCH', body: body({ title }) }),
+
+  /** Настройки группы — владелец и администраторы; меняется только присланное. */
+  updateChat: (id: number, patch: { slowMode?: number; adminsOnly?: boolean }) =>
+    request<{ chat: Chat }>(`/chats/${id}`, { method: 'PATCH', body: body(patch) }),
+
+  /** Назначить или снять администратора — только владелец. */
+  setChatAdmin: (id: number, username: string, admin: boolean) =>
+    request<{ chat: Chat }>(`/chats/${id}/admins/${encodeURIComponent(username)}`, { method: admin ? 'PUT' : 'DELETE' }),
 
   deleteChat: (id: number) => request<{ ok: true }>(`/chats/${id}`, { method: 'DELETE' }),
 

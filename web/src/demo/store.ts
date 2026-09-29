@@ -101,11 +101,15 @@ export type DbReport = {
 };
 
 /** `invite` — код ссылки-приглашения, как chats.invite_token; нет — ссылки нет. */
-export type DbChat = { id: number; title: string; ownerId: number; createdAt: string; invite?: string | null };
+export type DbChat = {
+  id: number; title: string; ownerId: number; createdAt: string; invite?: string | null;
+  /** Медленный режим в секундах и «пишут только администраторы» — как chats.slow_mode, admins_only. */
+  slowMode?: number; adminsOnly?: boolean;
+};
 
 /** `lastReadId` — ватерлиния прочитанного, как в схеме сервера: в группе
  *  получателей много, и отметка на каждом сообщении стоила бы таблицы N×M. */
-export type DbChatMember = { chatId: number; userId: number; joinedAt: string; lastReadId: number };
+export type DbChatMember = { chatId: number; userId: number; joinedAt: string; lastReadId: number; role?: 'admin' | 'member' };
 
 export const NO_EXTRAS: DbExtras = { replyToId: null, editedAt: null, fwdUserId: null, fwdChannelId: null, attachment: null };
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, type AttachmentInput, type Chat, type ChatMessage, type PinnedPreview } from '../api';
+import { api, ApiError, SLOW_MODE_OPTIONS, type AttachmentInput, type Chat, type ChatMessage, type PinnedPreview } from '../api';
 import {
   Composer, ConversationSearch, MessageList, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText, typingLabel,
   type BubbleItem, type ComposerMode, type MessageAction,
@@ -203,6 +203,13 @@ function ChatView({ idParam }: { idParam: string }) {
     setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
   }
 
+  /** Своё ушло — в медленном режиме следующее можно не раньше, чем через N секунд. */
+  function afterPost() {
+    setChat((c) =>
+      c && c.slowMode > 0 && c.myRole === 'member' ? { ...c, nextPostAt: new Date(Date.now() + c.slowMode * 1000).toISOString() } : c,
+    );
+  }
+
   async function send(text: string) {
     setError(null);
     try {
@@ -212,6 +219,7 @@ function ChatView({ idParam }: { idParam: string }) {
         const res = await api.sendChatMessage(chatId, text, mode?.kind === 'reply' ? mode.id : null);
         edits.current += 1;
         setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
+        afterPost();
         refreshList();
       }
       setMode(null);
@@ -228,6 +236,7 @@ function ChatView({ idParam }: { idParam: string }) {
       const res = await api.sendChatAttachment(chatId, { ...input, replyTo: mode?.kind === 'reply' ? mode.id : null });
       edits.current += 1;
       setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
+      afterPost();
       setMode(null);
       refreshList();
       return true;
@@ -351,6 +360,18 @@ function ChatView({ idParam }: { idParam: string }) {
     }
   }
 
+  async function toggleAdmin(username: string, admin: boolean) {
+    setPanelBusy(true);
+    setPanelError(null);
+    try {
+      setChat((await api.setChatAdmin(chatId, username, admin)).chat);
+    } catch (err) {
+      setPanelError(err instanceof ApiError ? err.message : 'Не получилось');
+    } finally {
+      setPanelBusy(false);
+    }
+  }
+
   async function rename(e: FormEvent) {
     e.preventDefault();
     const name = draftTitle.trim();
@@ -384,6 +405,13 @@ function ChatView({ idParam }: { idParam: string }) {
     );
   }
 
+  // Роли: владелец — всё; администратор — порядок среди обычных участников.
+  const amAdmin = chat?.myRole === 'owner' || chat?.myRole === 'admin';
+  const roleOfId = (id: number) => chat?.members.find((x) => x.id === id)?.role;
+  const outranks = (id: number) =>
+    chat?.myRole === 'owner' ? id !== user?.id : chat?.myRole === 'admin' && roleOfId(id) === 'member';
+  const muted = Boolean(chat?.adminsOnly && chat.myRole === 'member');
+
   const items: BubbleItem[] = messages.map((m) => {
     const mine = m.author.id === user?.id;
     return {
@@ -402,8 +430,8 @@ function ChatView({ idParam }: { idParam: string }) {
       sticker: m.sticker,
       // Опрос и стикер не правятся.
       canEdit: mine && !m.forwardedFrom && !m.poll && !m.sticker && editable(m.createdAt),
-      // Владелец чата удаляет любое сообщение — как админ группы.
-      canDelete: mine || Boolean(chat?.iAmOwner),
+      // Владелец удаляет любое сообщение, администратор — сообщения участников.
+      canDelete: mine || outranks(m.author.id),
     };
   });
 
@@ -476,7 +504,7 @@ function ChatView({ idParam }: { idParam: string }) {
         <PinnedBar
           pinned={pinned}
           onOpen={() => void reveal(pinned.id)}
-          onUnpin={chat?.iAmOwner ? () => void api.unpinChatMessage(chatId).then(() => setPinned(null)).catch(() => undefined) : undefined}
+          onUnpin={amAdmin ? () => void api.unpinChatMessage(chatId).then(() => setPinned(null)).catch(() => undefined) : undefined}
         />
       )}
 
@@ -495,9 +523,21 @@ function ChatView({ idParam }: { idParam: string }) {
                   </span>
                 </Link>
 
-                {m.id === chat.ownerId && <span className="dialog-flag">владелец</span>}
+                {m.role === 'owner' && <span className="dialog-flag">владелец</span>}
+                {m.role === 'admin' && <span className="dialog-flag">админ</span>}
 
-                {chat.iAmOwner && m.id !== user?.id && (
+                {chat.myRole === 'owner' && m.role !== 'owner' && (
+                  <button
+                    className="act"
+                    type="button"
+                    disabled={panelBusy}
+                    onClick={() => void toggleAdmin(m.username, m.role !== 'admin')}
+                  >
+                    {m.role === 'admin' ? 'Снять админа' : 'Сделать админом'}
+                  </button>
+                )}
+
+                {outranks(m.id) && (
                   <button
                     className="act act-danger"
                     type="button"
@@ -521,7 +561,8 @@ function ChatView({ idParam }: { idParam: string }) {
             />
           )}
 
-          <InviteBlock chat={chat} onChange={(invite) => setChat((c) => (c ? { ...c, invite } : c))} />
+          <InviteBlock chat={chat} canManage={amAdmin} onChange={(invite) => setChat((c) => (c ? { ...c, invite } : c))} />
+          {amAdmin && <GroupRules chat={chat} onChange={setChat} />}
 
           {renaming ? (
             <form className="rename-form" onSubmit={rename}>
@@ -546,7 +587,7 @@ function ChatView({ idParam }: { idParam: string }) {
             </form>
           ) : (
             <div className="members-actions">
-              {chat.iAmOwner && (
+              {amAdmin && (
                 <button
                   className="act"
                   type="button"
@@ -579,8 +620,8 @@ function ChatView({ idParam }: { idParam: string }) {
         loadingMore={loadingMore}
         onLoadOlder={() => void loadOlder()}
         onAction={(action, item) => void act(action, item)}
-        // Закреплять в группе — владельцу, как админу в Телеграме.
-        actions={{ pin: Boolean(chat?.iAmOwner) }}
+        // Закреплять в группе — владельцу и администраторам.
+        actions={{ pin: amAdmin }}
         pinnedId={pinned?.id ?? null}
         jump={jump}
         empty={
@@ -593,6 +634,15 @@ function ChatView({ idParam }: { idParam: string }) {
 
       {error && <p className="error pane-error">{error}</p>}
 
+      {muted ? (
+        <div className="pane-blocked">
+          <strong>Пишут только администраторы.</strong> Отвечать реакциями можно.
+        </div>
+      ) : (
+        <>
+      {chat && chat.slowMode > 0 && chat.myRole === 'member' && (
+        <SlowModeNote slowMode={chat.slowMode} nextPostAt={chat.nextPostAt} />
+      )}
       <ScheduledBar kind="chat" target={chatId} version={scheduledVersion} onSent={refreshList} />
       <Composer
         key={`chat:${chatId}`}
@@ -610,6 +660,7 @@ function ChatView({ idParam }: { idParam: string }) {
             const res = await api.sendChatSticker(chatId, sticker);
             edits.current += 1;
             setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
+            afterPost();
             refreshList();
             return true;
           } catch (err) {
@@ -625,6 +676,8 @@ function ChatView({ idParam }: { idParam: string }) {
         onCreatePoll={() => setPollOpen(true)}
         autoFocus
       />
+        </>
+      )}
 
       {pollOpen && chat && (
         <PollDialog
@@ -633,6 +686,7 @@ function ChatView({ idParam }: { idParam: string }) {
             const res = await api.sendChatPoll(chatId, poll);
             edits.current += 1;
             setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
+            afterPost();
             refreshList();
           }}
           onClose={() => setPollOpen(false)}
@@ -652,10 +706,10 @@ function ChatView({ idParam }: { idParam: string }) {
 
 /**
  * Ссылка-приглашение: копирует любой участник (звать людей может каждый),
- * создаёт, меняет и отключает владелец. Смена — когда ссылка ушла не туда:
+ * создаёт, меняет и отключает владелец или администратор. Смена — когда ссылка ушла не туда:
  * старая сразу перестаёт работать.
  */
-function InviteBlock({ chat, onChange }: { chat: Chat; onChange: (invite: string | null) => void }) {
+function InviteBlock({ chat, canManage, onChange }: { chat: Chat; canManage: boolean; onChange: (invite: string | null) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -671,7 +725,7 @@ function InviteBlock({ chat, onChange }: { chat: Chat; onChange: (invite: string
     }
   }
 
-  if (!chat.invite && !chat.iAmOwner) return null;
+  if (!chat.invite && !canManage) return null;
 
   return (
     <div className="invite-block">
@@ -681,7 +735,7 @@ function InviteBlock({ chat, onChange }: { chat: Chat; onChange: (invite: string
       ) : (
         <p className="settings-note">По ссылке в группу сможет вступить любой, кому вы её отправите.</p>
       )}
-      {chat.iAmOwner && (
+      {canManage && (
         <div className="members-actions">
           <button className="act" type="button" disabled={busy} onClick={() => void run(() => api.createInvite(chat.id))}>
             {chat.invite ? 'Сменить ссылку' : 'Создать ссылку-приглашение'}
@@ -694,5 +748,82 @@ function InviteBlock({ chat, onChange }: { chat: Chat; onChange: (invite: string
         </div>
       )}
     </div>
+  );
+}
+
+/** «10 с», «5 мин», «1 ч» — ступень медленного режима словами. */
+export function slowLabel(seconds: number) {
+  if (seconds === 0) return 'выключен';
+  if (seconds < 60) return `${seconds} с`;
+  if (seconds < 3600) return `${seconds / 60} мин`;
+  return `${seconds / 3600} ч`;
+}
+
+/**
+ * Порядок в группе — владельцу и администраторам: медленный режим и «пишут
+ * только администраторы». Сохраняется сразу, как переключатели в настройках.
+ */
+function GroupRules({ chat, onChange }: { chat: Chat; onChange: (c: Chat) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(patch: { slowMode?: number; adminsOnly?: boolean }) {
+    setBusy(true);
+    setError(null);
+    try {
+      onChange((await api.updateChat(chat.id, patch)).chat);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось сохранить');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="group-rules">
+      {error && <p className="error">{error}</p>}
+      <label className="field">
+        <span>Медленный режим — одно сообщение участника в</span>
+        <select value={chat.slowMode} disabled={busy} onChange={(e) => void save({ slowMode: Number(e.target.value) })}>
+          {SLOW_MODE_OPTIONS.map((s) => (
+            <option key={s} value={s}>
+              {s === 0 ? 'выключен' : slowLabel(s)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="choice">
+        <input
+          type="checkbox"
+          checked={chat.adminsOnly}
+          disabled={busy}
+          onChange={(e) => void save({ adminsOnly: e.target.checked })}
+        />
+        <span>
+          <strong>Пишут только администраторы</strong>
+          <span className="choice-hint">Остальные читают и ставят реакции — группа становится доской объявлений.</span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
+/** Над полем ввода у участника: правило медленного режима и сколько ждать. */
+function SlowModeNote({ slowMode, nextPostAt }: { slowMode: number; nextPostAt: string | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  const until = nextPostAt ? Date.parse(nextPostAt) : 0;
+  const left = Math.ceil((until - now) / 1000);
+
+  useEffect(() => {
+    if (until <= Date.now()) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [until]);
+
+  return (
+    <p className="slow-note" role="status">
+      Медленный режим: одно сообщение в {slowLabel(slowMode)}
+      {left > 0 && <> — следующее через {left < 60 ? `${left} с` : `${Math.ceil(left / 60)} мин`}</>}
+    </p>
   );
 }

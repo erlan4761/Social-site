@@ -1,4 +1,4 @@
-import { type Chat, type ChatMessage } from '../../api';
+import { type Chat, type ChatMessage, type ChatRole } from '../../api';
 import { type DbChat, type DbChatMessage, db, fail } from '../store';
 import { byId, requireMe, author, person, hidden } from './people';
 import { reactionsOf, quoteOf, forwardedOf } from './messages';
@@ -44,8 +44,48 @@ export function requireChatMessage(chatId: number, messageId: number) {
   return m!;
 }
 
+/** Роль в группе — как roleOf() в chatRoles.js. */
+export function roleOf(c: DbChat, userId: number): ChatRole | null {
+  if (c.ownerId === userId) return 'owner';
+  const row = memberRow(c.id, userId);
+  if (!row) return null;
+  return row.role === 'admin' ? 'admin' : 'member';
+}
+
+export const isAdmin = (c: DbChat, userId: number) => ['owner', 'admin'].includes(roleOf(c, userId) ?? '');
+
+/** Владелец — любого, кроме себя; администратор — только обычного участника. */
+export function outranks(c: DbChat, actorId: number, targetId: number) {
+  const actor = roleOf(c, actorId);
+  if (actor === 'owner') return targetId !== actorId;
+  return actor === 'admin' && roleOf(c, targetId) === 'member';
+}
+
+export function nextPostAt(c: DbChat, userId: number) {
+  if (!c.slowMode || isAdmin(c, userId)) return null;
+  const mine = db.chatMessages.filter((m) => m.chatId === c.id && m.authorId === userId);
+  if (mine.length === 0) return null;
+  const last = Math.max(...mine.map((m) => Date.parse(m.createdAt)));
+  const next = last + c.slowMode * 1000;
+  return next > Date.now() ? new Date(next).toISOString() : null;
+}
+
+/** Почему нельзя написать — как postBlock() на сервере. */
+export function postBlock(c: DbChat, userId: number) {
+  if (isAdmin(c, userId)) return;
+  if (c.adminsOnly) fail(403, 'Писать в эту группу могут только администраторы');
+  const next = nextPostAt(c, userId);
+  if (next) {
+    const left = Math.max(1, Math.ceil((Date.parse(next) - Date.now()) / 1000));
+    fail(429, `Медленный режим: следующее сообщение — через ${left < 60 ? `${left} с` : `${Math.ceil(left / 60)} мин`}`);
+  }
+}
+
 export const toChat = (c: DbChat): Chat => {
-  const members = membersOf(c.id).map((m) => person(byId(m.userId)!));
+  const members = membersOf(c.id).map((m) => ({
+    ...person(byId(m.userId)!),
+    role: (m.userId === c.ownerId ? 'owner' : m.role === 'admin' ? 'admin' : 'member') as ChatRole,
+  }));
   return {
     id: c.id,
     title: c.title,
@@ -54,6 +94,10 @@ export const toChat = (c: DbChat): Chat => {
     members,
     memberCount: members.length,
     iAmOwner: c.ownerId === db.meId,
+    myRole: (db.meId != null ? roleOf(c, db.meId) : null) ?? 'member',
+    slowMode: c.slowMode ?? 0,
+    adminsOnly: Boolean(c.adminsOnly),
+    nextPostAt: db.meId != null ? nextPostAt(c, db.meId) : null,
     invite: c.invite ?? null,
   };
 };
