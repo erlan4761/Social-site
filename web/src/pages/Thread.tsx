@@ -10,6 +10,7 @@ import { ScheduledBar } from '../components/Scheduled';
 import { Icon } from '../components/Icon';
 import { SavedAvatar } from '../components/Monogram';
 import { useSession } from '../session';
+import { useCalls } from '../calls';
 import { pollEvery, useLive, useLiveConnected } from '../live';
 import { isOnline, lastSeenLabel } from '../time';
 import { SAVED_TITLE } from '../components/messenger/rows';
@@ -29,6 +30,7 @@ export function Thread() {
 function ThreadView({ username }: { username: string }) {
   const { user, setUnreadTotal, refreshBadges } = useSession();
   const { refreshList } = useOutletContext<MessengerContext>();
+  const calls = useCalls();
 
   const [other, setOther] = useState<Person | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -339,16 +341,43 @@ function ThreadView({ username }: { username: string }) {
           }
           live={online || typing}
           actions={
-            <button
-              className={searchOpen ? 'icon-btn on' : 'icon-btn'}
-              type="button"
-              aria-expanded={searchOpen}
-              aria-label="Поиск по переписке"
-              title="Поиск по переписке"
-              onClick={() => setSearchOpen((v) => !v)}
-            >
-              <Icon name="search" />
-            </button>
+            <>
+              {/* Звонок — как в Телеграме: голосом или с видео. При блокировке — нет. */}
+              {!blocked && (
+                <>
+                  <button
+                    className="icon-btn"
+                    type="button"
+                    aria-label="Позвонить"
+                    title="Позвонить"
+                    disabled={calls.busy}
+                    onClick={() => calls.startCall(other, false)}
+                  >
+                    <Icon name="phone" />
+                  </button>
+                  <button
+                    className="icon-btn"
+                    type="button"
+                    aria-label="Видеозвонок"
+                    title="Видеозвонок"
+                    disabled={calls.busy}
+                    onClick={() => calls.startCall(other, true)}
+                  >
+                    <Icon name="video" />
+                  </button>
+                </>
+              )}
+              <button
+                className={searchOpen ? 'icon-btn on' : 'icon-btn'}
+                type="button"
+                aria-expanded={searchOpen}
+                aria-label="Поиск по переписке"
+                title="Поиск по переписке"
+                onClick={() => setSearchOpen((v) => !v)}
+              >
+                <Icon name="search" />
+              </button>
+            </>
           }
         />
       ) : (

@@ -349,6 +349,14 @@ export const chatsApi = {
         : null,
     }),
 
+  // Звонки браузеры ведут напрямую, а сводит их сервер — у витрины его нет.
+  callConfig: (): Promise<{ iceServers: RTCIceServer[] }> => fail(400, 'В витрине звонков нет: браузеры соединяет сервер, а у витрины его нет'),
+  startCall: (_to: string, _video: boolean, _sdp: RTCSessionDescriptionInit): Promise<{ call: { id: string; video: boolean } }> =>
+    fail(400, 'В витрине звонков нет: браузеры соединяет сервер, а у витрины его нет'),
+  answerCall: (_id: string, _sdp: RTCSessionDescriptionInit): Promise<{ ok: true }> => fail(400, 'В витрине звонков нет'),
+  sendIce: (_id: string, _candidate: RTCIceCandidateInit): Promise<{ ok: true }> => fail(400, 'В витрине звонков нет'),
+  endCall: (_id: string): Promise<{ ok: true; reason: string }> => fail(400, 'В витрине звонков нет'),
+
   chatReaders: (chatId: number, messageId: number) => {
     const { u, chat } = requireChat(chatId);
     const m = requireChatMessage(chat.id, messageId);

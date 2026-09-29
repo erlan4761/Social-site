@@ -9,6 +9,7 @@ import {
 } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { CallProvider } from '../calls';
 import { Link, NavLink, Outlet, useMatch, useNavigate } from 'react-router-dom';
 import { Icon, type IconName } from './Icon';
 import { Monogram } from './Monogram';
@@ -226,6 +227,14 @@ function UserMenu({ withTheme, variant }: { withTheme: boolean; variant: 'card' 
 
 /* ─ Оболочка ──────────────────────────────────────────────────────────── */
 export function Shell() {
+  return (
+    <CallProvider>
+      <ShellLayout />
+    </CallProvider>
+  );
+}
+
+function ShellLayout() {
   const { user, unreadTotal, notifUnread } = useSession();
   const wide = useMedia(WIDE);
   const phone = useMedia(PHONE);
