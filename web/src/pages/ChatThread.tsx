@@ -11,6 +11,7 @@ import { ScheduledBar } from '../components/Scheduled';
 import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
 import { MemberSearch } from '../components/MemberSearch';
+import { ReadersDialog } from '../components/chat/ReadersDialog';
 import { ShareLink } from '../components/ShareLink';
 import { Monogram } from '../components/Monogram';
 import { useSession } from '../session';
@@ -39,6 +40,8 @@ function ChatView({ idParam }: { idParam: string }) {
   const { refreshList } = useOutletContext<MessengerContext>();
 
   const [chat, setChat] = useState<Chat | null>(null);
+  /** Своё сообщение, для которого открыто «Кто прочитал». */
+  const [readersOf, setReadersOf] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [readUpTo, setReadUpTo] = useState(0);
   const [cursor, setCursor] = useState<number | null>(null);
@@ -267,6 +270,9 @@ function ChatView({ idParam }: { idParam: string }) {
           break;
         case 'pin':
           await togglePin(msg.id);
+          break;
+        case 'readers':
+          setReadersOf(msg.id);
           break;
         case 'react':
           put((await api.reactChatMessage(chatId, msg.id, action.emoji)).message);
@@ -621,7 +627,7 @@ function ChatView({ idParam }: { idParam: string }) {
         onLoadOlder={() => void loadOlder()}
         onAction={(action, item) => void act(action, item)}
         // Закреплять в группе — владельцу и администраторам.
-        actions={{ pin: amAdmin }}
+        actions={{ pin: amAdmin, readers: true }}
         pinnedId={pinned?.id ?? null}
         jump={jump}
         empty={
@@ -692,6 +698,8 @@ function ChatView({ idParam }: { idParam: string }) {
           onClose={() => setPollOpen(false)}
         />
       )}
+
+      {readersOf != null && <ReadersDialog chatId={chatId} messageId={readersOf} onClose={() => setReadersOf(null)} />}
 
       {forwarding && (
         <ForwardDialog

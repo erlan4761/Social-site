@@ -328,6 +328,20 @@ export const chatsApi = {
     return tick({ results: findHits(q, visibleChatMessages(chat.id), (m) => m.authorId) });
   },
 
+  chatReaders: (chatId: number, messageId: number) => {
+    const { u, chat } = requireChat(chatId);
+    const m = requireChatMessage(chat.id, messageId);
+    if (m.authorId !== u.id) fail(403, 'Кто прочитал, видно только автору сообщения');
+    const others = membersOf(chat.id)
+      .filter((x) => x.userId !== u.id && !blockedPair(u.id, x.userId))
+      .map((x) => ({ row: x, who: byId(x.userId)! }))
+      .sort((a, b) => a.who.displayName.localeCompare(b.who.displayName));
+    return tick({
+      read: others.filter((x) => x.row.lastReadId >= m.id).map((x) => personOf(x.who)),
+      unread: others.filter((x) => x.row.lastReadId < m.id).map((x) => personOf(x.who)),
+    });
+  },
+
   pinChatMessage: (chatId: number, messageId: number) => {
     const { u, chat } = requireChat(chatId);
     if (!isAdmin(chat, u.id)) fail(403, 'Закреплять сообщения могут владелец и администраторы');

@@ -288,3 +288,19 @@ describe('витрина: администраторы группы', () => {
     expect((await api.chat(chat.id)).chat.adminsOnly).toBe(true);
   });
 });
+
+describe('витрина: кто прочитал', () => {
+  it('автору — прочитавшие и нет; чужое — 403', async () => {
+    const chat = await room();
+    const { message } = await api.sendChatMessage(chat.id, 'Прочтите');
+    let r = await api.chatReaders(chat.id, message.id);
+    expect(r.read).toHaveLength(0);
+    expect(r.unread.map((p) => p.username).sort()).toEqual(['marina', 'nina']);
+    await loginAs('nina');
+    await api.markChatRead(chat.id);
+    await expect(api.chatReaders(chat.id, message.id)).rejects.toMatchObject({ status: 403 });
+    await loginAs('demo');
+    r = await api.chatReaders(chat.id, message.id);
+    expect(r.read.map((p) => p.username)).toEqual(['nina']);
+  });
+});
