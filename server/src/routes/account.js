@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { db, nowIso } from '../db.js';
-import { hashPassword, requireAuth, SESSION_COOKIE, verifyPassword } from '../auth.js';
+import { hashPassword, publicUser, requireAuth, SESSION_COOKIE, verifyPassword } from '../auth.js';
 import { dropAttachment } from '../messageExtras.js';
 import { deleteUpload } from '../media.js';
 import { dropPrefs } from '../prefs.js';
 import { dropDrafts } from '../drafts.js';
 import { heirOf } from '../chatRoles.js';
+import { HOLD_DAYS, changeUsername, holdUsername, usernameTaken } from '../usernames.js';
 import { unpin } from '../pins.js';
 import { LAST_SEEN_OPTIONS } from '../presence.js';
 import { checkCode, hasPassword, normalizePhone, sendCode } from '../phone.js';
@@ -92,6 +93,23 @@ const PRIVACY_FIELDS = [
   { key: 'phoneFind', column: 'phone_find', options: PHONE_PRIVACY_OPTIONS, label: 'Кто найдёт по номеру' },
   { key: 'phoneShow', column: 'phone_show', options: PHONE_PRIVACY_OPTIONS, label: 'Кто видит номер' },
 ];
+
+/**
+ * Сменить логин. Старый ещё HOLD_DAYS дней закреплён за вами (usernames.js):
+ * по нему никто не зарегистрируется, а вы можете к нему вернуться.
+ */
+router.put('/username', (req, res, next) => {
+  try {
+    const row = me(req);
+    const username = v.username(req.body?.username);
+    if (username === row.username) return res.status(400).json({ error: 'Это и так ваш логин' });
+    if (usernameTaken(username, row.id)) return res.status(409).json({ error: 'Это имя пользователя уже занято' });
+    const heldUntil = changeUsername(row.id, row.username, username);
+    res.json({ user: publicUser(me(req)), previous: row.username, heldUntil, holdDays: HOLD_DAYS });
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.put('/privacy', (req, res) => {
   const given = PRIVACY_FIELDS.filter((f) => req.body?.[f.key] !== undefined);
@@ -265,6 +283,8 @@ function deleteAccount(me) {
     dropPrefs({ kind: 'dm', targetId: me });
     // Чужие черновики ему; свои уйдут каскадом вместе со строкой users.
     dropDrafts('dm', me);
+    // Логин удалённого тоже не достаётся другому сразу — см. usernames.js.
+    holdUsername(db.prepare('SELECT username FROM users WHERE id = ?').get(me).username, me);
 
     db.prepare('DELETE FROM users WHERE id = ?').run(me);
     db.exec('COMMIT');

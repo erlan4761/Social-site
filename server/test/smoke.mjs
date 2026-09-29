@@ -3649,5 +3649,54 @@ check('чужой альбом в группе не продолжить', r.sta
 r = await ac(`/chats/${achat}/messages`);
 check('участники видят альбом в группе', r.body.messages?.filter((m) => m.albumId === album3).length === 2, '');
 
+console.log('\n— смена логина —');
+const un = makeClient();
+const uo = makeClient();
+const renOld = `uname_${stamp}`;
+const renOther = `uother_${stamp}`;
+const renNew = `unew_${stamp}`;
+await legacySignUp(un, renOld, 'Меняющий');
+await legacySignUp(uo, renOther, 'Сосед');
+await dmSend(uo, renOld, { body: 'Привет до смены' });
+const rename = (client, username) => client('/account/username', { method: 'PUT', body: JSON.stringify({ username }) });
+
+r = await rename(guest, renNew);
+check('смена логина — гостю 401', r.status === 401, `${r.status}`);
+r = await rename(un, 'Кириллица');
+check('кириллица — 400', r.status === 400, `${r.status}`);
+r = await rename(un, renOld);
+check('тот же логин — 400', r.status === 400, `${r.status}`);
+r = await rename(un, renOther.toUpperCase());
+check('чужой логин (в другом регистре) — 409', r.status === 409, `${r.status}`);
+r = await rename(un, renNew.toUpperCase());
+check('логин сменён, приведён к нижнему регистру', r.status === 200 && r.body.user?.username === renNew && r.body.previous === renOld && r.body.holdDays === 14
+  && Date.parse(r.body.heldUntil) > Date.now() + 13 * 864e5, JSON.stringify(r.body));
+r = await un('/auth/me');
+check('сеанс тот же — уже с новым логином', r.body.user?.username === renNew, JSON.stringify(r.body.user));
+r = await uo(`/users/${renOld}`);
+check('по старому логину профиля нет', r.status === 404, `${r.status}`);
+r = await uo(`/users/${renNew}`);
+check('по новому — есть', r.status === 200, `${r.status}`);
+r = await uo('/messages');
+check('переписка на месте, собеседник видит новый логин', r.body.conversations?.some((c) => c.user.username === renNew && c.lastMessage.body === 'Привет до смены'), '');
+r = await rename(uo, renOld);
+check('старый логин закреплён — другому 409', r.status === 409, `${r.status}`);
+r = await makeClient()('/auth/login', { method: 'POST', body: JSON.stringify({ username: renOld, password: 'parol12345' }) });
+check('по старому логину не войти', r.status === 401, `${r.status}`);
+r = await makeClient()('/auth/login', { method: 'POST', body: JSON.stringify({ username: renNew, password: 'parol12345' }) });
+check('по новому — входит', r.status === 200, `${r.status}`);
+r = await rename(un, renOld);
+check('свой старый логин можно вернуть', r.status === 200 && r.body.user?.username === renOld, `${r.status}`);
+r = await rename(uo, renNew);
+check('промежуточный теперь тоже закреплён за ним', r.status === 409, `${r.status}`);
+
+// Удалённый аккаунт: его логин тоже не освобождается сразу.
+const ug = makeClient();
+const renGone = `ugone_${stamp}`;
+await legacySignUp(ug, renGone, 'Уходящий');
+await ug('/account', { method: 'DELETE', body: JSON.stringify({ password: 'parol12345' }) });
+r = await rename(uo, renGone);
+check('логин удалённого аккаунта закреплён — 409', r.status === 409, `${r.status}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
