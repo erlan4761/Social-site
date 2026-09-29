@@ -4,6 +4,7 @@ import { Shell } from './components/Shell';
 import { DemoBanner } from './demo/DemoBanner';
 import { Auth } from './pages/Auth';
 import { Bookmarks } from './pages/Bookmarks';
+import { Settings } from './pages/Settings';
 import { ChannelComments } from './pages/ChannelComments';
 import { ChannelView } from './pages/ChannelView';
 import { ChatThread } from './pages/ChatThread';
@@ -65,6 +66,7 @@ export function App() {
                 чей-то логин. */}
             <Route path="search" element={<Search />} />
             <Route path="bookmarks" element={<Bookmarks />} />
+            <Route path="settings" element={<Settings />} />
             <Route path="u/:username" element={<Profile />} />
             <Route path="p/:id" element={<PostPage />} />
             <Route path="notifications" element={<Notifications />} />

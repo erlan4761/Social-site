@@ -5,7 +5,7 @@ import {
 } from '../api';
 import { PresenceAvatar, Ticks, previewText } from '../components/Chat';
 import { Icon } from '../components/Icon';
-import { Monogram } from '../components/Monogram';
+import { Monogram, SavedAvatar } from '../components/Monogram';
 import { FoldersDialog } from '../components/FoldersDialog';
 import { NewChannelDialog } from '../components/NewChannelDialog';
 import { folderUnread, inFolder, readActiveFolder, toggleInFolder, writeActiveFolder, type FolderRow } from '../folders';
@@ -30,12 +30,15 @@ type Row =
   | { kind: 'chat'; key: string; at: string; name: string; item: ChatSummary }
   | { kind: 'channel'; key: string; at: string; name: string; item: ChannelSummary };
 
-function rows(conversations: Conversation[], chats: ChatSummary[], channels: ChannelSummary[]): Row[] {
+/** Имя «Избранного» в списке, поиске и шапке — переписки с самим собой. */
+export const SAVED_TITLE = 'Избранное';
+
+function rows(conversations: Conversation[], chats: ChatSummary[], channels: ChannelSummary[], meId?: number): Row[] {
   const dm: Row[] = conversations.map((c) => ({
     kind: 'dm',
     key: `dm-${c.user.id}`,
     at: c.lastMessage.createdAt,
-    name: c.user.displayName,
+    name: c.user.id === meId ? SAVED_TITLE : c.user.displayName,
     item: c,
   }));
   // Чат и канал без сообщений встают по дате создания — иначе только что
@@ -104,6 +107,7 @@ export function Messenger() {
   }
   const press = useRef<number | null>(null);
 
+  const meId = user?.id;
   const load = useCallback(() => {
     // allSettled: три независимых списка, падение одного — не повод прятать остальные.
     return Promise.allSettled([api.conversations(), api.chats(), api.channels()]).then(([dm, chats, channels]) => {
@@ -126,10 +130,11 @@ export function Messenger() {
           dm.status === 'fulfilled' ? dm.value.conversations : [],
           chats.status === 'fulfilled' ? chats.value.chats : [],
           channels.status === 'fulfilled' ? channels.value.channels : [],
+          meId,
         ),
       );
     });
-  }, []);
+  }, [meId]);
 
   const refreshList = useCallback(() => {
     void load();
@@ -275,6 +280,18 @@ export function Messenger() {
                     >
                       <Icon name="megaphone" size={18} />
                       Новый канал
+                    </button>
+                    <button
+                      className="msg-menu-item"
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        if (user) go(`/messages/${user.username}`);
+                      }}
+                    >
+                      <Icon name="bookmark" size={18} />
+                      {SAVED_TITLE}
                     </button>
                     <button
                       className="msg-menu-item"
@@ -460,7 +477,9 @@ export function Messenger() {
             ...folderRow(r),
             name: r.name,
             avatar:
-              r.kind === 'dm' ? (
+              r.kind === 'dm' && r.item.user.id === user?.id ? (
+                <SavedAvatar size="sm" />
+              ) : r.kind === 'dm' ? (
                 <Monogram username={r.item.user.username} displayName={r.item.user.displayName} avatarUrl={r.item.user.avatarUrl} size="sm" />
               ) : r.kind === 'chat' ? (
                 <Monogram username={r.name} displayName={r.name} size="sm" />
@@ -504,16 +523,18 @@ export function ChannelAvatar({ title, size = 'md' }: { title: string; size?: 's
 }
 
 function DmRow({ c, meId }: { c: Conversation; meId?: number }) {
-  const mine = c.lastMessage.fromId === meId;
-  const online = !c.blocked && isOnline(c.user.lastSeenAt);
+  // «Избранное»: всё в нём своё, поэтому ни галочек, ни «Вы:», ни «в сети».
+  const saved = c.user.id === meId;
+  const mine = !saved && c.lastMessage.fromId === meId;
+  const online = !saved && !c.blocked && isOnline(c.user.lastSeenAt);
 
   return (
     <NavLink className="dialog" to={`/messages/${c.user.username}`}>
-      <PresenceAvatar person={c.user} />
+      {saved ? <SavedAvatar /> : <PresenceAvatar person={c.user} />}
       <span className="dialog-body">
         <span className="dialog-head">
           <span className="dialog-name">
-            {c.user.displayName}
+            {saved ? SAVED_TITLE : c.user.displayName}
             {online && <span className="sr-only">, в сети</span>}
           </span>
           {c.muted && <MutedMark />}

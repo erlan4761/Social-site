@@ -58,6 +58,13 @@
 
 a.btn { display: inline-block; text-decoration: none; }
 
+/* Необратимое действие: красный контур, а залитая — только последняя кнопка
+   в окне подтверждения, где решение уже принято. */
+.btn.danger { background: none; color: var(--danger); border-color: var(--danger); }
+.btn.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--danger) 10%, transparent); }
+.btn.danger.solid { background: var(--danger); color: var(--surface); }
+.btn.danger.solid:hover:not(:disabled) { background: color-mix(in oklab, var(--danger) 88%, var(--ink)); }
+
 /* ─ Тихая кнопка опасного действия ────────────────────────────────────
    В покое не тянет на себя взгляд, цвет предупреждения загорается под
    курсором и в фокусе. Тот же приём у «Удалить» под записью. */
@@ -349,3 +356,6 @@ a.btn { display: inline-block; text-decoration: none; }
 @media (prefers-reduced-motion: reduce) {
   .skeleton { animation: none; }
 }
+
+/* «Избранное»: закладка на цвете акцента вместо своего лица. */
+.monogram.saved { background: var(--accent); color: var(--accent-contrast); }

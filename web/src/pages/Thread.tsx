@@ -7,9 +7,10 @@ import {
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
 import { Icon } from '../components/Icon';
+import { SavedAvatar } from '../components/Monogram';
 import { useSession } from '../session';
 import { isOnline, lastSeenLabel } from '../time';
-import type { MessengerContext } from './Messenger';
+import { SAVED_TITLE, type MessengerContext } from './Messenger';
 
 /** Открытая переписка — это ожидание ответа, и «печатает…» живёт шесть
  *  секунд: опрос чаще, чем у списка. */
@@ -44,6 +45,8 @@ function ThreadView({ username }: { username: string }) {
   /** Номер последнего своего изменения. Ответ опроса, ушедшего раньше него,
    *  не должен откатить только что поставленную реакцию или правку. */
   const edits = useRef(0);
+  /** «Избранное» — переписка с самим собой: заметки, ссылки, пересланное. */
+  const saved = user != null && user.username === username.toLowerCase();
 
   const markRead = useCallback(() => {
     api
@@ -224,7 +227,7 @@ function ThreadView({ username }: { username: string }) {
           put((await api.reactMessage(username, msg.id, action.emoji)).message);
           break;
         case 'delete':
-          if (!window.confirm('Удалить сообщение? Оно исчезнет и у собеседника.')) return;
+          if (!window.confirm(saved ? 'Удалить сообщение?' : 'Удалить сообщение? Оно исчезнет и у собеседника.')) return;
           await api.deleteMessage(username, msg.id);
           edits.current += 1;
           setMessages((prev) => prev.filter((m) => m.id !== msg.id));
@@ -260,7 +263,7 @@ function ThreadView({ username }: { username: string }) {
       body: m.body,
       createdAt: m.createdAt,
       mine,
-      status: mine ? (m.readAt ? 'read' : 'sent') : undefined,
+      status: mine && !saved ? (m.readAt ? 'read' : 'sent') : undefined,
       editedAt: m.editedAt,
       forwardedFrom: m.forwardedFrom,
       replyTo: m.replyTo,
@@ -271,11 +274,29 @@ function ThreadView({ username }: { username: string }) {
     };
   });
 
-  const online = !blocked && isOnline(other?.lastSeenAt);
+  const online = !saved && !blocked && isOnline(other?.lastSeenAt);
 
   return (
     <div className="pane">
-      {other ? (
+      {other && saved ? (
+        <PaneHead
+          avatar={<SavedAvatar size="sm" />}
+          title={SAVED_TITLE}
+          subtitle="заметки, ссылки и пересланное — только для вас"
+          actions={
+            <button
+              className={searchOpen ? 'icon-btn on' : 'icon-btn'}
+              type="button"
+              aria-expanded={searchOpen}
+              aria-label="Поиск по «Избранному»"
+              title="Поиск по «Избранному»"
+              onClick={() => setSearchOpen((v) => !v)}
+            >
+              <Icon name="search" />
+            </button>
+          }
+        />
+      ) : other ? (
         <PaneHead
           to={`/u/${other.username}`}
           avatar={<PresenceAvatar person={blocked ? { ...other, lastSeenAt: null } : other} size="sm" />}
@@ -291,7 +312,7 @@ function ThreadView({ username }: { username: string }) {
                 <TypingDots />
               </>
             ) : (
-              lastSeenLabel(other.lastSeenAt)
+              lastSeenLabel(other.lastSeenAt, other.seenRecently)
             )
           }
           live={online || typing}
@@ -343,10 +364,18 @@ function ThreadView({ username }: { username: string }) {
         jump={jump}
         readOnly={blocked}
         empty={
-          <>
-            <strong>Здесь пока пусто.</strong>
-            Напишите первое сообщение.
-          </>
+          saved ? (
+            <>
+              <strong>Это ваше «Избранное».</strong>
+              Пишите сюда заметки, сохраняйте ссылки и файлы, пересылайте сообщения из любых чатов — видите их
+              только вы.
+            </>
+          ) : (
+            <>
+              <strong>Здесь пока пусто.</strong>
+              Напишите первое сообщение.
+            </>
+          )
         }
       />
 
@@ -361,13 +390,13 @@ function ThreadView({ username }: { username: string }) {
         </div>
       ) : (
         <Composer
-          placeholder="Сообщение"
+          placeholder={saved ? 'Заметка для себя' : 'Сообщение'}
           onSend={send}
           onSendAttachment={sendAttachment}
           mode={mode}
           onCancelMode={() => setMode(null)}
           onEditLast={editLast}
-          onTyping={() => void api.typing(username).catch(() => undefined)}
+          onTyping={saved ? undefined : () => void api.typing(username).catch(() => undefined)}
           autoFocus
         />
       )}

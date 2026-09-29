@@ -2,9 +2,13 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError, type ForwardRef, type ForwardTarget } from '../api';
-import { Monogram } from './Monogram';
+import { useSession } from '../session';
+import { Monogram, SavedAvatar } from './Monogram';
 
-type Target = { key: string; name: string; hint: string; username: string; avatarUrl: string | null; to: ForwardTarget; path: string };
+type Target = {
+  key: string; name: string; hint: string; username: string; avatarUrl: string | null; to: ForwardTarget; path: string;
+  saved?: boolean;
+};
 
 type Props = {
   source: ForwardRef;
@@ -25,6 +29,7 @@ export function ForwardDialog({ source, preview, onClose }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const navigate = useNavigate();
+  const { user } = useSession();
 
   const [targets, setTargets] = useState<Target[] | null>(null);
   const [query, setQuery] = useState('');
@@ -51,7 +56,8 @@ export function ForwardDialog({ source, preview, onClose }: Props) {
       if (dm.status === 'fulfilled') {
         for (const c of dm.value.conversations) {
           // Туда, где переписка закрыта блокировкой, переслать всё равно не выйдет.
-          if (c.blocked) continue;
+          // «Избранное» встаёт первым отдельно — ниже.
+          if (c.blocked || c.user.id === user?.id) continue;
           list.push({
             key: `dm-${c.user.id}`,
             name: c.user.displayName,
@@ -79,13 +85,28 @@ export function ForwardDialog({ source, preview, onClose }: Props) {
         }
       }
       list.sort((a, b) => b.at.localeCompare(a.at));
+      // «Избранное» — всегда первым, даже если туда ещё ничего не пересылали:
+      // «сохранить себе» — самая частая пересылка.
+      if (user) {
+        list.unshift({
+          key: 'saved',
+          name: 'Избранное',
+          hint: 'Сохранить себе',
+          username: user.username,
+          avatarUrl: null,
+          to: { kind: 'dm', username: user.username },
+          path: `/messages/${user.username}`,
+          at: '',
+          saved: true,
+        });
+      }
       setTargets(list);
       if (dm.status === 'rejected' && chats.status === 'rejected') setError('Не удалось загрузить чаты');
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user]);
 
   async function pick(t: Target) {
     if (busy) return;
@@ -138,7 +159,7 @@ export function ForwardDialog({ source, preview, onClose }: Props) {
             {shown.map((t) => (
               <li key={t.key}>
                 <button className="dialog" type="button" disabled={busy} onClick={() => void pick(t)}>
-                  <Monogram username={t.username} displayName={t.name} avatarUrl={t.avatarUrl} />
+                  {t.saved ? <SavedAvatar /> : <Monogram username={t.username} displayName={t.name} avatarUrl={t.avatarUrl} />}
                   <span className="dialog-body">
                     <span className="dialog-head">
                       <span className="dialog-name">{t.name}</span>

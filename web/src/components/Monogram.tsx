@@ -1,3 +1,5 @@
+import { Icon } from './Icon';
+
 const TINTS = 6;
 
 function tintOf(username: string) {
@@ -19,6 +21,16 @@ type Props = {
   avatarUrl?: string | null;
   size?: 'sm' | 'md' | 'lg';
 };
+
+/** «Избранное» — переписка с самим собой: вместо своего лица закладка,
+ *  чтобы её не путали с обычной перепиской. Размеры — как у монограммы. */
+export function SavedAvatar({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
+  return (
+    <span className={size === 'md' ? 'monogram saved' : `monogram ${size} saved`} aria-hidden="true">
+      <Icon name="bookmark" size={size === 'sm' ? 14 : size === 'lg' ? 34 : 20} />
+    </span>
+  );
+}
 
 /** A photo when there is one, the tinted initials when there isn't. */
 export function Monogram({ username, displayName, avatarUrl, size = 'md' }: Props) {

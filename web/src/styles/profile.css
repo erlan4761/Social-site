@@ -1,8 +1,8 @@
 /* ═══════════════════════════════════════════════════════════════════════
    profile.css — экран профиля: шапка, метрики, смена аватара, действия,
-   архив по месяцам, строка периода, список блокировок.
+   архив по месяцам, строка периода, список блокировок; настройки аккаунта.
 
-   Компоненты: Profile.tsx, ArchivePanel.tsx.
+   Компоненты: Profile.tsx, ArchivePanel.tsx, Settings.tsx.
    Общие примитивы (.btn, .notice, .act-danger, .monogram) — в controls.css.
    ═══════════════════════════════════════════════════════════════════════ */
 
@@ -240,4 +240,66 @@
   /* «Раньше / Позже / Показать всё» на 375 px уходят под название периода,
      а не выдавливают его из строки. */
   .period-nav { margin-left: 0; }
+}
+
+/* ─ Настройки аккаунта ────────────────────────────────────────────────
+   Столбец разделов через линию, без карточек: это одна страница о себе,
+   а не набор виджетов. Раздел удаления отделён сильнее — он последний и
+   необратимый. */
+.settings { max-width: 34rem; }
+
+.settings-block { padding: 0 0 1.75rem; }
+.settings-block + .settings-block { padding-top: 1.75rem; border-top: 1px solid var(--line); }
+.settings-block.danger { border-top-color: var(--line-strong); }
+
+.settings-title {
+  margin: 0 0 var(--s-3);
+  font-size: var(--t-body);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.settings-block.danger .settings-title { color: var(--danger); }
+
+.settings-note {
+  margin: 0 0 var(--s-4);
+  font-size: var(--t-meta);
+  line-height: var(--lh-body);
+  color: var(--ink-2);
+}
+
+.settings-status { margin: 0 0 var(--s-4); font-size: var(--t-meta); color: var(--accent); }
+
+.settings-facts { display: grid; gap: var(--s-2); margin: 0; }
+.settings-facts > div { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: var(--s-3); }
+.settings-facts dt { font-size: var(--t-meta); color: var(--ink-2); }
+.settings-facts dd { margin: 0; overflow-wrap: anywhere; }
+
+.settings-form { max-width: 22rem; }
+.settings-block .choices { margin-bottom: var(--s-3); }
+
+.sessions { list-style: none; margin: 0 0 var(--s-4); padding: 0; }
+
+.session {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) 0;
+}
+
+.session + .session { border-top: 1px solid var(--line); }
+.session-who { flex: 1; min-width: 0; }
+.session-who strong { display: block; font-weight: 500; }
+.session-who span { display: block; font-size: var(--t-meta); color: var(--ink-2); }
+.session.current .session-who span { color: var(--accent); }
+
+.settings-loss {
+  margin: var(--s-3) 0 var(--s-3);
+  padding-left: 1.125rem;
+  font-size: var(--t-body);
+  line-height: var(--lh-body);
+}
+
+@media (max-width: 46rem) {
+  .settings-facts > div { grid-template-columns: 1fr; gap: 0; }
 }

@@ -193,6 +193,10 @@ function UserMenu({ withTheme, variant }: { withTheme: boolean; variant: 'card' 
             <Icon name="user" />
             Мой профиль
           </Link>
+          <Link className="usermenu-row" role="menuitem" to="/settings" onClick={() => setOpen(false)}>
+            <Icon name="settings" />
+            Настройки
+          </Link>
 
           {withTheme && (
             <div className="usermenu-theme">

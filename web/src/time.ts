@@ -83,9 +83,10 @@ const ONLINE_MS = 2 * 60_000;
 export const isOnline = (lastSeenAt: string | null | undefined) =>
   lastSeenAt != null && Date.now() - Date.parse(lastSeenAt) < ONLINE_MS;
 
-/** Подзаголовок собеседника: «в сети», «был(а) 5 минут назад», «был(а) вчера в 14:05». */
-export function lastSeenLabel(lastSeenAt: string | null | undefined) {
-  if (lastSeenAt == null) return 'был(а) давно';
+/** Подзаголовок собеседника: «в сети», «был(а) 5 минут назад», «был(а) вчера в 14:05».
+ *  Время спрятано настройкой — «был(а) недавно», если человек заходил на днях. */
+export function lastSeenLabel(lastSeenAt: string | null | undefined, seenRecently = false) {
+  if (lastSeenAt == null) return seenRecently ? 'был(а) недавно' : 'был(а) давно';
   if (isOnline(lastSeenAt)) return 'в сети';
 
   const minutes = Math.floor((Date.now() - Date.parse(lastSeenAt)) / 60_000);

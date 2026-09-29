@@ -12,7 +12,7 @@ import type {
   ArchiveMonth, Attachment, AttachmentInput, Author, Badges, Channel, ChannelComment, ChannelPost, ChannelSummary,
   ChatFolder, ConversationHit, FolderInput, ForwardedFrom, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
   Conversation, ForwardRef, ForwardTarget, Media, Message, Notification as NotificationItem,
-  NotificationKind, Page, Person, PinnedPreview, PrefKind, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
+  LastSeenPrivacy, NotificationKind, Page, Person, PinnedPreview, PrefKind, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
 } from '../api';
 import { ApiError } from '../api';
 
@@ -30,6 +30,8 @@ type DbUser = {
   /** Персонаж витрины, который «всегда в сети»: иначе через пару минут
    *  после открытия витрины зелёная точка у него погасла бы. */
   alwaysOnline?: boolean;
+  /** Кому видно время захода — как колонка last_seen_privacy. */
+  lastSeenPrivacy?: LastSeenPrivacy;
 };
 
 type DbPost = {
@@ -135,6 +137,10 @@ let pins: DbPin[] = [];
 /** Папки чатов — у каждого свои, в порядке вкладок. */
 type DbFolder = ChatFolder & { userId: number };
 let folders: DbFolder[] = [];
+/** Сеансы — чтобы в настройках было что показать и что завершить. */
+type DbSession = { id: number; userId: number; createdAt: string; userAgent: string | null };
+let sessions: DbSession[] = [];
+let currentSession: number | null = null;
 /** «Печатает…»: ключ переписки|id человека → до какого момента. Как на
  *  сервере, живёт только в памяти и гаснет сам. */
 const typingUntil = new Map<string, number>();
@@ -268,6 +274,8 @@ function seed() {
   prefs = [];
   pins = [];
   folders = [];
+  sessions = [];
+  currentSession = null;
   channelComments = [];
   typingUntil.clear();
   nextId = 1;
@@ -515,7 +523,34 @@ function seed() {
   // Событие от приглушённого Олега в «Событиях» не появилось бы — убираем.
   notifications = notifications.filter((n) => !(n.kind === 'message' && n.actorId === oleg.id));
 
+  // «Избранное»: заметка себе и пересланная реплика Марины.
+  dm(demo, demo, 'Список на субботу: две плёнки Kodak Gold 200, фиксаж, забрать сканы с Литейной.', days(2));
+  const kept = dm(demo, demo, 'Второй там и был весь смысл. Они его специально спрятали за лестницей.', 85);
+  kept.fwdUserId = marina.id;
+
+  sessions.push(
+    { id: id(), userId: demo.id, createdAt: ago(days(20)), userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0' },
+    { id: id(), userId: demo.id, createdAt: ago(days(4)), userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1' },
+  );
+  openSession(demo.id);
+
   meId = demo.id;
+}
+
+function openSession(userId: number) {
+  const s: DbSession = {
+    id: id(), userId, createdAt: new Date().toISOString(),
+    userAgent: typeof navigator === 'undefined' ? null : navigator.userAgent,
+  };
+  sessions.push(s);
+  currentSession = s.id;
+}
+
+/** Все сеансы человека, кроме текущего. Возвращает, сколько закрыто. */
+function endOtherSessions(userId: number) {
+  const before = sessions.length;
+  sessions = sessions.filter((s) => s.userId !== userId || s.id === currentSession);
+  return before - sessions.length;
 }
 
 // Засев только в режиме витрины: в обычной сборке ветка мертва, и мок
@@ -538,12 +573,25 @@ const author = (u: DbUser): Author => ({
 const seenAt = (u: DbUser) =>
   u.alwaysOnline || u.id === meId ? new Date().toISOString() : u.lastSeenAt;
 
-/** Человек в переписке. Время визита скрыто для пары в блокировке — в обе
- *  стороны, как на сервере. */
-const person = (u: DbUser): Person => ({
-  ...author(u),
-  lastSeenAt: meId != null && u.id !== meId && blockedPair(meId, u.id) ? null : seenAt(u),
-});
+const RECENT_MS = 3 * 864e5;
+
+/** Показывает ли `owner` своё время человеку `otherId` — как shares() в presence.js. */
+const sharesSeen = (owner: DbUser, otherId: number) => {
+  const privacy = owner.lastSeenPrivacy ?? 'all';
+  if (privacy === 'nobody') return false;
+  if (privacy === 'follows') return follows.some((f) => f.followerId === owner.id && f.followeeId === otherId);
+  return true;
+};
+
+/** Человек в переписке. Время визита скрыто для пары в блокировке и
+ *  настройкой — взаимно, как на сервере; спрятанное — «был(а) недавно». */
+const person = (u: DbUser): Person => {
+  const seen = seenAt(u);
+  if (meId == null || u.id === meId) return { ...author(u), lastSeenAt: seen };
+  if (blockedPair(meId, u.id)) return { ...author(u), lastSeenAt: null, seenRecently: false };
+  if (sharesSeen(u, meId) && sharesSeen(byId(meId)!, u.id)) return { ...author(u), lastSeenAt: seen, seenRecently: false };
+  return { ...author(u), lastSeenAt: null, seenRecently: seen != null && Date.now() - Date.parse(seen) < RECENT_MS };
+};
 
 /**
  * Блокировка симметрична: достаточно одной стороны, чтобы двое перестали
@@ -789,6 +837,67 @@ function findHits<T extends { id: number; body: string; createdAt: string; attac
         author: a ? { id: a.id, displayName: a.displayName } : null,
       };
     });
+}
+
+/**
+ * Удаление аккаунта в витрине — то же, что каскад на сервере: всё его,
+ * общие группы переходят старейшему участнику, группа, где он был один, и
+ * его каналы исчезают вместе с тем, что на них ссылается.
+ */
+function dropUser(uid: number) {
+  const goneChats = new Set<number>();
+  for (const c of chats.filter((x) => chatMembers.some((m) => m.chatId === x.id && m.userId === uid))) {
+    const heir = chatMembers
+      .filter((m) => m.chatId === c.id && m.userId !== uid)
+      .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt))[0];
+    if (heir) {
+      if (c.ownerId === uid) c.ownerId = heir.userId;
+    } else {
+      goneChats.add(c.id);
+    }
+  }
+  const goneChannels = new Set(channels.filter((c) => c.ownerId === uid).map((c) => c.id));
+  const gonePosts = new Set(posts.filter((x) => x.authorId === uid).map((x) => x.id));
+  const goneChannelPosts = new Set(
+    channelPosts.filter((x) => goneChannels.has(x.channelId) || x.authorId === uid).map((x) => x.id),
+  );
+  const goneRef = (kind: PrefKind, target: number) =>
+    (kind === 'dm' && target === uid) || (kind === 'chat' && goneChats.has(target)) || (kind === 'channel' && goneChannels.has(target));
+
+  users = users.filter((x) => x.id !== uid);
+  posts = posts.filter((x) => !gonePosts.has(x.id));
+  comments = comments.filter((x) => x.authorId !== uid && !gonePosts.has(x.postId));
+  likes = likes.filter((x) => x.userId !== uid && !gonePosts.has(x.postId));
+  bookmarks = bookmarks.filter((x) => x.userId !== uid && !gonePosts.has(x.postId));
+  follows = follows.filter((x) => x.followerId !== uid && x.followeeId !== uid);
+  messages = messages.filter((x) => x.fromId !== uid && x.toId !== uid);
+  dmReactions = dmReactions.filter((x) => x.userId !== uid && messages.some((m) => m.id === x.messageId));
+  notifications = notifications.filter((x) => x.userId !== uid && x.actorId !== uid);
+  blocks = blocks.filter((x) => x.blockerId !== uid && x.blockedId !== uid);
+  reports = reports.filter((x) => x.reporterId !== uid);
+  chats = chats.filter((x) => !goneChats.has(x.id));
+  chatMembers = chatMembers.filter((x) => x.userId !== uid && !goneChats.has(x.chatId));
+  chatMessages = chatMessages.filter((x) => x.authorId !== uid && !goneChats.has(x.chatId));
+  chatReactions = chatReactions.filter((x) => x.userId !== uid && chatMessages.some((m) => m.id === x.messageId));
+  channels = channels.filter((x) => !goneChannels.has(x.id));
+  channelSubs = channelSubs.filter((x) => x.userId !== uid && !goneChannels.has(x.channelId));
+  channelPosts = channelPosts.filter((x) => !goneChannelPosts.has(x.id));
+  channelViews = channelViews.filter((x) => x.userId !== uid && !goneChannelPosts.has(x.postId));
+  postReactions = postReactions.filter((x) => x.userId !== uid && !goneChannelPosts.has(x.messageId));
+  channelComments = channelComments.filter((x) => x.authorId !== uid && !goneChannelPosts.has(x.postId));
+  prefs = prefs.filter((x) => x.userId !== uid && !goneRef(x.kind, x.targetId));
+  pins = pins.filter((x) =>
+    !(x.kind === 'dm' && x.scope.split('-').map(Number).includes(uid)) &&
+    !(x.kind === 'chat' && goneChats.has(Number(x.scope))) &&
+    !(x.kind === 'channel' && goneChannels.has(Number(x.scope))));
+  folders = folders
+    .filter((f) => f.userId !== uid)
+    .map((f) => ({
+      ...f,
+      include: f.include.filter((r) => !goneRef(r.kind, r.id)),
+      exclude: f.exclude.filter((r) => !goneRef(r.kind, r.id)),
+    }));
+  sessions = sessions.filter((x) => x.userId !== uid);
 }
 
 const toFolder = ({ userId: _owner, ...f }: DbFolder): ChatFolder => ({ ...f, types: [...f.types], include: [...f.include], exclude: [...f.exclude] });
@@ -1199,6 +1308,7 @@ export const mockApi = rejectInsteadOfThrow({
     };
     users.push(u);
     meId = u.id;
+    openSession(u.id);
     return tick({ user: publicUser(u) });
   },
 
@@ -1206,10 +1316,13 @@ export const mockApi = rejectInsteadOfThrow({
     const u = byName(input.username.trim());
     if (!u || u.password !== input.password) fail(401, 'Неверное имя пользователя или пароль');
     meId = u!.id;
+    openSession(u!.id);
     return tick({ user: publicUser(u!) });
   },
 
   logout: () => {
+    sessions = sessions.filter((s) => s.id !== currentSession);
+    currentSession = null;
     meId = null;
     return tick({ ok: true as const });
   },
@@ -1458,7 +1571,7 @@ export const mockApi = rejectInsteadOfThrow({
 
     const list: Conversation[] = others
       .map((otherId) => {
-        const thread = mine.filter((m) => m.fromId === otherId || m.toId === otherId);
+        const thread = mine.filter((m) => (m.fromId === u.id ? m.toId : m.fromId) === otherId);
         const last = thread.reduce((a, b) => (a.id > b.id ? a : b));
         return {
           user: person(byId(otherId)!),
@@ -1505,7 +1618,8 @@ export const mockApi = rejectInsteadOfThrow({
     const u = requireMe()!;
     const other = byName(username);
     if (!other) fail(404, 'Пользователь не найден');
-    if (other!.id === u.id) fail(400, 'Нельзя написать самому себе');
+    // Себе — это «Избранное»: сразу прочитано, без события.
+    const saved = other!.id === u.id;
     // Текст одинаков в обе стороны намеренно: по формулировке нельзя понять,
     // кто кого заблокировал.
     if (blockedPair(u.id, other!.id)) fail(403, 'Переписка с этим пользователем недоступна');
@@ -1521,12 +1635,12 @@ export const mockApi = rejectInsteadOfThrow({
 
     const m: DbMessage = {
       id: id(), fromId: u.id, toId: other!.id, body,
-      createdAt: new Date().toISOString(), readAt: null,
+      createdAt: new Date().toISOString(), readAt: saved ? new Date().toISOString() : null,
       replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, fwdChannelId: src?.fwdChannelId ?? null, attachment,
     };
     messages.push(m);
     clearTyping(dmKey(u.id, other!.id), u.id);
-    notify({ userId: other!.id, actorId: u.id, kind: 'message' });
+    if (!saved) notify({ userId: other!.id, actorId: u.id, kind: 'message' });
     if (other!.username === 'marina') marinaAnswers(u);
     return tick({ message: toMessage(m) });
   },
@@ -2334,6 +2448,62 @@ export const mockApi = rejectInsteadOfThrow({
     return tick({ ok: true as const });
   },
 
+  // ─ Аккаунт ─────────────────────────────────────────────────────────────
+
+  account: () => {
+    const u = requireMe()!;
+    return tick({ email: u.email as string | null, lastSeen: u.lastSeenPrivacy ?? 'all', createdAt: u.createdAt });
+  },
+
+  setLastSeen: (lastSeen: LastSeenPrivacy) => {
+    const u = requireMe()!;
+    if (!['all', 'follows', 'nobody'].includes(lastSeen)) fail(400, '«Кто видит время захода» — all, follows, nobody');
+    u.lastSeenPrivacy = lastSeen;
+    return tick({ lastSeen });
+  },
+
+  changePassword: (currentPassword: string, newPassword: string) => {
+    const u = requireMe()!;
+    if (newPassword.length < 8) fail(400, 'Пароль должен быть не короче 8 символов');
+    if (u.password !== currentPassword) fail(403, 'Пароль не подходит');
+    if (newPassword === currentPassword) fail(400, 'Новый пароль совпадает с текущим');
+    u.password = newPassword;
+    resets = resets.filter((r) => !(r.userId === u.id && !r.usedAt));
+    return tick({ ok: true as const, ended: endOtherSessions(u.id) });
+  },
+
+  sessions: () => {
+    const u = requireMe()!;
+    const list = sessions
+      .filter((s) => s.userId === u.id)
+      .map((s) => ({ id: s.id, current: s.id === currentSession, createdAt: s.createdAt, userAgent: s.userAgent }))
+      .sort((a, b) => Number(b.current) - Number(a.current) || b.createdAt.localeCompare(a.createdAt));
+    return tick({ sessions: list });
+  },
+
+  endSession: (sessionId: number) => {
+    const u = requireMe()!;
+    const s = sessions.find((x) => x.id === sessionId && x.userId === u.id);
+    if (!s) fail(404, 'Сеанс не найден');
+    if (s!.id === currentSession) fail(400, 'Это текущий сеанс — чтобы его закончить, нажмите «Выйти»');
+    sessions = sessions.filter((x) => x !== s);
+    return tick({ ok: true as const });
+  },
+
+  endOtherSessions: () => {
+    const u = requireMe()!;
+    return tick({ ok: true as const, ended: endOtherSessions(u.id) });
+  },
+
+  deleteAccount: (password: string) => {
+    const u = requireMe()!;
+    if (u.password !== password) fail(403, 'Пароль не подходит');
+    dropUser(u.id);
+    meId = null;
+    currentSession = null;
+    return tick({ ok: true as const });
+  },
+
   // ─ Папки чатов ────────────────────────────────────────────────────────
 
   folders: () => {
@@ -2380,7 +2550,7 @@ export const mockApi = rejectInsteadOfThrow({
     let targetId: number | null = null;
     if (kind === 'dm') {
       const other = byName(String(target));
-      targetId = other && other.id !== u.id ? other.id : null;
+      targetId = other?.id ?? null;
     } else if (kind === 'chat') {
       targetId = memberRow(Number(target), u.id) ? Number(target) : null;
     } else {

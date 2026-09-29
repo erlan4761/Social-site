@@ -20,7 +20,12 @@ export type Author = { id: number; username: string; displayName: string; avatar
 
 /** Человек в переписке: плюс время последнего визита для «в сети». `null` —
  *  не заходил после появления этой отметки или пара в блокировке. */
-export type Person = Author & { lastSeenAt: string | null };
+/**
+ * Собеседник с временем визита. `lastSeenAt` — null, если время скрыто
+ * блокировкой или настройкой; во втором случае `seenRecently` говорит,
+ * заходил ли человек за последние дни («был(а) недавно»).
+ */
+export type Person = Author & { lastSeenAt: string | null; seenRecently?: boolean };
 
 export type MediaKind = 'image' | 'video' | 'audio';
 
@@ -206,6 +211,14 @@ export type ChatFolder = {
 };
 
 export type FolderInput = Partial<Omit<ChatFolder, 'id'>>;
+
+/** Кому видно время захода: всем, тем, на кого я подписан, никому. */
+export type LastSeenPrivacy = 'all' | 'follows' | 'nobody';
+
+export type AccountSettings = { email: string | null; lastSeen: LastSeenPrivacy; createdAt: string };
+
+/** Открытый вход в аккаунт. Токена здесь нет и не будет — только номер. */
+export type Session = { id: number; current: boolean; createdAt: string; userAgent: string | null };
 
 export type Conversation = ChatPrefs & {
   user: Person;
@@ -625,6 +638,25 @@ const realApi = {
   // ─ Каналы ───────────────────────────────────────────────────────────────
 
   channels: () => request<{ channels: ChannelSummary[]; unreadTotal: number }>('/channels'),
+
+  // ─ Аккаунт ─────────────────────────────────────────────────────────────
+
+  account: () => request<AccountSettings>('/account'),
+
+  setLastSeen: (lastSeen: LastSeenPrivacy) =>
+    request<{ lastSeen: LastSeenPrivacy }>('/account/privacy', { method: 'PUT', body: body({ lastSeen }) }),
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ ok: true; ended: number }>('/account/password', { method: 'PUT', body: body({ currentPassword, newPassword }) }),
+
+  sessions: () => request<{ sessions: Session[] }>('/account/sessions'),
+
+  endSession: (id: number) => request<{ ok: true }>(`/account/sessions/${id}`, { method: 'DELETE' }),
+
+  endOtherSessions: () => request<{ ok: true; ended: number }>('/account/sessions', { method: 'DELETE' }),
+
+  deleteAccount: (password: string) =>
+    request<{ ok: true }>('/account', { method: 'DELETE', body: body({ password }) }),
 
   folders: () => request<{ folders: ChatFolder[] }>('/folders'),
 
