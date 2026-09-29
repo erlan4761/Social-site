@@ -3276,5 +3276,82 @@ await drc('/account', { method: 'DELETE', body: JSON.stringify({ password: 'paro
 check('удалённый аккаунт уносит и свои черновики, и чужие ему', draftCount('dm', drcId) === 0
   && legacyDb.prepare('SELECT COUNT(*) AS c FROM drafts WHERE user_id = ?').get(drcId).c === 0, '');
 
+console.log('\n— ссылки-приглашения в группу —');
+const ia = makeClient();
+const ib = makeClient();
+const ic = makeClient();
+const idd = makeClient();
+const userIa = `inva_${stamp}`;
+const userIb = `invb_${stamp}`;
+const userIc = `invc_${stamp}`;
+const userId_ = `invd_${stamp}`;
+await legacySignUp(ia, userIa, 'Хозяйка');
+await legacySignUp(ib, userIb, 'Участник');
+await legacySignUp(ic, userIc, 'Новенький');
+await legacySignUp(idd, userId_, 'Недруг');
+r = await ia('/chats', { method: 'POST', body: JSON.stringify({ title: 'По ссылке', members: [userIb] }) });
+const invChat = r.body.chat;
+check('у новой группы ссылки нет', invChat?.invite === null, JSON.stringify(invChat));
+await ia(`/chats/${invChat.id}/messages`, { method: 'POST', body: JSON.stringify({ body: 'Старое сообщение' }) });
+await ib(`/chats/${invChat.id}/messages`, { method: 'POST', body: JSON.stringify({ body: 'И ещё одно' }) });
+
+r = await ib(`/chats/${invChat.id}/invite`, { method: 'POST' });
+check('ссылку создаёт только владелец — 403', r.status === 403, `${r.status}`);
+r = await ic(`/chats/${invChat.id}/invite`, { method: 'POST' });
+check('не участник — 404', r.status === 404, `${r.status}`);
+r = await ia(`/chats/${invChat.id}/invite`, { method: 'POST' });
+const token1 = r.body.invite;
+check('владелец создал ссылку — случайный код', r.status === 200 && /^[A-Za-z0-9_-]{22}$/.test(token1 ?? ''), JSON.stringify(r.body));
+r = await ib(`/chats/${invChat.id}`);
+check('ссылку видит любой участник', r.body.chat?.invite === token1, JSON.stringify(r.body.chat?.invite));
+
+r = await guest(`/chats/join/${token1}`);
+check('приглашение — гостю 401', r.status === 401, `${r.status}`);
+r = await ic('/chats/join/nesushchestvuyushchiy_kod_123');
+check('выдуманный код — 404', r.status === 404, `${r.status}`);
+r = await ic('/chats/join/a');
+check('короткий код — 404', r.status === 404, `${r.status}`);
+r = await ic(`/chats/join/${token1}`);
+check('по ссылке видно название и состав, но не переписку', r.status === 200 && r.body.chat?.title === 'По ссылке' && r.body.chat.memberCount === 2
+  && r.body.chat.members.length === 2 && r.body.member === false && !('messages' in r.body.chat), JSON.stringify(r.body));
+r = await ic(`/chats/${invChat.id}/messages`);
+check('до вступления переписка закрыта', r.status === 404, `${r.status}`);
+
+const iaLive = await listen(ia);
+await iaLive.waitFor((e) => e.t === 'ready');
+r = await ic(`/chats/join/${token1}`, { method: 'POST' });
+check('вступил по ссылке — 201 и чат', r.status === 201 && r.body.chat?.id === invChat.id && r.body.chat.memberCount === 3, `${r.status} ${JSON.stringify(r.body)}`);
+check('участники узнают о новичке живым потоком', Boolean(await iaLive.waitFor((e) => e.t === 'chat' && e.id === invChat.id)), JSON.stringify(iaLive.events));
+iaLive.stop();
+r = await ic('/chats');
+const icRow = r.body.chats?.find((c) => c.id === invChat.id);
+check('чат в списке, старое не падает непрочитанным', icRow && icRow.unread === 0, JSON.stringify(icRow?.unread));
+r = await ic(`/chats/${invChat.id}/messages`);
+check('история видна после вступления', r.status === 200 && r.body.messages?.length === 2, `${r.status}`);
+r = await ic(`/chats/join/${token1}`, { method: 'POST' });
+check('повторный щелчок — 200, без второй строки', r.status === 200 && r.body.chat?.memberCount === 3, `${r.status}`);
+r = await ic(`/chats/join/${token1}`);
+check('в приглашении видно, что уже участник', r.body.member === true, JSON.stringify(r.body.member));
+await ib(`/chats/${invChat.id}/messages`, { method: 'POST', body: JSON.stringify({ body: 'Добро пожаловать' }) });
+r = await ic('/chats');
+check('новое после вступления — непрочитанное', r.body.chats?.find((c) => c.id === invChat.id)?.unread === 1, '');
+
+r = await ia(`/chats/${invChat.id}/invite`, { method: 'POST' });
+const token2 = r.body.invite;
+check('сменить ссылку — новый код', token2 && token2 !== token1, '');
+r = await idd(`/chats/join/${token1}`);
+check('старая ссылка после смены — 404', r.status === 404, `${r.status}`);
+await idd(`/users/${userIa}/block`, { method: 'PUT' });
+r = await idd(`/chats/join/${token2}`, { method: 'POST' });
+check('в блокировке с владельцем — не вступить', r.status === 403, `${r.status}`);
+await idd(`/users/${userIa}/block`, { method: 'DELETE' });
+
+r = await ib(`/chats/${invChat.id}/invite`, { method: 'DELETE' });
+check('отключить ссылку может только владелец', r.status === 403, `${r.status}`);
+r = await ia(`/chats/${invChat.id}/invite`, { method: 'DELETE' });
+check('ссылка отключена', r.status === 200 && r.body.invite === null && (await ia(`/chats/${invChat.id}`)).body.chat.invite === null, `${r.status}`);
+r = await idd(`/chats/join/${token2}`, { method: 'POST' });
+check('по отключённой ссылке не вступить', r.status === 404, `${r.status}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
