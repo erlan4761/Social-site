@@ -60,6 +60,14 @@ export function seed() {
   const oleg = make('oleg_k', 'Олег Кузьмин', 'Чиню станки старше себя.', gradient('#ad5f34', '#488048', 256, 256));
   const nina = make('nina', 'Нина Барто', 'Поля, плёнка, проявка на кухне.', null);
 
+  // Номера для поиска по телефону: Марину находят все, а номер её видят
+  // только те, на кого она подписана; Олега по номеру находят его подписки.
+  marina.phone = '+996555000002';
+  marina.phoneFind = 'all';
+  marina.phoneShow = 'follows';
+  oleg.phone = '+996555000003';
+  oleg.phoneFind = 'follows';
+
   // Три разных «в сети», чтобы в витрине было видно все подписи сразу.
   marina.alwaysOnline = true;
   oleg.lastSeenAt = ago(25);

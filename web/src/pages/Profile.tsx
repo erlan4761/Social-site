@@ -8,6 +8,7 @@ import { PostRow } from '../components/PostRow';
 import { ReportDialog } from '../components/ReportDialog';
 import { useSession } from '../session';
 import { joinedOn, monthLabel, plural, yearOf } from '../time';
+import { formatPhone } from '../phone';
 import { usePostStream } from '../usePostStream';
 
 const YEAR_ONLY = /^\d{4}$/;
@@ -189,6 +190,11 @@ export function Profile() {
             <>
               <h1 className="profile-name">{profile.displayName}</h1>
               <p className="profile-handle">@{profile.username}</p>
+              {profile.phone && (
+                <p className="profile-phone">
+                  <a href={`tel:${profile.phone}`}>{formatPhone(profile.phone)}</a>
+                </p>
+              )}
               {profile.bio && <p className="profile-bio">{profile.bio}</p>}
               <p className="profile-meta">
                 <span>

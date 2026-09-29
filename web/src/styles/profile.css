@@ -34,6 +34,14 @@
   margin: 0.125rem 0 var(--s-3);
 }
 
+/* Номер — под логином, тем же тихим цветом: это контакт, а не заголовок. */
+.profile-phone {
+  margin: calc(-1 * var(--s-2)) 0 var(--s-3);
+  font-size: var(--t-meta);
+}
+.profile-phone a { color: var(--ink-2); text-decoration: none; }
+.profile-phone a:hover { text-decoration: underline; }
+
 .profile-bio {
   font-family: var(--read);
   font-size: var(--t-read);

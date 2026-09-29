@@ -109,6 +109,14 @@ app.use('/api/reports', rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000
 // Один счётчик на блокировку и разблокировку: осмысленных сценариев, где
 // человек щёлкает этой парой чаще тридцати раз в час, нет, а перебор имён
 // через ответы 404/400 такой лимит закрывает.
+// Поиск по номерам считает номера, а не запросы: пятьдесят номеров за раз —
+// это пятьдесят попыток угадать, чей это телефон.
+app.post('/api/users/by-phone', rateLimit({
+  windowMs: 60 * 60_000,
+  max: relaxed ? 10_000 : 200,
+  cost: (req) => (Array.isArray(req.body?.phones) ? Math.max(1, req.body.phones.length) : 1),
+}));
+
 const blockLimit = rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 30 });
 app.put('/api/users/:username/block', blockLimit);
 app.delete('/api/users/:username/block', blockLimit);

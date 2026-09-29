@@ -23,6 +23,9 @@ export type DbUser = {
   alwaysOnline?: boolean;
   /** Кому видно время захода — как колонка last_seen_privacy. */
   lastSeenPrivacy?: LastSeenPrivacy;
+  /** Кто найдёт по номеру и кому он виден — phone_find / phone_show; нет — «никто». */
+  phoneFind?: LastSeenPrivacy;
+  phoneShow?: LastSeenPrivacy;
 };
 
 export type DbPost = {

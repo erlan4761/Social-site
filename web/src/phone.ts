@@ -30,6 +30,8 @@ export function toE164(dial: string, typed: string) {
   const digits = raw.replace(/\D/g, '');
   if (raw.startsWith('+')) return `+${digits}`;
   if (raw.startsWith('00')) return `+${digits.slice(2)}`;
+  // «8 916 …» — так номер пишут в России и Казахстане: восьмёрка вместо +7.
+  if (dial === '+7' && digits.length === 11 && digits.startsWith('8')) return `+7${digits.slice(1)}`;
   // «0555…» — местный формат: ведущий ноль вместо кода страны.
   return `${dial}${digits.replace(/^0+/, '')}`;
 }
@@ -43,4 +45,17 @@ export function formatPhone(e164: string) {
   const cc = country ?? d.slice(0, Math.min(3, d.length - 7));
   const rest = d.slice(cc.length).match(/.{1,3}/g) ?? [];
   return `+${cc} ${rest.join(' ')}`.trim();
+}
+
+/** Код страны номера — из списка, самый длинный подходящий; нет номера — первый в списке. */
+export function dialOf(e164: string | null | undefined) {
+  if (!e164) return COUNTRIES[0].dial;
+  const found = COUNTRIES.map((c) => c.dial).sort((a, b) => b.length - a.length).find((d) => e164.startsWith(d));
+  return found ?? COUNTRIES[0].dial;
+}
+
+/** Похоже ли набранное в поиске на номер: с «+», не меньше восьми цифр, без букв. */
+export function looksLikePhone(q: string) {
+  const s = q.trim();
+  return /^\+[\d\s().-]+$/.test(s) && s.replace(/\D/g, '').length >= 8;
 }

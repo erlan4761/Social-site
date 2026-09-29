@@ -436,6 +436,10 @@ db.exec(`
 ensureColumn('users', 'phone', 'TEXT');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone)');
 ensureColumn('users', 'password_login', 'INTEGER NOT NULL DEFAULT 1');
+// Кто найдёт по номеру и кому номер виден (см. phoneBook.js). По умолчанию —
+// никому: находиться по номеру человек соглашается сам.
+ensureColumn('users', 'phone_find', "TEXT NOT NULL DEFAULT 'nobody'");
+ensureColumn('users', 'phone_show', "TEXT NOT NULL DEFAULT 'nobody'");
 db.exec(`
   CREATE TABLE IF NOT EXISTS phone_codes (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
