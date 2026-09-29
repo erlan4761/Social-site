@@ -8,6 +8,7 @@ import {
   dropAttachment, emojiOf, reactionsFor, readAttachment, searchQuery, searchResult, searchRows,
 } from '../messageExtras.js';
 import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
+import { clearDraft, draftsOf, dropDrafts } from '../drafts.js';
 import { createPoll, hasPoll, readPoll, withPolls } from '../polls.js';
 import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import * as v from '../validate.js';
@@ -151,6 +152,7 @@ router.get('/', (req, res) => {
   `).all(me);
 
   const prefs = prefsOf(me, 'channel');
+  const drafts = draftsOf(me, 'channel');
   const channels = rows.map((c) => {
     const pref = prefFor(prefs, c.id);
     const last = db.prepare(`${POST_SELECT} WHERE m.channel_id = :channelId ORDER BY m.id DESC LIMIT 1`)
@@ -162,6 +164,7 @@ router.get('/', (req, res) => {
       lastPost: last ? onePost(last, me) : null,
       pinnedAt: pref.pinnedAt,
       muted: pref.muted,
+      draft: drafts.get(c.id) ?? null,
     };
   });
   channels.sort((a, b) =>
@@ -249,6 +252,7 @@ router.delete('/:handle', (req, res) => {
   unpin('channel', channel.id);
   files.forEach(dropAttachment);
   dropPrefs({ kind: 'channel', targetId: channel.id });
+  dropDrafts('channel', channel.id);
   res.json({ ok: true });
 });
 
@@ -373,6 +377,7 @@ router.post('/:handle/posts', attachmentUpload.single('file'), async (req, res, 
 
     const id = Number(info.lastInsertRowid);
     if (poll) createPoll('channel', id, poll);
+    else clearDraft(req.user.id, 'channel', channel.id);
     // Автор свою публикацию видел — она не «непрочитанная» для него самого.
     db.prepare('UPDATE channel_subscribers SET last_read_id = ? WHERE channel_id = ? AND user_id = ?')
       .run(id, channel.id, req.user.id);

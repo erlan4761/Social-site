@@ -4,6 +4,7 @@ import { hashPassword, requireAuth, SESSION_COOKIE, verifyPassword } from '../au
 import { dropAttachment } from '../messageExtras.js';
 import { deleteUpload } from '../media.js';
 import { dropPrefs } from '../prefs.js';
+import { dropDrafts } from '../drafts.js';
 import { unpin } from '../pins.js';
 import { LAST_SEEN_OPTIONS } from '../presence.js';
 import { checkCode, hasPassword, normalizePhone, sendCode } from '../phone.js';
@@ -242,11 +243,13 @@ function deleteAccount(me) {
       db.prepare('DELETE FROM chats WHERE id = ?').run(chat.id);
       unpin('chat', chat.id);
       dropPrefs({ kind: 'chat', targetId: chat.id });
+      dropDrafts('chat', chat.id);
     }
 
     for (const { id } of db.prepare('SELECT id FROM channels WHERE owner_id = ?').all(me)) {
       unpin('channel', id);
       dropPrefs({ kind: 'channel', targetId: id });
+      dropDrafts('channel', id);
     }
 
     // Закреплённые его реплики в группах, которые остаются: сами реплики уйдут каскадом.
@@ -258,6 +261,8 @@ function deleteAccount(me) {
     db.prepare(`DELETE FROM pinned_messages WHERE kind = 'dm' AND (scope_id LIKE ? OR scope_id LIKE ?)`)
       .run(`${me}-%`, `%-${me}`);
     dropPrefs({ kind: 'dm', targetId: me });
+    // Чужие черновики ему; свои уйдут каскадом вместе со строкой users.
+    dropDrafts('dm', me);
 
     db.prepare('DELETE FROM users WHERE id = ?').run(me);
     db.exec('COMMIT');

@@ -3169,5 +3169,112 @@ await fb(`/users/${userFa}/block`, { method: 'DELETE' });
 r = await byPhone(fa, [phoneFb]);
 check('после разблокировки — снова находит', found(r).join() === userFb, JSON.stringify(r.body));
 
+console.log('\n— черновики —');
+const dra = makeClient();
+const drb = makeClient();
+const drc = makeClient();
+const userDra = `drafta_${stamp}`;
+const userDrb = `draftb_${stamp}`;
+const userDrc = `draftc_${stamp}`;
+await legacySignUp(dra, userDra, 'Пишущая');
+await legacySignUp(drb, userDrb, 'Читающий');
+await legacySignUp(drc, userDrc, 'Третий');
+const getDraft = (client, kind, target) => client(`/drafts/${kind}/${target}`);
+const putDraft = (client, kind, target, body) =>
+  client(`/drafts/${kind}/${target}`, { method: 'PUT', body: JSON.stringify({ body }) });
+const draftCount = (kind, targetId) => legacyDb.prepare('SELECT COUNT(*) AS c FROM drafts WHERE kind = ? AND target_id = ?').get(kind, targetId).c;
+
+r = await getDraft(guest, 'dm', userDrb);
+check('черновик — гостю 401', r.status === 401, `${r.status}`);
+r = await getDraft(dra, 'dm', userDrb);
+check('черновика нет — null', r.status === 200 && r.body.draft === null, JSON.stringify(r.body));
+r = await getDraft(dra, 'dm', `net_takogo_${stamp}`);
+check('черновик несуществующему — 404', r.status === 404, `${r.status}`);
+r = await getDraft(dra, 'group', '1');
+check('неизвестный вид — 404', r.status === 404, `${r.status}`);
+
+await dmSend(dra, userDrb, { body: 'Начнём' });
+r = await putDraft(dra, 'dm', userDrb, 'Привет, как ');
+check('черновик сохранён как есть — с пробелом в конце', r.status === 200 && r.body.draft?.body === 'Привет, как ' && typeof r.body.draft.updatedAt === 'string', JSON.stringify(r.body));
+r = await getDraft(dra, 'dm', userDrb.toUpperCase());
+check('читается обратно (логин в любом регистре)', r.body.draft?.body === 'Привет, как ', JSON.stringify(r.body));
+r = await putDraft(dra, 'dm', userDrb, 'я'.repeat(1001));
+check('длиннее сообщения — 400', r.status === 400, `${r.status}`);
+r = await dra('/messages');
+const drRow = r.body.conversations?.find((c) => c.user.username === userDrb);
+check('в списке диалогов — черновик', drRow?.draft?.body === 'Привет, как ', JSON.stringify(drRow?.draft));
+r = await drb('/messages');
+check('собеседник чужого черновика не видит', r.body.conversations?.find((c) => c.user.username === userDra)?.draft === null, JSON.stringify(r.body.conversations?.map((c) => c.draft)));
+
+// Другое устройство того же человека узнаёт о черновике живым потоком.
+const dra2 = makeClient();
+await dra2('/auth/login', { method: 'POST', body: JSON.stringify({ username: userDra, password: 'parol12345' }) });
+const dra2Live = await listen(dra2);
+await dra2Live.waitFor((e) => e.t === 'ready');
+await putDraft(dra, 'dm', userDrb, 'Привет, как дела?');
+check('другое устройство получает толчок обновить список', Boolean(await dra2Live.waitFor((e) => e.t === 'list')), JSON.stringify(dra2Live.events));
+dra2Live.stop();
+r = await getDraft(dra2, 'dm', userDrb);
+check('и видит тот же черновик', r.body.draft?.body === 'Привет, как дела?', JSON.stringify(r.body));
+
+r = await dmSend(dra, userDrb, { sticker: 'plenka/hi' });
+r = await getDraft(dra, 'dm', userDrb);
+check('стикер черновик не трогает', r.body.draft?.body === 'Привет, как дела?', JSON.stringify(r.body));
+await dmSend(dra, userDrb, { body: 'Привет, как дела?' });
+r = await getDraft(dra, 'dm', userDrb);
+check('отправленный текст — больше не черновик', r.body.draft === null, JSON.stringify(r.body));
+await putDraft(dra, 'dm', userDrb, 'ещё');
+r = await putDraft(dra, 'dm', userDrb, '  \n ');
+check('пустой черновик — удалён', r.status === 200 && r.body.draft === null && (await getDraft(dra, 'dm', userDrb)).body.draft === null, JSON.stringify(r.body));
+r = await putDraft(dra, 'dm', userDra, 'заметка себе');
+check('черновик в «Избранном»', r.status === 200 && r.body.draft?.body === 'заметка себе', `${r.status}`);
+
+// Группа: черновик только у участника.
+r = await dra('/chats', { method: 'POST', body: JSON.stringify({ title: 'Черновики', members: [userDrb] }) });
+const drChat = r.body.chat.id;
+r = await putDraft(drc, 'chat', drChat, 'подсмотрю');
+check('в чужой группе черновика нет — 404', r.status === 404, `${r.status}`);
+r = await putDraft(dra, 'chat', 'abc', 'x');
+check('кривой id группы — 404', r.status === 404, `${r.status}`);
+await putDraft(dra, 'chat', drChat, 'В группу');
+await putDraft(drb, 'chat', drChat, 'Мой ответ');
+r = await dra('/chats');
+check('в списке групп — свой черновик', r.body.chats?.find((c) => c.id === drChat)?.draft?.body === 'В группу', JSON.stringify(r.body.chats?.map((c) => c.draft)));
+await dra(`/chats/${drChat}/messages`, { method: 'POST', body: JSON.stringify({ body: 'В группу' }) });
+check('сообщение в группу снимает только свой черновик', (await getDraft(dra, 'chat', drChat)).body.draft === null
+  && (await getDraft(drb, 'chat', drChat)).body.draft?.body === 'Мой ответ', '');
+await dra(`/chats/${drChat}/members/${userDrb}`, { method: 'DELETE' });
+r = await getDraft(drb, 'chat', drChat);
+check('исключённый из группы теряет и черновик', r.status === 404 && draftCount('chat', drChat) === 0, `${r.status} ${draftCount('chat', drChat)}`);
+await putDraft(dra, 'chat', drChat, 'последнее слово');
+await dra(`/chats/${drChat}`, { method: 'DELETE' });
+check('удалённая группа уносит черновики', draftCount('chat', drChat) === 0, `${draftCount('chat', drChat)}`);
+
+// Канал: черновик — только у владельца.
+const drHandle = `drafts_${stamp}`;
+r = await dra('/channels', { method: 'POST', body: JSON.stringify({ title: 'Черновой канал', handle: drHandle }) });
+const drChannelId = r.body.channel.id;
+await drb(`/channels/${drHandle}/subscribe`, { method: 'PUT' });
+r = await putDraft(drb, 'channel', drHandle, 'не мой канал');
+check('в чужом канале черновика нет — 404', r.status === 404, `${r.status}`);
+r = await putDraft(dra, 'channel', `@${drHandle.toUpperCase()}`, 'Длинная публикация '.repeat(100));
+check('черновик публикации — до 4000 знаков', r.status === 200 && r.body.draft?.body.length === 1900, `${r.status}`);
+r = await dra('/channels');
+check('в списке каналов — черновик', r.body.channels?.find((c) => c.handle === drHandle)?.draft?.body.startsWith('Длинная'), '');
+await dra(`/channels/${drHandle}/posts`, { method: 'POST', body: JSON.stringify({ body: 'Опубликовано' }) });
+check('публикация снимает черновик', (await getDraft(dra, 'channel', drHandle)).body.draft === null, '');
+await putDraft(dra, 'channel', drHandle, 'не успею');
+await dra(`/channels/${drHandle}`, { method: 'DELETE' });
+check('удалённый канал уносит черновик', draftCount('channel', drChannelId) === 0, `${draftCount('channel', drChannelId)}`);
+
+// Удаление аккаунта: его черновики — каскадом, чужие ему — руками.
+const drcId = (await drc('/auth/me')).body.user.id;
+await dmSend(dra, userDrc, { body: 'Привет' });
+await putDraft(dra, 'dm', userDrc, 'Не успела дописать');
+await putDraft(drc, 'dm', userDra, 'И я');
+await drc('/account', { method: 'DELETE', body: JSON.stringify({ password: 'parol12345' }) });
+check('удалённый аккаунт уносит и свои черновики, и чужие ему', draftCount('dm', drcId) === 0
+  && legacyDb.prepare('SELECT COUNT(*) AS c FROM drafts WHERE user_id = ?').get(drcId).c === 0, '');
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

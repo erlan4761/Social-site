@@ -29,6 +29,7 @@ import { router as pushRoutes } from './routes/push.js';
 import { router as phoneRoutes } from './routes/phone.js';
 import { startScheduler } from './scheduled.js';
 import { dropDeadStreams, nudge, openStream } from './live.js';
+import { router as draftRoutes } from './routes/drafts.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -131,7 +132,7 @@ app.post('/api/channels/*splat', rateLimit({ windowMs: 60_000, max: relaxed ? 10
 // три секунды, прочтение — на каждое новое сообщение, — но скрипт, который
 // правит или реагирует без остановки, в него упрётся.
 const conversationLimit = rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 120 });
-for (const path of ['/api/messages/*splat', '/api/chats/*splat', '/api/channels/*splat', '/api/prefs/*splat', '/api/folders/*splat', '/api/account/*splat', '/api/polls/*splat', '/api/scheduled/*splat', '/api/push/*splat']) {
+for (const path of ['/api/messages/*splat', '/api/chats/*splat', '/api/channels/*splat', '/api/prefs/*splat', '/api/folders/*splat', '/api/account/*splat', '/api/polls/*splat', '/api/scheduled/*splat', '/api/push/*splat', '/api/drafts/*splat']) {
   app.put(path, conversationLimit);
   app.patch(path, conversationLimit);
   app.delete(path, conversationLimit);
@@ -146,7 +147,8 @@ app.use('/api/messages', nudge('dm'));
 app.use('/api/chats', nudge('chat'));
 app.use('/api/channels', nudge('channel'));
 app.use('/api/polls', nudge('poll'));
-for (const path of ['/api/prefs', '/api/folders', '/api/notifications']) app.use(path, nudge('self'));
+// Черновик тоже: другие устройства обновят список и покажут «Черновик: …».
+for (const path of ['/api/prefs', '/api/folders', '/api/notifications', '/api/drafts']) app.use(path, nudge('self'));
 // Сеанс закрыт — его поток тоже: выход, смена пароля, «завершить сеанс», удаление.
 for (const path of ['/api/auth/logout', '/api/auth/reset-password', '/api/account']) {
   app.use(path, (req, res, next) => {
@@ -175,6 +177,7 @@ app.use('/api/account', accountRoutes);
 app.use('/api/polls', pollRoutes);
 app.use('/api/scheduled', scheduledRoutes);
 app.use('/api/push', pushRoutes);
+app.use('/api/drafts', draftRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Нет такого эндпоинта' }));
 

@@ -440,6 +440,18 @@ ensureColumn('users', 'password_login', 'INTEGER NOT NULL DEFAULT 1');
 // никому: находиться по номеру человек соглашается сам.
 ensureColumn('users', 'phone_find', "TEXT NOT NULL DEFAULT 'nobody'");
 ensureColumn('users', 'phone_show', "TEXT NOT NULL DEFAULT 'nobody'");
+
+// Черновики (см. drafts.js): по одному на человека и чат.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS drafts (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL CHECK (kind IN ('dm', 'chat', 'channel')),
+    target_id  INTEGER NOT NULL,
+    body       TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, kind, target_id)
+  );
+`);
 db.exec(`
   CREATE TABLE IF NOT EXISTS phone_codes (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
