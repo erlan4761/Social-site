@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet, useMatch, useNavigate } from 'react-router-dom';
 import {
-  api, ApiError, type Author, type Channel, type ChannelSummary, type ChatSummary, type Conversation,
+  api, ApiError, type Author, type Channel, type ChannelSummary, type ChatFolder, type ChatSummary, type Conversation,
 } from '../api';
 import { PresenceAvatar, Ticks, previewText } from '../components/Chat';
 import { Icon } from '../components/Icon';
 import { Monogram } from '../components/Monogram';
+import { FoldersDialog } from '../components/FoldersDialog';
 import { NewChannelDialog } from '../components/NewChannelDialog';
+import { folderUnread, inFolder, readActiveFolder, toggleInFolder, writeActiveFolder, type FolderRow } from '../folders';
 import { NewChatDialog } from '../components/NewChatDialog';
 import { useSession } from '../session';
 import { isOnline, listTime, plural } from '../time';
@@ -86,6 +88,20 @@ export function Messenger() {
   const [foundChannels, setFoundChannels] = useState<Channel[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
   const [rowMenu, setRowMenu] = useState<{ row: Row; x: number; y: number } | null>(null);
+  const [folders, setFolders] = useState<ChatFolder[]>([]);
+  const [activeFolder, setActiveFolder] = useState<number | null>(() => readActiveFolder());
+  const [foldersOpen, setFoldersOpen] = useState<{ editId: number | null } | null>(null);
+
+  useEffect(() => {
+    api.folders().then((res) => setFolders(res.folders)).catch(() => undefined);
+  }, []);
+
+  // Удалили открытую папку — назад во «Все».
+  const current = activeFolder != null ? folders.find((f) => f.id === activeFolder) ?? null : null;
+  function chooseFolder(id: number | null) {
+    setActiveFolder(id);
+    writeActiveFolder(id);
+  }
   const press = useRef<number | null>(null);
 
   const load = useCallback(() => {
@@ -142,7 +158,21 @@ export function Messenger() {
   }, [menuOpen]);
 
   const q = fold(query.trim());
-  const shown = useMemo(() => (items && q ? items.filter((r) => matches(r, q)) : items), [items, q]);
+  const shown = useMemo(() => {
+    if (!items) return items;
+    if (q) return items.filter((r) => matches(r, q));
+    return current ? items.filter((r) => inFolder(current, folderRow(r))) : items;
+  }, [items, q, current]);
+
+  async function toggleFolder(folder: ChatFolder, row: Row, on: boolean) {
+    setRowMenu(null);
+    try {
+      const res = await api.updateFolder(folder.id, toggleInFolder(folder, folderRow(row), on));
+      setFolders((prev) => prev.map((f) => (f.id === folder.id ? res.folder : f)));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не получилось');
+    }
+  }
 
   // Глобальный поиск — как в Телеграме: набрал имя, и среди результатов есть
   // люди, с кем переписки ещё не было, и каналы, на которые ещё не подписан.
@@ -246,6 +276,18 @@ export function Messenger() {
                       <Icon name="megaphone" size={18} />
                       Новый канал
                     </button>
+                    <button
+                      className="msg-menu-item"
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setFoldersOpen({ editId: null });
+                      }}
+                    >
+                      <Icon name="folder" size={18} />
+                      Папки чатов
+                    </button>
                   </div>
                 </div>
               )}
@@ -266,6 +308,31 @@ export function Messenger() {
             />
           </label>
 
+          {folders.length > 0 && !q && (
+            <div className="folder-tabs" role="tablist" aria-label="Папки чатов">
+              <FolderTab label="Все" active={current == null} unread={0} onClick={() => chooseFolder(null)} />
+              {folders.map((f) => (
+                <FolderTab
+                  key={f.id}
+                  label={f.title}
+                  active={current?.id === f.id}
+                  unread={items ? folderUnread(f, items.map(folderRow)) : 0}
+                  onClick={() => chooseFolder(f.id)}
+                  onEdit={() => setFoldersOpen({ editId: f.id })}
+                />
+              ))}
+              <button
+                className="icon-btn folder-tabs-edit"
+                type="button"
+                aria-label="Настроить папки"
+                title="Настроить папки"
+                onClick={() => setFoldersOpen({ editId: null })}
+              >
+                <Icon name="edit" size={16} />
+              </button>
+            </div>
+          )}
+
           <div className="list-scroll">
             {error && <p className="error list-error">{error}</p>}
 
@@ -278,6 +345,12 @@ export function Messenger() {
               </p>
             ) : (
               <>
+                {current && !q && shown.length === 0 && (
+                  <p className="list-note">
+                    <strong>В папке «{current.title}» пусто.</strong>
+                    Добавьте чаты через меню чата — правый клик или долгое нажатие по строке во «Все».
+                  </p>
+                )}
                 {q && shown.length === 0 && strangers.length === 0 && newChannels.length === 0 && (
                   <p className="list-note">Ничего не нашлось.</p>
                 )}
@@ -374,6 +447,29 @@ export function Messenger() {
           onClose={() => setRowMenu(null)}
           onPin={(pinned) => void applyPref(rowMenu.row, { pinned })}
           onMute={(muted) => void applyPref(rowMenu.row, { muted })}
+          folders={folders.map((f) => ({ folder: f, inside: inFolder(f, folderRow(rowMenu.row)) }))}
+          onFolder={(folder, on) => void toggleFolder(folder, rowMenu.row, on)}
+        />
+      )}
+
+      {foldersOpen && items && (
+        <FoldersDialog
+          folders={folders}
+          editId={foldersOpen.editId}
+          chats={items.map((r) => ({
+            ...folderRow(r),
+            name: r.name,
+            avatar:
+              r.kind === 'dm' ? (
+                <Monogram username={r.item.user.username} displayName={r.item.user.displayName} avatarUrl={r.item.user.avatarUrl} size="sm" />
+              ) : r.kind === 'chat' ? (
+                <Monogram username={r.name} displayName={r.name} size="sm" />
+              ) : (
+                <ChannelAvatar title={r.name} size="sm" />
+              ),
+          }))}
+          onChange={setFolders}
+          onClose={() => setFoldersOpen(null)}
         />
       )}
 
@@ -538,16 +634,66 @@ function RowTail({ unread, muted, pinned }: { unread: number; muted: boolean; pi
   );
 }
 
+/** Строка списка глазами папки: вид, id, непрочитанное, приглушён ли. */
+function folderRow(row: Row): FolderRow {
+  return {
+    kind: row.kind,
+    id: row.kind === 'dm' ? row.item.user.id : row.item.id,
+    unread: row.item.unread,
+    muted: row.item.muted,
+  };
+}
+
+/** Вкладка папки. Правый клик — сразу правка этой папки. */
+function FolderTab({
+  label,
+  active,
+  unread,
+  onClick,
+  onEdit,
+}: {
+  label: string;
+  active: boolean;
+  unread: number;
+  onClick: () => void;
+  onEdit?: () => void;
+}) {
+  return (
+    <button
+      className={active ? 'folder-tab on' : 'folder-tab'}
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      onContextMenu={(e) => {
+        if (!onEdit) return;
+        e.preventDefault();
+        onEdit();
+      }}
+    >
+      {label}
+      {unread > 0 && (
+        <span className="folder-badge">
+          {unread}
+          <span className="sr-only"> непрочитанных</span>
+        </span>
+      )}
+    </button>
+  );
+}
+
 type RowMenuProps = {
   state: { row: Row; x: number; y: number };
   onClose: () => void;
   onPin: (pinned: boolean) => void;
   onMute: (muted: boolean) => void;
+  folders: { folder: ChatFolder; inside: boolean }[];
+  onFolder: (folder: ChatFolder, on: boolean) => void;
 };
 
 /** Меню строки списка: закрепить и выключить уведомления. Встаёт там, где
  *  щёлкнули, и отодвигается от краёв окна, как меню сообщения. */
-function RowMenu({ state, onClose, onPin, onMute }: RowMenuProps) {
+function RowMenu({ state, onClose, onPin, onMute, folders, onFolder }: RowMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: state.x, top: state.y });
   const pinned = Boolean(state.row.item.pinnedAt);
@@ -589,6 +735,26 @@ function RowMenu({ state, onClose, onPin, onMute }: RowMenuProps) {
           {muted ? 'Включить уведомления' : 'Выключить уведомления'}
         </button>
       </div>
+      {folders.length > 0 && (
+        <div className="msg-menu-list row-menu-folders" role="group" aria-label="Папки">
+          <span className="row-menu-label">В папках</span>
+          {folders.map(({ folder, inside }) => (
+            <button
+              key={folder.id}
+              className="msg-menu-item"
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={inside}
+              onClick={() => onFolder(folder, !inside)}
+            >
+              <span className="row-menu-check" aria-hidden="true">
+                {inside && <Icon name="check" size={16} />}
+              </span>
+              {folder.title}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

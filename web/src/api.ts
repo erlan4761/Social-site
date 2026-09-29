@@ -191,6 +191,22 @@ export type Message = MessageExtras & {
 export type ChatPrefs = { pinnedAt: string | null; muted: boolean };
 export type PrefKind = 'dm' | 'chat' | 'channel';
 
+/** Чат в правилах папки: вид и id — собеседника, чата или канала. */
+export type ChatRef = { kind: PrefKind; id: number };
+
+/** Папка чатов: виды, добавленные и исключённые вручную, два фильтра. */
+export type ChatFolder = {
+  id: number;
+  title: string;
+  types: PrefKind[];
+  include: ChatRef[];
+  exclude: ChatRef[];
+  excludeMuted: boolean;
+  excludeRead: boolean;
+};
+
+export type FolderInput = Partial<Omit<ChatFolder, 'id'>>;
+
 export type Conversation = ChatPrefs & {
   user: Person;
   unread: number;
@@ -609,6 +625,19 @@ const realApi = {
   // ─ Каналы ───────────────────────────────────────────────────────────────
 
   channels: () => request<{ channels: ChannelSummary[]; unreadTotal: number }>('/channels'),
+
+  folders: () => request<{ folders: ChatFolder[] }>('/folders'),
+
+  createFolder: (input: FolderInput) =>
+    request<{ folder: ChatFolder }>('/folders', { method: 'POST', body: body(input) }),
+
+  updateFolder: (id: number, input: FolderInput) =>
+    request<{ folder: ChatFolder }>(`/folders/${id}`, { method: 'PATCH', body: body(input) }),
+
+  deleteFolder: (id: number) => request<{ ok: true }>(`/folders/${id}`, { method: 'DELETE' }),
+
+  reorderFolders: (ids: number[]) =>
+    request<{ folders: ChatFolder[] }>('/folders/order', { method: 'PUT', body: body({ ids }) }),
 
   /** Закрепить чат или выключить уведомления. target — логин, номер чата или адрес канала. */
   setPref: (kind: PrefKind, target: string | number, input: { pinned?: boolean; muted?: boolean }) =>

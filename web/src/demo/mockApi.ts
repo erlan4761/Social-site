@@ -10,7 +10,7 @@
  */
 import type {
   ArchiveMonth, Attachment, AttachmentInput, Author, Badges, Channel, ChannelComment, ChannelPost, ChannelSummary,
-  ConversationHit, ForwardedFrom, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
+  ChatFolder, ConversationHit, FolderInput, ForwardedFrom, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
   Conversation, ForwardRef, ForwardTarget, Media, Message, Notification as NotificationItem,
   NotificationKind, Page, Person, PinnedPreview, PrefKind, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
 } from '../api';
@@ -132,6 +132,9 @@ let prefs: DbPref[] = [];
 /** Закреплённое сообщение — одно на переписку, как pinned_messages на сервере. */
 type DbPin = { kind: PrefKind; scope: string; messageId: number };
 let pins: DbPin[] = [];
+/** Папки чатов — у каждого свои, в порядке вкладок. */
+type DbFolder = ChatFolder & { userId: number };
+let folders: DbFolder[] = [];
 /** «Печатает…»: ключ переписки|id человека → до какого момента. Как на
  *  сервере, живёт только в памяти и гаснет сам. */
 const typingUntil = new Map<string, number>();
@@ -264,6 +267,7 @@ function seed() {
   postReactions = [];
   prefs = [];
   pins = [];
+  folders = [];
   channelComments = [];
   typingUntil.clear();
   nextId = 1;
@@ -490,6 +494,14 @@ function seed() {
 
   const dev = channel(demo, 'chronika_dev', 'Хроника изнутри', 'Как устроен этот сайт: решения, ошибки и то, что пришлось переделывать.', days(10));
   pins.push({ kind: 'channel', scope: String(notes.id), messageId: n1.id });
+  folders.push(
+    { id: id(), userId: demo.id, title: 'Личное', types: ['dm'], include: [], exclude: [], excludeMuted: false, excludeRead: false },
+    {
+      id: id(), userId: demo.id, title: 'Плёнка', types: [],
+      include: [{ kind: 'chat', id: room.id }, { kind: 'channel', id: notes.id }],
+      exclude: [], excludeMuted: false, excludeRead: false,
+    },
+  );
   const d1 = publish(dev, 'Здесь пишу о том, как устроена «Хроника» изнутри. Первое: сообщения ходят опросом раз в три секунды, без WebSocket, — и этого хватает.', days(9));
   channelSubs.find((s) => s.channelId === dev.id && s.userId === demo.id)!.lastReadId = d1.id;
   sub(dev, marina, d1.id);
@@ -777,6 +789,31 @@ function findHits<T extends { id: number; body: string; createdAt: string; attac
         author: a ? { id: a.id, displayName: a.displayName } : null,
       };
     });
+}
+
+const toFolder = ({ userId: _owner, ...f }: DbFolder): ChatFolder => ({ ...f, types: [...f.types], include: [...f.include], exclude: [...f.exclude] });
+const myFolders = (userId: number) => folders.filter((f) => f.userId === userId).map(toFolder);
+
+/** Те же правила, что на сервере: имя 1–12, виды из трёх, исключение побеждает. */
+function checkFolder(input: FolderInput, current: ChatFolder | null): Omit<ChatFolder, 'id'> {
+  const title = input.title === undefined && current ? current.title : (input.title ?? '').trim();
+  if (!title) fail(400, '«название папки»: минимум 1 символов');
+  if (title.length > 12) fail(400, '«название папки»: максимум 12 символов');
+  const types = input.types ?? current?.types ?? [];
+  if (types.some((x) => !['dm', 'chat', 'channel'].includes(x))) fail(400, 'Виды чатов — dm, chat или channel');
+  const exclude = input.exclude ?? current?.exclude ?? [];
+  const include = (input.include ?? current?.include ?? []).filter(
+    (x) => !exclude.some((e) => e.kind === x.kind && e.id === x.id),
+  );
+  if (types.length === 0 && include.length === 0) fail(400, 'В папке должны быть виды чатов или хотя бы один чат');
+  return {
+    title,
+    types: [...new Set(types)],
+    include,
+    exclude,
+    excludeMuted: input.excludeMuted ?? current?.excludeMuted ?? false,
+    excludeRead: input.excludeRead ?? current?.excludeRead ?? false,
+  };
 }
 
 const pinScope = (a: number, b: number) => `${Math.min(a, b)}-${Math.max(a, b)}`;
@@ -2295,6 +2332,47 @@ export const mockApi = rejectInsteadOfThrow({
     const { c } = requireOwner(handle);
     setPin('channel', c.id, null);
     return tick({ ok: true as const });
+  },
+
+  // ─ Папки чатов ────────────────────────────────────────────────────────
+
+  folders: () => {
+    const u = requireMe()!;
+    return tick({ folders: myFolders(u.id) });
+  },
+
+  createFolder: (input: FolderInput) => {
+    const u = requireMe()!;
+    if (myFolders(u.id).length >= 10) fail(400, 'Папок не больше 10');
+    const f: DbFolder = { id: id(), userId: u.id, ...checkFolder(input, null) };
+    folders.push(f);
+    return tick({ folder: toFolder(f) });
+  },
+
+  updateFolder: (folderId: number, input: FolderInput) => {
+    const u = requireMe()!;
+    const f = folders.find((x) => x.id === folderId && x.userId === u.id);
+    if (!f) fail(404, 'Папка не найдена');
+    Object.assign(f!, checkFolder(input, f!));
+    return tick({ folder: toFolder(f!) });
+  },
+
+  deleteFolder: (folderId: number) => {
+    const u = requireMe()!;
+    if (!folders.some((x) => x.id === folderId && x.userId === u.id)) fail(404, 'Папка не найдена');
+    folders = folders.filter((x) => x.id !== folderId);
+    return tick({ ok: true as const });
+  },
+
+  reorderFolders: (ids: number[]) => {
+    const u = requireMe()!;
+    const mine = myFolders(u.id).map((f) => f.id);
+    if (ids.length !== mine.length || [...ids].sort().join() !== [...mine].sort().join()) {
+      fail(400, 'Порядок — полный список ваших папок');
+    }
+    const others = folders.filter((f) => f.userId !== u.id);
+    folders = [...others, ...ids.map((fid) => folders.find((f) => f.id === fid)!)];
+    return tick({ folders: myFolders(u.id) });
   },
 
   setPref: (kind: PrefKind, target: string | number, input: { pinned?: boolean; muted?: boolean }) => {

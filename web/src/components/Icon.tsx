@@ -54,7 +54,8 @@ export type IconName =
   | 'pin'
   | 'bell-off'
   | 'video'
-  | 'volume-off';
+  | 'volume-off'
+  | 'folder';
 
 /** Лучи солнца: восемь отрезков по кругу, считаются один раз при загрузке. */
 const SUN_RAYS = [0, 45, 90, 135, 180, 225, 270, 315].map((deg) => {
@@ -249,6 +250,7 @@ const SHAPES: Record<IconName, ReactElement> = {
       <path d="m3.8 3.8 16.4 16.4" />
     </>
   ),
+  folder: <path d="M3.6 7.2a1.6 1.6 0 0 1 1.6-1.6h4.2l2 2.2h7.4a1.6 1.6 0 0 1 1.6 1.6v7.8a1.6 1.6 0 0 1-1.6 1.6H5.2a1.6 1.6 0 0 1-1.6-1.6z" />,
   // Видеокамера — «кружок».
   video: (
     <>
