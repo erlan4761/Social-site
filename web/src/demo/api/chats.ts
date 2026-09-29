@@ -5,7 +5,8 @@ import { attachmentFrom, assertEditable, setReaction, findHits, setTyping, clear
 import { pinnedOf, setPin, pinPreview } from '../model/folders';
 import { prefFields, dropPrefs, notify, saveMentions, unreadMentions, markNotificationsRead } from '../model/notifications';
 import { clearDraft, draftOf } from '../model/drafts';
-import { membersOf, memberRow, visibleChatMessages, toChatMessage, requireChatMessage, toChat, othersReadUpTo, chatUnread, requireChat, MEMBERS_MAX, checkTitle, newInvite } from '../model/chats';
+import { membersOf, memberRow, visibleChatMessages, toChatMessage, requireChatMessage, toChat, othersReadUpTo, chatUnread, requireChat, MEMBERS_MAX, checkTitle, newInvite, isAdmin, outranks, postBlock, roleOf } from '../model/chats';
+import { SLOW_MODE_OPTIONS } from '../../api';
 import { person as personOf } from '../model/people';
 import { pollOf, readPoll, addPoll } from '../model/polls';
 
@@ -83,8 +84,31 @@ export const chatsApi = {
 
   renameChat: (chatId: number, title: string) => {
     const { u, chat } = requireChat(chatId);
-    if (chat.ownerId !== u.id) fail(403, 'Переименовать чат может только владелец');
+    if (!isAdmin(chat, u.id)) fail(403, 'Менять группу могут владелец и администраторы');
     chat.title = checkTitle(title);
+    return tick({ chat: toChat(chat) });
+  },
+
+  updateChat: (chatId: number, patch: { slowMode?: number; adminsOnly?: boolean }) => {
+    const { u, chat } = requireChat(chatId);
+    if (!isAdmin(chat, u.id)) fail(403, 'Менять группу могут владелец и администраторы');
+    if (patch.slowMode === undefined && patch.adminsOnly === undefined) fail(400, 'Нечего менять');
+    if (patch.slowMode !== undefined) {
+      if (!(SLOW_MODE_OPTIONS as readonly number[]).includes(patch.slowMode)) fail(400, `Медленный режим — одно из: ${SLOW_MODE_OPTIONS.join(', ')} секунд`);
+      chat.slowMode = patch.slowMode;
+    }
+    if (patch.adminsOnly !== undefined) chat.adminsOnly = patch.adminsOnly;
+    return tick({ chat: toChat(chat) });
+  },
+
+  setChatAdmin: (chatId: number, username: string, admin: boolean) => {
+    const { u, chat } = requireChat(chatId);
+    if (chat.ownerId !== u.id) fail(403, 'Назначать администраторов может только владелец');
+    const target = byName(username);
+    const role = target ? roleOf(chat, target.id) : null;
+    if (!role) fail(404, 'Участник не найден');
+    if (role === 'owner') fail(400, 'Владелец и так главный');
+    memberRow(chat.id, target!.id)!.role = admin ? 'admin' : 'member';
     return tick({ chat: toChat(chat) });
   },
 
@@ -122,6 +146,7 @@ export const chatsApi = {
 
   sendChatMessage: (chatId: number, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput, sticker?: string) => {
     const { u, chat } = requireChat(chatId);
+    postBlock(chat, u.id);
     const src = forward ? forwardSource(forward, u) : null;
     const body = src ? src.body : text.trim();
     const attachment = src ? src.attachment : file ? attachmentFrom(file) : null;
@@ -172,8 +197,8 @@ export const chatsApi = {
   deleteChatMessage: (chatId: number, messageId: number) => {
     const { u, chat } = requireChat(chatId);
     const m = requireChatMessage(chat.id, messageId);
-    // Своё — автор, любое — владелец чата, как админ группы.
-    if (m.authorId !== u.id && chat.ownerId !== u.id) fail(403, 'Удалить можно только своё сообщение');
+    // Своё — автор; владелец — любое, администратор — сообщения участников.
+    if (m.authorId !== u.id && !outranks(chat, u.id, m.authorId)) fail(403, 'Удалить можно своё сообщение, а администратору — сообщения участников');
     db.chatMessages = db.chatMessages.filter((x) => x.id !== m.id);
     if (pinnedOf('chat', chat.id)?.messageId === m.id) setPin('chat', chat.id, null);
     db.chatReactions = db.chatReactions.filter((r) => r.messageId !== m.id);
@@ -227,14 +252,14 @@ export const chatsApi = {
 
   createInvite: (chatId: number) => {
     const { u, chat } = requireChat(chatId);
-    if (chat.ownerId !== u.id) fail(403, 'Ссылкой-приглашением управляет владелец');
+    if (!isAdmin(chat, u.id)) fail(403, 'Ссылкой-приглашением управляют владелец и администраторы');
     chat.invite = newInvite();
     return tick({ invite: chat.invite });
   },
 
   revokeInvite: (chatId: number) => {
     const { u, chat } = requireChat(chatId);
-    if (chat.ownerId !== u.id) fail(403, 'Ссылкой-приглашением управляет владелец');
+    if (!isAdmin(chat, u.id)) fail(403, 'Ссылкой-приглашением управляют владелец и администраторы');
     chat.invite = null;
     return tick({ invite: null });
   },
@@ -274,7 +299,7 @@ export const chatsApi = {
     if (!person || !row) fail(404, 'Участник не найден');
 
     const leaving = person!.id === u.id;
-    if (!leaving && chat.ownerId !== u.id) fail(403, 'Удалять участников может только владелец');
+    if (!leaving && !outranks(chat, u.id, person!.id)) fail(403, 'Удалять участников могут владелец, а администраторы — только обычных участников');
 
     db.chatMembers = db.chatMembers.filter((m) => !(m.chatId === chat.id && m.userId === person!.id));
     dropPrefs('chat', chat.id, person!.id);
@@ -288,9 +313,11 @@ export const chatsApi = {
       db.chatMessages = db.chatMessages.filter((m) => m.chatId !== chat.id);
       db.notifications = db.notifications.filter((n) => n.chatId !== chat.id);
     } else if (chat.ownerId === person!.id) {
-      // Чат без владельца невозможно ни переименовать, ни распустить —
-      // владение переходит участнику с самым ранним joined_at.
-      chat.ownerId = rest[0].userId;
+      // Чат без владельца невозможно ни настроить, ни распустить — владение
+      // переходит старейшему администратору, а без них — старейшему участнику.
+      const heir = rest.find((m) => m.role === 'admin') ?? rest[0];
+      chat.ownerId = heir.userId;
+      heir.role = 'member';
     }
 
     return leaving ? tick({ ok: true as const, left: true }) : tick({ ok: true as const });
@@ -303,7 +330,7 @@ export const chatsApi = {
 
   pinChatMessage: (chatId: number, messageId: number) => {
     const { u, chat } = requireChat(chatId);
-    if (chat.ownerId !== u.id) fail(403, 'Закреплять сообщения может только владелец чата');
+    if (!isAdmin(chat, u.id)) fail(403, 'Закреплять сообщения могут владелец и администраторы');
     const m = requireChatMessage(chat.id, messageId);
     setPin('chat', chat.id, m.id);
     return tick({ pinned: pinPreview('chat', chat.id, visibleChatMessages(chat.id)) });
@@ -311,7 +338,7 @@ export const chatsApi = {
 
   unpinChatMessage: (chatId: number) => {
     const { u, chat } = requireChat(chatId);
-    if (chat.ownerId !== u.id) fail(403, 'Откреплять сообщения может только владелец чата');
+    if (!isAdmin(chat, u.id)) fail(403, 'Откреплять сообщения могут владелец и администраторы');
     setPin('chat', chat.id, null);
     return tick({ ok: true as const });
   },

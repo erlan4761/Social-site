@@ -259,3 +259,32 @@ describe('витрина: ссылка-приглашение', () => {
     await expect(api.createInvite(chat.id)).rejects.toMatchObject({ status: 403 });
   });
 });
+
+describe('витрина: администраторы группы', () => {
+  it('владелец назначает админа; админ настраивает группу и убирает участника', async () => {
+    const chat = await room();
+    expect(chat.myRole).toBe('owner');
+    const { chat: withAdmin } = await api.setChatAdmin(chat.id, 'marina', true);
+    expect(withAdmin.members.find((m) => m.username === 'marina')?.role).toBe('admin');
+
+    await loginAs('marina');
+    const { chat: slow } = await api.updateChat(chat.id, { slowMode: 30 });
+    expect(slow.slowMode).toBe(30);
+    await expect(api.updateChat(chat.id, { slowMode: 7 })).rejects.toMatchObject({ status: 400 });
+    await expect(api.setChatAdmin(chat.id, 'nina', true)).rejects.toMatchObject({ status: 403 });
+    await expect(api.removeChatMember(chat.id, 'demo')).rejects.toMatchObject({ status: 403 });
+
+    await loginAs('nina');
+    await api.sendChatMessage(chat.id, 'Раз');
+    await expect(api.sendChatMessage(chat.id, 'Два')).rejects.toMatchObject({ status: 429 });
+    expect((await api.chat(chat.id)).chat.nextPostAt).not.toBeNull();
+
+    await loginAs('marina');
+    await api.sendChatMessage(chat.id, 'Админу можно');
+    await api.sendChatMessage(chat.id, 'И ещё раз');
+    await api.updateChat(chat.id, { slowMode: 0, adminsOnly: true });
+    await loginAs('nina');
+    await expect(api.sendChatMessage(chat.id, 'А мне?')).rejects.toMatchObject({ status: 403 });
+    expect((await api.chat(chat.id)).chat.adminsOnly).toBe(true);
+  });
+});
