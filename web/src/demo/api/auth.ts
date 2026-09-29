@@ -3,6 +3,7 @@ import { type DbUser, db, id, tick, fail } from '../store';
 import { openSession, endOtherSessions, dropUser } from '../model/account';
 import { byId, byName, byEmail, me, requireMe } from '../model/people';
 import { publicUser } from '../model/posts';
+import { notifyLogin } from '../model/notifications';
 import { checkCode, dropTicket, issueTicket, normalizePhone, readTicket, sendCode } from '../model/phone';
 import type { PhoneVerdict } from '../../api';
 
@@ -31,6 +32,7 @@ export const authApi = {
     else {
       db.meId = u.id;
       openSession(u.id);
+      notifyLogin(u.id);
       verdict = { status: 'signed-in', user: publicUser(u) };
     }
     return tick(verdict);
@@ -47,6 +49,7 @@ export const authApi = {
     dropTicket(ticket.token);
     db.meId = u!.id;
     openSession(u!.id);
+    notifyLogin(u!.id);
     return tick({ user: publicUser(u!) });
   },
 
@@ -79,6 +82,7 @@ export const authApi = {
     }
     db.meId = u!.id;
     openSession(u!.id);
+    notifyLogin(u!.id);
     return tick({ user: publicUser(u!) });
   },
 

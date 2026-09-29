@@ -76,6 +76,8 @@ export type DbNotification = {
   chatId: number | null;
   /** Сообщение группы у события «упоминание». */
   messageId?: number | null;
+  /** Устройство у события «вход в аккаунт». */
+  device?: string | null;
   createdAt: string;
   readAt: string | null;
 };

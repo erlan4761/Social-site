@@ -104,6 +104,20 @@ function describe(n) {
       return { title: 'Хроника', body: `${who} отметил(а) вашу запись`, url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
     case 'follow':
       return { title: 'Хроника', body: `${who} подписался(ась) на вас`, url: `/u/${n.actor_username}`, tag: `follow-${n.actor_id}` };
+    case 'new_login': {
+      let device = 'Новое устройство';
+      try {
+        device = JSON.parse(n.detail ?? '{}').device ?? device;
+      } catch {
+        // подробностей нет — хватит общего «новое устройство»
+      }
+      return {
+        title: 'Вход в аккаунт',
+        body: `${device}. Если это были не вы — завершите этот сеанс в настройках.`,
+        url: '/settings',
+        tag: `login-${n.id}`,
+      };
+    }
     default:
       return null;
   }
@@ -131,7 +145,7 @@ async function deliver(sub, payload) {
 }
 
 /** Пуш о только что созданном событии. Ошибки доставки не ломают запрос. */
-export function pushNotification(notificationId) {
+export function pushNotification(notificationId, { evenIfLive = false } = {}) {
   const n = db.prepare(`
     SELECT n.*, a.display_name AS actor_name, a.username AS actor_username,
            g.title AS chat_title, m.body AS message_body, c.body AS comment_body
@@ -142,7 +156,7 @@ export function pushNotification(notificationId) {
     LEFT JOIN comments c ON c.id = n.comment_id
     WHERE n.id = ?
   `).get(notificationId);
-  if (!n || isLive(n.user_id)) return;
+  if (!n || (!evenIfLive && isLive(n.user_id))) return;
   const subs = db.prepare('SELECT * FROM push_subscriptions WHERE user_id = ?').all(n.user_id);
   if (subs.length === 0) return;
   const payload = describe(n);

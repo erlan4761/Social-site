@@ -281,7 +281,9 @@ export type NotificationKind =
   | 'chat_message'
   | 'chat_invite'
   /** Упомянули через @ в группе — приходит и из приглушённого чата. */
-  | 'mention';
+  | 'mention'
+  /** В аккаунт вошли с другого устройства. Автор события — сам человек. */
+  | 'new_login';
 
 /** Обрезанный сервером кусок текста поста или комментария — 80 символов. */
 export type NotificationRef = { id: number; excerpt: string };
@@ -298,6 +300,8 @@ export type Notification = {
   chat: { id: number; title: string } | null;
   /** Сообщение группы, где упомянули, — у события «mention». */
   message: NotificationRef | null;
+  /** С какого устройства вошли — у события «new_login», например «Chrome, Windows». */
+  device: string | null;
 };
 
 /** Три счётчика одним запросом — иначе оболочка опрашивала бы три эндпоинта. */

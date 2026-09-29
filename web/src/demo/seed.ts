@@ -220,18 +220,19 @@ export function seed() {
     kind: NotificationKind,
     minutes: number,
     read: boolean,
-    refs: { postId?: number; commentId?: number; chatId?: number; messageId?: number } = {},
+    refs: { postId?: number; commentId?: number; chatId?: number; messageId?: number; device?: string } = {},
   ) => {
     db.notifications.push({
       id: id(), userId: demo.id, actorId: actor.id, kind,
       postId: refs.postId ?? null, commentId: refs.commentId ?? null, chatId: refs.chatId ?? null,
-      messageId: refs.messageId ?? null,
+      messageId: refs.messageId ?? null, device: refs.device ?? null,
       createdAt: ago(minutes), readAt: read ? ago(minutes - 1) : null,
     });
   };
 
   // Четыре вида событий и три непрочитанных — ровно то состояние, которое
   // описывают счётчики в сайдбаре витрины: 2 письма, 1 чат, 3 события.
+  event(demo, 'new_login', 60 * 26, true, { device: 'Safari, iPhone' });
   event(marina, 'like', 190, true, { postId: p4.id });
   event(marina, 'mention', 59, false, { chatId: room.id, messageId: last.id });
   event(oleg, 'comment', 39, false, { postId: p4.id, commentId: c4.id });

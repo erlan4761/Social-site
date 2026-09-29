@@ -5,6 +5,7 @@ import {
   hashPassword, verifyPassword, createSession, destroySession,
   setSessionCookie, publicUser, SESSION_COOKIE,
 } from '../auth.js';
+import { notifyLogin } from '../notifications.js';
 import { PUBLIC_URL, sendMail } from '../email.js';
 import * as v from '../validate.js';
 
@@ -35,6 +36,7 @@ router.post('/login', async (req, res, next) => {
     }
 
     setSessionCookie(res, createSession(user.id, req.get('user-agent')));
+    notifyLogin(user.id, req.get('user-agent'));
     res.json({ user: publicUser(user) });
   } catch (err) {
     next(err);

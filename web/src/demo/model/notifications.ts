@@ -2,6 +2,7 @@ import { type Notification as NotificationItem, type NotificationKind, type Pref
 import { type DbNotification, db, id } from '../store';
 import { byId, author, blockedPair } from './people';
 import { membersOf, memberRow } from './chats';
+import { deviceName } from '../../device';
 
 /** Настройки чатов, события и упоминания — как notifications.js, prefs.js, mentions.js. */
 
@@ -73,6 +74,19 @@ export function notify(input: NotifyInput) {
   db.notifications.push({
     id: id(), userId, actorId, kind,
     postId: post, commentId: comment, chatId: chat, messageId: input.messageId ?? null,
+    createdAt: new Date().toISOString(), readAt: null,
+  });
+}
+
+/**
+ * «Вход в аккаунт» — как notifyLogin() на сервере: мимо notify() с его «себе
+ * не уведомляем», автор события — сам человек.
+ */
+export function notifyLogin(userId: number) {
+  db.notifications.push({
+    id: id(), userId, actorId: userId, kind: 'new_login',
+    postId: null, commentId: null, chatId: null, messageId: null,
+    device: deviceName(typeof navigator === 'undefined' ? null : navigator.userAgent),
     createdAt: new Date().toISOString(), readAt: null,
   });
 }
@@ -156,5 +170,6 @@ export const toNotification = (n: DbNotification): NotificationItem => {
       const m = n.messageId != null ? db.chatMessages.find((x) => x.id === n.messageId) : undefined;
       return m ? { id: m.id, excerpt: excerpt(m.body) } : null;
     })(),
+    device: n.kind === 'new_login' ? n.device ?? null : null,
   };
 };

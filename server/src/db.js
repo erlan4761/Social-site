@@ -460,6 +460,9 @@ db.exec(`
     expires_at TEXT NOT NULL
   );
 `);
+// Подробности события, которым не хватает ссылок на запись или чат: у «входа
+// с нового устройства» — само устройство ({"device": "Chrome, Windows"}).
+ensureColumn('notifications', 'detail', 'TEXT');
 ensureColumn('notifications', 'message_id', 'INTEGER REFERENCES chat_messages(id) ON DELETE CASCADE');
 
 // Реакция — одна на человека на сообщение, как у Телеграма без подписки:

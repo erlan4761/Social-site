@@ -4,8 +4,9 @@ import { publicUrl } from './media.js';
 import { isMuted } from './prefs.js';
 import { touchBadges } from './live.js';
 import { pushNotification } from './push.js';
+import { deviceLabel } from './device.js';
 
-export const NOTIFICATION_KINDS = ['like', 'comment', 'follow', 'message', 'chat_message', 'chat_invite', 'mention'];
+export const NOTIFICATION_KINDS = ['like', 'comment', 'follow', 'message', 'chat_message', 'chat_invite', 'mention', 'new_login'];
 
 // Лайк и подписка — переключатели: их можно снять и поставить заново сколько
 // угодно раз. Если каждое включение порождало бы событие, это был бы готовый
@@ -21,7 +22,7 @@ const EXCERPT_LEN = 80;
 
 /** Колонки, которые ожидает serializeNotification(). */
 export const NOTIFICATION_SELECT = `
-  SELECT n.id, n.kind, n.created_at, n.read_at,
+  SELECT n.id, n.kind, n.created_at, n.read_at, n.detail,
          a.id AS actor_id, a.username AS actor_username,
          a.display_name AS actor_display_name, a.avatar_path AS actor_avatar_path,
          p.id AS post_id, p.body AS post_body,
@@ -104,6 +105,21 @@ export function notify({ userId, actorId, kind, postId = null, commentId = null,
   // Открытой вкладки нет — пуш на устройства (решает push.js).
   pushNotification(Number(info.lastInsertRowid));
   return Number(info.lastInsertRowid);
+}
+
+/**
+ * «Вход в аккаунт с нового устройства» — как у Телеграма. Событие про самого
+ * человека, поэтому мимо notify() с его «себе не уведомляем»: автор события —
+ * он сам. Пуш уходит на остальные устройства даже при открытой вкладке: о чужом
+ * входе лучше узнать дважды, чем ни разу.
+ */
+export function notifyLogin(userId, userAgent) {
+  const info = db.prepare(`
+    INSERT INTO notifications (user_id, actor_id, kind, detail, created_at)
+    VALUES (?, ?, 'new_login', ?, ?)
+  `).run(userId, userId, JSON.stringify({ device: deviceLabel(userAgent) }), nowIso());
+  touchBadges(userId);
+  pushNotification(Number(info.lastInsertRowid), { evenIfLive: true });
 }
 
 /**
@@ -196,4 +212,14 @@ export const serializeNotification = (row) => ({
   chat: row.chat_id ? { id: row.chat_id, title: row.chat_title } : null,
   // Упоминание — с самим сообщением: цитата и переход прямо к нему.
   message: row.message_id ? { id: row.message_id, excerpt: excerpt(row.message_body) } : null,
+  // Вход с нового устройства — какое устройство.
+  device: row.kind === 'new_login' ? detailOf(row).device ?? null : null,
 });
+
+function detailOf(row) {
+  try {
+    return JSON.parse(row.detail ?? '{}') ?? {};
+  } catch {
+    return {};
+  }
+}
