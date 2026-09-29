@@ -125,6 +125,10 @@ app.post('/api/users/by-phone', rateLimit({
 app.get('/api/link-preview', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 60 }));
 app.get('/api/link-preview/image', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 120 }));
 
+// Смена логина — не чаще пяти раз в час с адреса: каждая бронирует старый
+// логин на две недели, и без потолка можно было бы заблокировать чужие имена.
+app.put('/api/account/username', rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 5 }));
+
 const blockLimit = rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 30 });
 app.put('/api/users/:username/block', blockLimit);
 app.delete('/api/users/:username/block', blockLimit);

@@ -39,6 +39,7 @@ export function seed() {
   db.currentSession = null;
   db.phoneCodes = [];
   db.phoneTickets = [];
+  db.usernameHolds = [];
   db.channelComments = [];
   typingUntil.clear();
   db.nextId = 1;

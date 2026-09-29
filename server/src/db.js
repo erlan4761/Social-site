@@ -477,6 +477,17 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_chat_messages_album ON chat_messages(album_id) WHERE album_id IS NOT NULL;
 `);
 
+// Бронь старого логина после смены (см. usernames.js). Строка без внешнего
+// ключа на users намеренно не удаляется вместе с аккаунтом: логин удалённого
+// тоже не должен сразу достаться другому.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS username_holds (
+    username TEXT PRIMARY KEY,
+    user_id  INTEGER NOT NULL,
+    until    TEXT NOT NULL
+  );
+`);
+
 // Черновики (см. drafts.js): по одному на человека и чат.
 db.exec(`
   CREATE TABLE IF NOT EXISTS drafts (

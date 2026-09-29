@@ -5,6 +5,7 @@ import {
   checkCode, dropTicket, failTicket, hasPassword, issueTicket, normalizePhone, readTicket, sendCode,
 } from '../phone.js';
 import { notifyLogin } from '../notifications.js';
+import { usernameTaken } from '../usernames.js';
 import * as v from '../validate.js';
 
 /**
@@ -73,7 +74,7 @@ router.post('/signup', (req, res, next) => {
     const ticket = readTicket(req.body?.ticket, 'signup');
     const username = v.username(req.body?.username);
     const displayName = v.str(req.body?.displayName || req.body?.username, 'имя', { min: 1, max: 40 });
-    if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) {
+    if (usernameTaken(username)) {
       return res.status(409).json({ error: 'Это имя пользователя уже занято' });
     }
     // Пока человек придумывал логин, номер мог успеть кто-то занять.

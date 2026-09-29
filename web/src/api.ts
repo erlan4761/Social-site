@@ -834,6 +834,13 @@ const realApi = {
 
   account: () => request<AccountSettings>('/account'),
 
+  /** Сменить логин; старый ещё `holdDays` дней закреплён за вами. */
+  changeUsername: (username: string) =>
+    request<{ user: User; previous: string; heldUntil: string; holdDays: number }>('/account/username', {
+      method: 'PUT',
+      body: body({ username }),
+    }),
+
   /** Меняется только присланное; в ответе — все три настройки. */
   setPrivacy: (patch: Partial<Privacy>) =>
     request<Privacy>('/account/privacy', { method: 'PUT', body: body(patch) }),

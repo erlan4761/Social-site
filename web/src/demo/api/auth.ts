@@ -9,6 +9,12 @@ import type { PhoneVerdict } from '../../api';
 
 /** Методы витрины: вход, регистрация, пароль, настройки аккаунта. */
 
+/** Старый логин две недели закреплён за прежним владельцем — как usernames.js. */
+const HOLD_DAYS = 14;
+const usernameTaken = (name: string, forUserId: number | null = null) =>
+  db.users.some((x) => x.username === name && x.id !== forUserId)
+  || db.usernameHolds.some((h) => h.username === name && h.until > Date.now() && h.userId !== forUserId);
+
 const PRIVACY_KEYS = ['lastSeen', 'phoneFind', 'phoneShow'] as const;
 const OPTIONS: LastSeenPrivacy[] = ['all', 'follows', 'nobody'];
 
@@ -60,7 +66,7 @@ export const authApi = {
     const ticket = readTicket(token, 'signup');
     const username = rawName.trim().toLowerCase();
     if (!/^[a-z0-9_]{3,20}$/.test(username)) fail(400, 'Имя пользователя: 3–20 символов, только латиница, цифры и _');
-    if (byName(username)) fail(409, 'Это имя пользователя уже занято');
+    if (usernameTaken(username)) fail(409, 'Это имя пользователя уже занято');
     if (db.users.some((x) => x.phone === ticket.phone)) {
       dropTicket(ticket.token);
       fail(409, 'Этот номер уже зарегистрирован — войдите по нему заново');
@@ -194,6 +200,22 @@ export const authApi = {
     if (u.password) fail(400, 'Удаление подтверждается паролем');
     if (!u.phone) fail(400, 'Нет ни пароля, ни номера — удаление подтвердить нечем');
     return tick(sendCode(u.phone!, 'delete', u.id));
+  },
+
+  changeUsername: (raw: string) => {
+    const u = requireMe()!;
+    const username = raw.trim().toLowerCase();
+    if (!/^[a-z0-9_]{3,20}$/.test(username)) fail(400, 'Имя пользователя: 3–20 символов, только латиница, цифры и _');
+    if (username === u.username) fail(400, 'Это и так ваш логин');
+    if (usernameTaken(username, u.id)) fail(409, 'Это имя пользователя уже занято');
+    const previous = u.username;
+    const until = Date.now() + HOLD_DAYS * 864e5;
+    db.usernameHolds = [
+      ...db.usernameHolds.filter((h) => h.username !== username && h.username !== previous),
+      { username: previous, userId: u.id, until },
+    ];
+    u.username = username;
+    return tick({ user: publicUser(u), previous, heldUntil: new Date(until).toISOString(), holdDays: HOLD_DAYS });
   },
 
   setPrivacy: (patch: Partial<Privacy>) => {
