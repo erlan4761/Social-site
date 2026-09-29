@@ -54,8 +54,15 @@ export const toChat = (c: DbChat): Chat => {
     members,
     memberCount: members.length,
     iAmOwner: c.ownerId === db.meId,
+    invite: c.invite ?? null,
   };
 };
+
+/** 128 случайных бит в base64url — как randomBytes(16) на сервере. */
+export function newInvite() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
 
 /** Самая дальняя ватерлиния среди остальных участников — две галочки у своих. */
 export const othersReadUpTo = (chatId: number, userId: number) =>

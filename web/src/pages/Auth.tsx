@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { api, ApiError, type User } from '../api';
 import { EMPTY_PHONE, PhoneField } from '../components/PhoneField';
 import { formatPhone, toE164 } from '../phone';
@@ -22,18 +22,25 @@ type Step =
   | { kind: 'password'; phone: string; ticket: string }
   | { kind: 'legacy' };
 
+/** Куда вернуть после входа: только путь этого же сайта, не чужой адрес. */
+function backTo(state: unknown) {
+  const from = (state as { from?: unknown } | null)?.from;
+  return typeof from === 'string' && from.startsWith('/') && !from.startsWith('//') ? from : '/';
+}
+
 const errorText = (err: unknown) => (err instanceof ApiError ? err.message : 'Не получилось. Попробуйте ещё раз.');
 
 export function Auth({ mode }: { mode: 'login' | 'register' }) {
   const { user, ready, setUser } = useSession();
   const navigate = useNavigate();
+  const target = backTo(useLocation().state);
   const [step, setStep] = useState<Step>({ kind: 'phone' });
 
-  if (ready && user) return <Navigate to="/" replace />;
+  if (ready && user) return <Navigate to={target} replace />;
 
   const done = (u: User) => {
     setUser(u);
-    navigate('/', { replace: true });
+    navigate(target, { replace: true });
   };
 
   return (

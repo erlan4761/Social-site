@@ -227,3 +227,35 @@ describe('витрина: черновики', () => {
     await expect(api.draft('chat', chat.id)).rejects.toMatchObject({ status: 404 });
   });
 });
+
+describe('витрина: ссылка-приглашение', () => {
+  it('владелец создаёт ссылку, по ней вступают; сменённая перестаёт работать', async () => {
+    const chat = await room();
+    expect(chat.invite).toBeNull();
+    const { invite } = await api.createInvite(chat.id);
+    expect(invite).toMatch(/^[A-Za-z0-9_-]{22}$/);
+
+    await loginAs('oleg_k');
+    const preview = await api.invitePreview(invite);
+    expect(preview.chat.title).toBe('Плёнка и проявка');
+    // Олега в группе нет: по ссылке он видит состав, но ещё не участник.
+    expect(preview.member).toBe(false);
+    const { chat: joined } = await api.joinByInvite(invite);
+    expect(joined.members.some((m) => m.username === 'oleg_k')).toBe(true);
+    // Пришедший по ссылке начинает с «сейчас»: старое не падает непрочитанным.
+    expect((await api.chats()).chats.find((c) => c.id === chat.id)?.unread).toBe(0);
+
+    await loginAs('demo');
+    const { invite: next } = await api.createInvite(chat.id);
+    expect(next).not.toBe(invite);
+    await expect(api.invitePreview(invite)).rejects.toMatchObject({ status: 404 });
+    await api.revokeInvite(chat.id);
+    await expect(api.joinByInvite(next)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('управлять ссылкой может только владелец', async () => {
+    const chat = await room();
+    await loginAs('nina');
+    await expect(api.createInvite(chat.id)).rejects.toMatchObject({ status: 403 });
+  });
+});

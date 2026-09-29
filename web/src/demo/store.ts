@@ -100,7 +100,8 @@ export type DbReport = {
   createdAt: string;
 };
 
-export type DbChat = { id: number; title: string; ownerId: number; createdAt: string };
+/** `invite` — код ссылки-приглашения, как chats.invite_token; нет — ссылки нет. */
+export type DbChat = { id: number; title: string; ownerId: number; createdAt: string; invite?: string | null };
 
 /** `lastReadId` — ватерлиния прочитанного, как в схеме сервера: в группе
  *  получателей много, и отметка на каждом сообщении стоила бы таблицы N×M. */

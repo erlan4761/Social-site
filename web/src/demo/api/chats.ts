@@ -5,7 +5,8 @@ import { attachmentFrom, assertEditable, setReaction, findHits, setTyping, clear
 import { pinnedOf, setPin, pinPreview } from '../model/folders';
 import { prefFields, dropPrefs, notify, saveMentions, unreadMentions, markNotificationsRead } from '../model/notifications';
 import { clearDraft, draftOf } from '../model/drafts';
-import { membersOf, memberRow, visibleChatMessages, toChatMessage, requireChatMessage, toChat, othersReadUpTo, chatUnread, requireChat, MEMBERS_MAX, checkTitle } from '../model/chats';
+import { membersOf, memberRow, visibleChatMessages, toChatMessage, requireChatMessage, toChat, othersReadUpTo, chatUnread, requireChat, MEMBERS_MAX, checkTitle, newInvite } from '../model/chats';
+import { person as personOf } from '../model/people';
 import { pollOf, readPoll, addPoll } from '../model/polls';
 
 /** Методы витрины: групповые чаты. */
@@ -222,6 +223,47 @@ export const chatsApi = {
     notify({ userId: person!.id, actorId: u.id, kind: 'chat_invite', chatId: chat.id });
 
     return tick({ chat: toChat(chat) });
+  },
+
+  createInvite: (chatId: number) => {
+    const { u, chat } = requireChat(chatId);
+    if (chat.ownerId !== u.id) fail(403, 'Ссылкой-приглашением управляет владелец');
+    chat.invite = newInvite();
+    return tick({ invite: chat.invite });
+  },
+
+  revokeInvite: (chatId: number) => {
+    const { u, chat } = requireChat(chatId);
+    if (chat.ownerId !== u.id) fail(403, 'Ссылкой-приглашением управляет владелец');
+    chat.invite = null;
+    return tick({ invite: null });
+  },
+
+  invitePreview: (token: string) => {
+    const u = requireMe()!;
+    const chat = db.chats.find((c) => c.invite && c.invite === token);
+    if (!chat) fail(404, 'Ссылка недействительна: её отключили или сменили');
+    const members = membersOf(chat!.id);
+    return tick({
+      chat: {
+        id: chat!.id, title: chat!.title, memberCount: members.length,
+        members: members.slice(0, 5).map((m) => personOf(byId(m.userId)!)),
+      },
+      member: members.some((m) => m.userId === u.id),
+    });
+  },
+
+  joinByInvite: (token: string) => {
+    const u = requireMe()!;
+    const chat = db.chats.find((c) => c.invite && c.invite === token);
+    if (!chat) fail(404, 'Ссылка недействительна: её отключили или сменили');
+    if (memberRow(chat!.id, u.id)) return tick({ chat: toChat(chat!) });
+    if (blockedPair(u.id, chat!.ownerId)) fail(403, 'Вступить в этот чат нельзя');
+    if (membersOf(chat!.id).length >= MEMBERS_MAX) fail(400, `В чате не больше ${MEMBERS_MAX} участников`);
+    // Как на сервере: пришедший по ссылке начинает с «сейчас».
+    const top = Math.max(0, ...db.chatMessages.filter((m) => m.chatId === chat!.id).map((m) => m.id));
+    db.chatMembers.push({ chatId: chat!.id, userId: u.id, joinedAt: new Date().toISOString(), lastReadId: top });
+    return tick({ chat: toChat(chat!) });
   },
 
   removeChatMember: (chatId: number, username: string) => {

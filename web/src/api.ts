@@ -337,7 +337,12 @@ export type Chat = {
   members: Person[];
   memberCount: number;
   iAmOwner: boolean;
+  /** Код ссылки-приглашения (`/join/<код>`) или null — ссылки нет. */
+  invite: string | null;
 };
+
+/** Что видно по ссылке-приглашению до вступления: название и кто внутри. */
+export type InvitePreview = { id: number; title: string; memberCount: number; members: Person[] };
 
 export type ChatMessage = MessageExtras & {
   id: number;
@@ -922,6 +927,17 @@ const realApi = {
     request<{ chat: Chat }>(`/chats/${id}/members`, { method: 'POST', body: body({ username }) }),
 
   /** left: true — вы вышли сами, а не удалили кого-то другого. */
+  /** Создать или сменить ссылку-приглашение — только владелец; прежняя перестаёт работать. */
+  createInvite: (id: number) => request<{ invite: string }>(`/chats/${id}/invite`, { method: 'POST' }),
+
+  revokeInvite: (id: number) => request<{ invite: null }>(`/chats/${id}/invite`, { method: 'DELETE' }),
+
+  invitePreview: (token: string) =>
+    request<{ chat: InvitePreview; member: boolean }>(`/chats/join/${encodeURIComponent(token)}`),
+
+  joinByInvite: (token: string) =>
+    request<{ chat: Chat }>(`/chats/join/${encodeURIComponent(token)}`, { method: 'POST' }),
+
   removeChatMember: (id: number, username: string) =>
     request<{ ok: true; left?: boolean }>(
       `/chats/${id}/members/${encodeURIComponent(username)}`,
