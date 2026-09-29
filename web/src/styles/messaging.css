@@ -1090,7 +1090,81 @@ a.pane-who:hover { background: var(--surface-2); }
 .forward-list .dialog:disabled { opacity: 0.6; cursor: default; }
 
 /* ─ Поле ввода ────────────────────────────────────────────────────────── */
-.composer-wrap { flex: none; background: var(--surface); border-top: 1px solid var(--line); }
+/* position: relative — от поля ввода отсчитывается предпросмотр «кружка». */
+.composer-wrap { position: relative; flex: none; background: var(--surface); border-top: 1px solid var(--line); }
+
+/* ─ «Кружки» ──────────────────────────────────────────────────────────── */
+.note-circle {
+  position: relative;
+  display: block;
+  width: min(15rem, 62vw);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #000;
+}
+
+.note-circle video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.note-ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; }
+.note-ring circle { fill: none; stroke-width: 3; }
+.note-ring-track { stroke: rgb(255 255 255 / 0.18); }
+.note-ring-bar { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 0.12s linear; }
+
+/* Предпросмотр записи — над полем ввода, зеркально, как в зеркале. */
+.note-preview {
+  position: absolute;
+  bottom: calc(100% + var(--s-4));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  filter: drop-shadow(0 10px 30px rgb(0 0 0 / 0.35));
+}
+
+.note-preview .note-circle { width: min(17rem, 70vw); }
+.note-preview video { transform: scaleX(-1); }
+
+/* «Кружок» в ленте — кнопка: нажатие включает звук. */
+.note-bubble { padding: 0; border: 0; cursor: pointer; font: inherit; color: #fff; }
+.note-bubble:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.note-time,
+.note-muted {
+  position: absolute;
+  bottom: 0.625rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.4375rem;
+  border-radius: var(--r-full);
+  background: rgb(0 0 0 / 0.45);
+  font-size: var(--t-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.note-time { left: 50%; transform: translateX(-50%); bottom: 0.5rem; }
+.note-muted { right: 22%; bottom: 14%; padding: 0.25rem; }
+
+/* Пузырь с «кружком» без подписи — без фона и тени: только круг и время. */
+.bubble.has-note { background: none; box-shadow: none; padding: 0; }
+.bubble.has-note .att-note-wrap { margin: 0; }
+.bubble.has-note .bubble-meta {
+  right: 0.25rem;
+  bottom: 0.25rem;
+  padding: 0.125rem 0.4375rem;
+  border-radius: var(--r-full);
+  background: rgb(0 0 0 / 0.45);
+  color: #fff;
+}
+.bubble.has-note .bubble-meta .ticks { color: #fff; }
+.bubble.has-note .bubble-foot { display: none; }
+.bubble.has-note .reactions { padding-right: 0; }
+
+.composer-video { align-self: flex-end; margin-bottom: 0.125rem; }
 
 /* Полоса над полем: «ответ на …» или «редактирование». */
 .composer-mode {

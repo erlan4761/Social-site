@@ -8,7 +8,7 @@ import {
 } from '../api';
 import { clockTime, dayKey, dayLabel, fullDate, isOnline, plural } from '../time';
 import { highlight, searchTerms } from '../highlight';
-import { canRecord, mmss, useVoiceRecorder } from '../voice';
+import { VIDEO_NOTE_MAX_S, canRecord, mmss, useRecorder } from '../voice';
 import { Icon } from './Icon';
 import { Monogram } from './Monogram';
 
@@ -21,6 +21,7 @@ export function attachmentLabel(a: Pick<Attachment, 'kind' | 'name'> | null | un
     case 'image': return 'Фото';
     case 'video': return 'Видео';
     case 'voice': return 'Голосовое сообщение';
+    case 'videonote': return 'Видеосообщение';
     case 'audio': return a.name || 'Аудио';
     case 'file': return a.name || 'Файл';
   }
@@ -121,6 +122,120 @@ function VoicePlayer({ a }: { a: Attachment }) {
   );
 }
 
+/** Кольцо прогресса вокруг «кружка»: у записи — сколько из минуты, у плеера — сколько проиграно. */
+function Ring({ progress }: { progress: number }) {
+  const r = 48;
+  const length = 2 * Math.PI * r;
+  return (
+    <svg className="note-ring" viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r={r} className="note-ring-track" />
+      <circle
+        cx="50"
+        cy="50"
+        r={r}
+        className="note-ring-bar"
+        strokeDasharray={length}
+        strokeDashoffset={length * (1 - Math.min(1, Math.max(0, progress)))}
+      />
+    </svg>
+  );
+}
+
+/** Живой предпросмотр записи — зеркально, как в зеркале, и с кольцом прогресса. */
+function VideoNotePreview({ stream, elapsed }: { stream: MediaStream; elapsed: number }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.srcObject = stream;
+  }, [stream]);
+  return (
+    <div className="note-preview" aria-hidden="true">
+      <div className="note-circle">
+        <video ref={ref} autoPlay muted playsInline />
+        <Ring progress={elapsed / VIDEO_NOTE_MAX_S} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * «Кружок» в ленте. Пока его видно, он беззвучно крутится по кругу, как в
+ * Телеграме; нажатие — сначала и со звуком, кольцо показывает, сколько
+ * проиграно; ещё нажатие — пауза. Ушёл с экрана — останавливается.
+ */
+function VideoNote({ a, onMediaLoad }: { a: Attachment; onMediaLoad: () => void }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [loud, setLoud] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [at, setAt] = useState(0);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) void el.play().catch(() => undefined);
+      else el.pause();
+    }, { threshold: 0.5 });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  function toggle() {
+    const el = ref.current;
+    if (!el) return;
+    if (!loud) {
+      el.muted = false;
+      el.loop = false;
+      el.currentTime = 0;
+      void el.play().catch(() => undefined);
+      setLoud(true);
+    } else if (el.paused) {
+      void el.play().catch(() => undefined);
+    } else {
+      el.pause();
+    }
+  }
+
+  return (
+    <button
+      className={loud ? 'note-circle note-bubble loud' : 'note-circle note-bubble'}
+      type="button"
+      onClick={toggle}
+      aria-label={loud ? 'Пауза или продолжить видеосообщение' : 'Смотреть видеосообщение со звуком'}
+    >
+      <video
+        ref={ref}
+        src={a.url}
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={onMediaLoad}
+        onTimeUpdate={(e) => {
+          const el = e.currentTarget;
+          setAt(el.currentTime);
+          if (!el.muted) setProgress(el.duration ? el.currentTime / el.duration : 0);
+        }}
+        onEnded={(e) => {
+          // Досмотрели со звуком — обратно в беззвучный круг, как было.
+          const el = e.currentTarget;
+          el.muted = true;
+          el.loop = true;
+          setLoud(false);
+          setProgress(0);
+          void el.play().catch(() => undefined);
+        }}
+      />
+      {loud && <Ring progress={progress} />}
+      <span className="note-time">{mmss(loud ? at : a.duration ?? 0)}</span>
+      {!loud && (
+        <span className="note-muted" aria-hidden="true">
+          <Icon name="volume-off" size={12} />
+        </span>
+      )}
+    </button>
+  );
+}
+
 type ViewProps = { a: Attachment; onMediaLoad: () => void; onOpenImage: (url: string, alt: string) => void };
 
 function AttachmentView({ a, onMediaLoad, onOpenImage }: ViewProps) {
@@ -135,6 +250,8 @@ function AttachmentView({ a, onMediaLoad, onOpenImage }: ViewProps) {
       return <video className="att-video" src={a.url} controls preload="metadata" playsInline onLoadedMetadata={onMediaLoad} />;
     case 'voice':
       return <VoicePlayer a={a} />;
+    case 'videonote':
+      return <VideoNote a={a} onMediaLoad={onMediaLoad} />;
     case 'audio':
       return (
         <div className="att-audio">
@@ -474,6 +591,8 @@ export function MessageList({
               if (ends) cls.push('run-end');
               if (flash === m.id) cls.push('flash');
               if (menu?.item.id === m.id) cls.push('menu-open');
+              // «Кружок» без подписи — без пузыря, как в Телеграме: только круг и время.
+              if (m.attachment?.kind === 'videonote' && !m.body) cls.push('has-note');
 
               const meta = (
                 <>
@@ -886,11 +1005,14 @@ export function Composer({
   const ready = (text.trim().length > 0 || pending != null) && left >= 0 && !sending;
   const attachable = Boolean(onSendAttachment) && !editing;
 
-  const voice = useVoiceRecorder((rec) => {
+  const voice = useRecorder((rec) => {
     if (!onSendAttachment) return;
     setSending(true);
-    void onSendAttachment({ file: rec.blob, name: rec.name, voice: { duration: rec.duration, wave: rec.wave } })
-      .finally(() => setSending(false));
+    void onSendAttachment(
+      rec.kind === 'video'
+        ? { file: rec.blob, name: rec.name, videoNote: { duration: rec.duration } }
+        : { file: rec.blob, name: rec.name, voice: { duration: rec.duration, wave: rec.wave } },
+    ).finally(() => setSending(false));
   });
 
   // Вход в правку подставляет текст сообщения, выход из неё — очищает поле:
@@ -1002,8 +1124,16 @@ export function Composer({
         </p>
       )}
 
+      {voice.recording === 'video' && voice.stream && (
+        <VideoNotePreview stream={voice.stream} elapsed={voice.elapsed} />
+      )}
+
       {voice.recording ? (
-        <div className="composer recording" role="group" aria-label="Запись голосового">
+        <div
+          className="composer recording"
+          role="group"
+          aria-label={voice.recording === 'video' ? 'Запись видеосообщения' : 'Запись голосового'}
+        >
           <button className="icon-btn" type="button" aria-label="Отменить запись" onClick={() => voice.stop(true)}>
             <Icon name="trash" />
           </button>
@@ -1012,7 +1142,12 @@ export function Composer({
             {mmss(voice.elapsed)}
           </span>
           <span className="rec-hint">Идёт запись — отправьте, когда закончите</span>
-          <button className="composer-send" type="button" aria-label="Отправить голосовое" onClick={() => voice.stop(false)}>
+          <button
+            className="composer-send"
+            type="button"
+            aria-label={voice.recording === 'video' ? 'Отправить видеосообщение' : 'Отправить голосовое'}
+            onClick={() => voice.stop(false)}
+          >
             <Icon name="send" size={20} />
           </button>
         </div>
@@ -1096,18 +1231,37 @@ export function Composer({
           />
           {left <= COUNTER_FROM && <span className={left < 0 ? 'counter over' : 'counter'}>{left}</span>}
           {showMic ? (
-            <button
-              className="composer-send mic"
-              type="button"
-              aria-label="Записать голосовое"
-              disabled={sending}
-              onClick={() => {
-                voice.clearError();
-                void voice.start();
-              }}
-            >
-              <Icon name="mic" size={20} />
-            </button>
+            <>
+              {/* «Кружок» — отдельной кнопкой рядом с микрофоном: в вебе явная
+                  кнопка понятнее переключателя «нажми — сменится режим». */}
+              {canRecord('video') && (
+                <button
+                  className="icon-btn composer-video"
+                  type="button"
+                  aria-label="Записать видеосообщение"
+                  title="Видеосообщение — до минуты"
+                  disabled={sending}
+                  onClick={() => {
+                    voice.clearError();
+                    void voice.start('video');
+                  }}
+                >
+                  <Icon name="video" />
+                </button>
+              )}
+              <button
+                className="composer-send mic"
+                type="button"
+                aria-label="Записать голосовое"
+                disabled={sending}
+                onClick={() => {
+                  voice.clearError();
+                  void voice.start('voice');
+                }}
+              >
+                <Icon name="mic" size={20} />
+              </button>
+            </>
           ) : (
             <button
               className="composer-send"

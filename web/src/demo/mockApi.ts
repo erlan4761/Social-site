@@ -194,6 +194,52 @@ function hummedVoice(seconds: number): { url: string; wave: string } {
   return { url: URL.createObjectURL(new Blob([view], { type: 'audio/wav' })), wave };
 }
 
+/**
+ * «Кружок» витрины: четыре секунды анимации на холсте, записанные в WebM
+ * тем же MediaRecorder, которым пишутся настоящие. Живой камеры у витрины
+ * нет, а показать, как «кружок» выглядит и играет, хочется и без неё.
+ */
+async function paintedVideoNote(seconds: number): Promise<string | null> {
+  if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported('video/webm')) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = 320;
+  canvas.height = 320;
+  const g = canvas.getContext('2d');
+  if (!g || typeof canvas.captureStream !== 'function') return null;
+
+  const recorder = new MediaRecorder(canvas.captureStream(24), { mimeType: 'video/webm' });
+  const chunks: Blob[] = [];
+  recorder.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
+  const done = new Promise<string>((resolve) => {
+    recorder.onstop = () => resolve(URL.createObjectURL(new Blob(chunks, { type: 'video/webm' })));
+  });
+
+  const start = performance.now();
+  const frame = () => {
+    const t = (performance.now() - start) / 1000;
+    const hue = (200 + t * 40) % 360;
+    const grad = g.createLinearGradient(0, 0, 320, 320);
+    grad.addColorStop(0, `hsl(${hue} 55% 45%)`);
+    grad.addColorStop(1, `hsl(${(hue + 70) % 360} 60% 55%)`);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 320, 320);
+    // Солнце, которое «встаёт» за четыре секунды.
+    g.fillStyle = 'rgba(255, 236, 190, 0.9)';
+    g.beginPath();
+    g.arc(160, 250 - t * 30, 44, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = '#fff';
+    g.font = '600 26px sans-serif';
+    g.textAlign = 'center';
+    g.fillText('привет с набережной', 160, 84);
+    if (t < seconds) requestAnimationFrame(frame);
+    else recorder.stop();
+  };
+  recorder.start();
+  frame();
+  return done;
+}
+
 function seed() {
   users = [];
   posts = [];
@@ -326,6 +372,14 @@ function seed() {
   const hum = hummedVoice(6);
   const voice = dm(marina, demo, '', 81);
   voice.attachment = { url: hum.url, kind: 'voice', mime: 'audio/wav', name: null, size: null, duration: 6, wave: hum.wave };
+  const note = dm(marina, demo, '', 80);
+  note.attachment = { url: '', kind: 'videonote', mime: 'video/webm', name: null, size: null, duration: 4, wave: null };
+  // Видео дорисуется через пару секунд — запись холста асинхронна. До тех пор
+  // «кружок» пустой; не умеет браузер записывать холст — сообщения не будет.
+  void paintedVideoNote(4).then((url) => {
+    if (url) note.attachment = { ...note.attachment!, url };
+    else messages = messages.filter((m) => m.id !== note.id);
+  });
   dmReactions.push({ messageId: weekend.id, userId: marina.id, emoji: '❤️', createdAt: ago(82) });
   dm(oleg, demo, 'Привет! Нашёл тот станок с фотографии — расскажу при встрече.', 30, false);
   dm(oleg, demo, 'И ещё: у тебя тот аккорд из поста — это Am7?', 25, false);
@@ -606,6 +660,7 @@ function attachmentLabelOf(a: Attachment | null) {
   if (a.kind === 'image') return 'Фото';
   if (a.kind === 'video') return 'Видео';
   if (a.kind === 'voice') return 'Голосовое сообщение';
+  if (a.kind === 'videonote') return 'Видеосообщение';
   if (a.kind === 'audio') return a.name || 'Аудио';
   return a.name || 'Файл';
 }
@@ -618,12 +673,17 @@ function attachmentLabelOf(a: Attachment | null) {
 function attachmentFrom(input: AttachmentInput): Attachment {
   if (input.file.size > 40 * 1024 * 1024) fail(413, 'Файл слишком большой');
   const type = input.file.type;
-  const kind: Attachment['kind'] = input.voice
+  const kind: Attachment['kind'] = input.videoNote
+    ? 'videonote'
+    : input.voice
     ? 'voice'
     : type.startsWith('image/') ? 'image'
     : type.startsWith('video/') ? 'video'
     : type.startsWith('audio/') ? 'audio'
     : 'file';
+  if (input.videoNote && (input.videoNote.duration < 1 || input.videoNote.duration > 60)) {
+    fail(400, 'Длительность видеосообщения — от 1 до 60 секунд');
+  }
   if (input.voice && (input.voice.duration < 1 || input.voice.duration > 300)) {
     fail(400, 'Длительность голосового — от 1 до 300 секунд');
   }
@@ -631,9 +691,9 @@ function attachmentFrom(input: AttachmentInput): Attachment {
     url: URL.createObjectURL(input.file),
     kind,
     mime: type || 'application/octet-stream',
-    name: input.voice ? null : input.name ?? null,
+    name: input.voice || input.videoNote ? null : input.name ?? null,
     size: input.file.size,
-    duration: input.voice?.duration ?? null,
+    duration: input.voice?.duration ?? input.videoNote?.duration ?? null,
     wave: input.voice?.wave ?? null,
   };
 }

@@ -75,7 +75,7 @@ export type Quote =
     }
   | { id: number; deleted: true };
 
-export type AttachmentKind = 'image' | 'video' | 'audio' | 'voice' | 'file';
+export type AttachmentKind = 'image' | 'video' | 'audio' | 'voice' | 'videonote' | 'file';
 
 /** Вложение сообщения. `url` отдаёт файл только тем, кто видит сообщение. */
 export type Attachment = {
@@ -96,6 +96,8 @@ export type AttachmentInput = {
   body?: string;
   replyTo?: number | null;
   voice?: { duration: number; wave: string };
+  /** «Кружок» — видеосообщение до минуты. */
+  videoNote?: { duration: number };
 };
 
 function attachmentForm(input: AttachmentInput) {
@@ -107,6 +109,10 @@ function attachmentForm(input: AttachmentInput) {
     form.append('voice', '1');
     form.append('duration', String(input.voice.duration));
     form.append('wave', input.voice.wave);
+  }
+  if (input.videoNote) {
+    form.append('videonote', '1');
+    form.append('duration', String(input.videoNote.duration));
   }
   return form;
 }
