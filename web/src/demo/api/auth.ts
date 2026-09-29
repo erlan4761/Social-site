@@ -7,6 +7,12 @@ import { publicUser } from '../model/posts';
 /** Методы витрины: вход, регистрация, пароль, настройки аккаунта. */
 
 export const authApi = {
+  // Пуш-уведомлений у витрины нет: их доставляет сервер, а его здесь нет.
+  pushKey: () => fail(400, 'В витрине пуш-уведомлений нет — они приходят от сервера'),
+  savePushSubscription: (_subscription: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
+    fail(400, 'В витрине пуш-уведомлений нет — они приходят от сервера'),
+  deletePushSubscription: (_endpoint: string) => tick({ ok: true as const }),
+
   me: () => tick({ user: me() ? publicUser(me()!) : null }),
 
   register: (input: { username: string; displayName: string; email: string; password: string }) => {

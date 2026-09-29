@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent, MouseEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError, type AccountSettings, type LastSeenPrivacy, type Session } from '../api';
+import { disablePush, enablePush, install, isStandalone, pushState, useInstallAvailable, type PushState } from '../pwa';
 import { useSession } from '../session';
 import { fullDate, joinedOn, plural } from '../time';
 
@@ -65,6 +66,7 @@ export function Settings() {
 
         {account && <Privacy initial={account.lastSeen} />}
         <Password />
+        <Device />
         <Sessions />
         <DeleteAccount />
       </div>
@@ -322,6 +324,75 @@ function Sessions() {
           )}
         </>
       )}
+    </section>
+  );
+}
+
+/* ─ Уведомления и приложение ─────────────────────────────────────────── */
+
+const PUSH_NOTES: Record<PushState, string> = {
+  unsupported:
+    'Этот браузер не умеет пуш-уведомления. На iPhone и iPad они работают, если сначала добавить сайт на экран «Домой» (iOS 16.4 и новее).',
+  demo: 'В витрине пуш-уведомлений нет: их присылает сервер, а витрина живёт без него. На полной версии они работают.',
+  denied: 'Уведомления для этого сайта запрещены в настройках браузера. Разрешите их там — и кнопка появится здесь.',
+  off: 'Сообщения, упоминания и приглашения придут, даже когда вкладка закрыта. Пока сайт открыт, хватает счётчиков — дважды не звеним.',
+  on: 'Включены на этом устройстве. Выйдете из аккаунта здесь — уведомления сюда перестанут приходить сами.',
+};
+
+function Device() {
+  const [push, setPush] = useState<PushState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const canInstall = useInstallAvailable();
+  const standalone = isStandalone();
+
+  useEffect(() => {
+    pushState().then(setPush).catch(() => setPush('unsupported'));
+  }, []);
+
+  async function toggle(on: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      setPush(await (on ? enablePush() : disablePush()));
+    } catch (err) {
+      setError(errorText(err, on ? 'Не удалось включить уведомления' : 'Не удалось выключить уведомления'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-block" aria-labelledby="settings-device">
+      <h2 className="settings-title" id="settings-device">
+        Уведомления и приложение
+      </h2>
+      {push && <p className="settings-note">{PUSH_NOTES[push]}</p>}
+      {error && <p className="error">{error}</p>}
+      <div className="settings-actions">
+        {push === 'off' && (
+          <button className="btn" type="button" disabled={busy} onClick={() => void toggle(true)}>
+            {busy ? 'Включаю…' : 'Включить уведомления'}
+          </button>
+        )}
+        {push === 'on' && (
+          <button className="btn ghost" type="button" disabled={busy} onClick={() => void toggle(false)}>
+            {busy ? 'Выключаю…' : 'Выключить уведомления'}
+          </button>
+        )}
+        {canInstall && (
+          <button className="btn ghost" type="button" onClick={() => void install()}>
+            Установить приложение
+          </button>
+        )}
+      </div>
+      <p className="settings-note">
+        {standalone
+          ? 'Открыто как приложение.'
+          : canInstall
+            ? 'Приложение встанет на рабочий стол или экран «Домой» — отдельным окном, без адресной строки.'
+            : 'Поставить как приложение: в Safari — «Поделиться» → «На экран „Домой“», в Chrome и Edge — значок установки в адресной строке.'}
+      </p>
     </section>
   );
 }

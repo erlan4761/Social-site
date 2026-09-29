@@ -672,6 +672,18 @@ const realApi = {
 
   channels: () => request<{ channels: ChannelSummary[]; unreadTotal: number }>('/channels'),
 
+  // ─ Пуш-уведомления ────────────────────────────────────────────────────
+
+  /** Открытый ключ VAPID сервера — нужен браузеру для подписки. */
+  pushKey: () => request<{ publicKey: string }>('/push/key'),
+
+  /** Подписка этого устройства — как её отдаёт PushSubscription.toJSON(). */
+  savePushSubscription: (subscription: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
+    request<{ ok: true }>('/push/subscription', { method: 'PUT', body: body(subscription) }),
+
+  deletePushSubscription: (endpoint: string) =>
+    request<{ ok: true }>('/push/subscription', { method: 'DELETE', body: body({ endpoint }) }),
+
   // ─ Стикеры ────────────────────────────────────────────────────────────
 
   sendSticker: (username: string, sticker: string) =>

@@ -303,3 +303,6 @@
 @media (max-width: 46rem) {
   .settings-facts > div { grid-template-columns: 1fr; gap: 0; }
 }
+
+.settings-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-bottom: var(--s-4); }
+.settings-actions:empty { display: none; }
