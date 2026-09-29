@@ -468,6 +468,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_link_previews_image ON link_previews(image_url);
 `);
 
+// Альбом — несколько фото и видео подряд: отдельные сообщения с общим
+// album_id, как media group в Телеграме (см. messageExtras.js).
+ensureColumn('messages', 'album_id', 'TEXT');
+ensureColumn('chat_messages', 'album_id', 'TEXT');
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_messages_album ON messages(album_id) WHERE album_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_chat_messages_album ON chat_messages(album_id) WHERE album_id IS NOT NULL;
+`);
+
 // Черновики (см. drafts.js): по одному на человека и чат.
 db.exec(`
   CREATE TABLE IF NOT EXISTS drafts (

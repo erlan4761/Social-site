@@ -119,7 +119,33 @@ export const extraFields = (row) => ({
       : null,
   replyToId: row.reply_to_id ?? null,
   sticker: row.sticker ?? null,
+  albumId: row.album_id ?? null,
 });
+
+/* ─ Альбомы ──────────────────────────────────────────────────────────────
+ * Несколько фото и видео одним махом — как media group в Телеграме: каждое —
+ * отдельное сообщение (своя реакция, своё удаление, своя пересылка), а общий
+ * album_id склеивает их в одну сетку на экране. Код альбома придумывает
+ * клиент; сервер следит, чтобы в чужой альбом — другого автора или другой
+ * переписки — ничего нельзя было подклеить, и чтобы в нём было не больше
+ * десяти снимков.
+ */
+export const ALBUM_MAX = 10;
+const ALBUM_RE = /^[A-Za-z0-9_-]{8,40}$/;
+
+export function readAlbum(raw) {
+  if (raw == null || raw === '') return null;
+  if (typeof raw !== 'string' || !ALBUM_RE.test(raw)) throw bad('Некорректный код альбома');
+  return raw;
+}
+
+/** `rows` — сообщения с этим album_id, `mine` — «то же автор и та же переписка». */
+export function checkAlbum(album, attachment, rows, mine) {
+  if (!album) return;
+  if (!attachment || !['image', 'video'].includes(attachment.kind)) throw bad('В альбоме — только фото и видео');
+  if (!rows.every(mine)) throw bad('Альбом не найден');
+  if (rows.length >= ALBUM_MAX) throw bad(`В альбоме не больше ${ALBUM_MAX} фото и видео`);
+}
 
 /** Колонки и JOIN источника пересылки для выборки с `extraFields`. */
 export const FWD_COLUMNS =
