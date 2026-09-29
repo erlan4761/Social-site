@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { loadUser } from './auth.js';
+import { loadUser, requireAuth } from './auth.js';
 import { uploadsDir } from './media.js';
 import { rateLimit } from './rateLimit.js';
 import { router as authRoutes } from './routes/auth.js';
@@ -26,6 +26,7 @@ import { router as accountRoutes } from './routes/account.js';
 import { router as pollRoutes } from './routes/polls.js';
 import { router as scheduledRoutes } from './routes/scheduled.js';
 import { startScheduler } from './scheduled.js';
+import { dropDeadStreams, nudge, openStream } from './live.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -120,6 +121,22 @@ for (const path of ['/api/messages/*splat', '/api/chats/*splat', '/api/channels/
 }
 
 if (relaxed) console.warn('⚠  RELAX_RATE_LIMITS=1 — защита от перебора ослаблена. Только для тестов.');
+
+// Живой поток и толчки участникам — до маршрутов: прослойка вешает
+// «после ответа» на запрос раньше, чем его обработает маршрут (см. live.js).
+app.get('/api/events', requireAuth, openStream);
+app.use('/api/messages', nudge('dm'));
+app.use('/api/chats', nudge('chat'));
+app.use('/api/channels', nudge('channel'));
+app.use('/api/polls', nudge('poll'));
+for (const path of ['/api/prefs', '/api/folders', '/api/notifications']) app.use(path, nudge('self'));
+// Сеанс закрыт — его поток тоже: выход, смена пароля, «завершить сеанс», удаление.
+for (const path of ['/api/auth/logout', '/api/auth/reset-password', '/api/account']) {
+  app.use(path, (req, res, next) => {
+    if (req.method !== 'GET') res.on('finish', dropDeadStreams);
+    next();
+  });
+}
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);

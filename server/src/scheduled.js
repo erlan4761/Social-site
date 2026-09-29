@@ -2,6 +2,7 @@ import { db, nowIso } from './db.js';
 import { isBlockedPair } from './blocks.js';
 import { saveMentions } from './mentions.js';
 import { notify } from './notifications.js';
+import { touchChannel, touchChat, touchDm } from './live.js';
 
 /**
  * Отложенные сообщения — «отправить позже», как в Телеграме: в личную
@@ -67,6 +68,12 @@ export function deliver(row) {
     const taken = db.prepare('DELETE FROM scheduled_messages WHERE id = ?').run(row.id).changes;
     if (taken) id = DELIVER[row.kind](row, nowIso());
     db.exec('COMMIT');
+    // Ушло не из запроса, а по часам — толкаем участников сами.
+    if (id != null) {
+      if (row.kind === 'dm') touchDm(row.user_id, row.target_id);
+      else if (row.kind === 'chat') touchChat(row.target_id);
+      else touchChannel(row.target_id);
+    }
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;

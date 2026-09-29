@@ -2665,5 +2665,89 @@ check('и в «Избранное» — тоже', r.status === 201 && r.body.me
 r = await ron(`/messages/${userPi}`);
 check('обычные сообщения — без стикера', r.body.messages?.filter((m) => !m.sticker).every((m) => m.sticker === null), '');
 
+console.log('\n— живой поток событий —');
+/** Слушает /api/events клиента: копит события, умеет ждать нужное. */
+async function listen(client) {
+  const res = await client.raw('/api/events');
+  const events = [];
+  const state = { status: res.status, closed: false, events };
+  if (res.status !== 200) return state;
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  (async () => {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const line = buf.slice(0, i).split('\n').find((l) => l.startsWith('data: '));
+          buf = buf.slice(i + 2);
+          if (line) events.push(JSON.parse(line.slice(6)));
+        }
+      }
+    } catch {
+      // оборвали сами — это и есть конец
+    }
+    state.closed = true;
+  })();
+  state.stop = () => reader.cancel().catch(() => undefined);
+  state.waitFor = async (pred, ms = 1500) => {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      const found = events.find(pred);
+      if (found) return found;
+      await sleep(25);
+    }
+    return null;
+  };
+  state.waitClosed = async (ms = 1500) => {
+    const until = Date.now() + ms;
+    while (Date.now() < until && !state.closed) await sleep(25);
+    return state.closed;
+  };
+  return state;
+}
+
+const piaId = (await pia('/auth/me')).body.user.id;
+let stream = await listen(guest);
+check('поток гостю — 401', stream.status === 401, `${stream.status}`);
+
+const ronLive = await listen(ron);
+const solLive = await listen(sol);
+check('поток открылся и поздоровался', ronLive.status === 200 && Boolean(await ronLive.waitFor((e) => e.t === 'ready')), `${ronLive.status}`);
+
+await dmSend(pia, userRo, { body: 'Ты тут?' });
+check('новое сообщение — толчок «переписка с Пией»', Boolean(await ronLive.waitFor((e) => e.t === 'dm' && e.with === piaId)), JSON.stringify(ronLive.events));
+check('и толчок счётчиков — появилось событие', Boolean(await ronLive.waitFor((e) => e.t === 'badges')), '');
+
+ronLive.events.length = 0;
+await pia(`/messages/${userRo}/typing`, { method: 'PUT' });
+check('«печатает…» — тоже толчок', Boolean(await ronLive.waitFor((e) => e.t === 'dm' && e.with === piaId)), '');
+
+ronLive.events.length = 0;
+await pia(`/chats/${pChat}/messages`, { method: 'POST', body: JSON.stringify({ body: 'Сбор в десять' }) });
+check('сообщение в группе — толчок участнику', Boolean(await ronLive.waitFor((e) => e.t === 'chat' && e.id === pChat)), JSON.stringify(ronLive.events));
+check('не участнику — ничего', !(await solLive.waitFor((e) => e.t === 'chat' && e.id === pChat, 400)), '');
+
+ronLive.events.length = 0;
+r = await pia(`/chats/${pChat}/messages`, { method: 'POST', body: JSON.stringify({ body: '' }) });
+check('неудачный запрос никого не толкает', r.status === 400 && !(await ronLive.waitFor((e) => e.t === 'chat', 400)), `${r.status}`);
+
+await pia(`/chats/${pChat}/members/${userRo}`, { method: 'DELETE' });
+check('убранный из группы узнаёт об этом', Boolean(await ronLive.waitFor((e) => e.t === 'chat' && e.id === pChat)), '');
+
+const ron2 = makeClient();
+await ron2('/auth/login', { method: 'POST', body: JSON.stringify({ username: userRo, password: 'parol12345' }) });
+const ron2Live = await listen(ron2);
+await ron2Live.waitFor((e) => e.t === 'ready');
+await ron('/account/sessions', { method: 'DELETE' });
+check('завершили сеанс — его поток закрыт', await ron2Live.waitClosed(), '');
+await ron('/auth/logout', { method: 'POST' });
+check('вышли — поток закрыт', await ronLive.waitClosed(), '');
+solLive.stop();
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

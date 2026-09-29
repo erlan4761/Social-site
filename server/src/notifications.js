@@ -2,6 +2,7 @@ import { db, nowIso } from './db.js';
 import { isBlockedPair } from './blocks.js';
 import { publicUrl } from './media.js';
 import { isMuted } from './prefs.js';
+import { touchBadges } from './live.js';
 
 export const NOTIFICATION_KINDS = ['like', 'comment', 'follow', 'message', 'chat_message', 'chat_invite', 'mention'];
 
@@ -98,6 +99,7 @@ export function notify({ userId, actorId, kind, postId = null, commentId = null,
     VALUES (:userId, :actorId, :kind, :postId, :commentId, :chatId, :messageId, :createdAt)
   `).run({ ...params, messageId: asId(messageId), createdAt: nowIso() });
 
+  touchBadges(user);
   return Number(info.lastInsertRowid);
 }
 
