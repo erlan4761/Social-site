@@ -3,7 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerE
 import { Link } from 'react-router-dom';
 import {
   REACTIONS, type Attachment, type AttachmentInput, type Author, type ConversationHit, type ForwardedFrom,
-  type PinnedPreview, type Quote,
+  type PinnedPreview, type Poll, type Quote,
   type Reaction,
 } from '../api';
 import { clockTime, dayKey, dayLabel, fullDate, isOnline, plural } from '../time';
@@ -377,6 +377,8 @@ export type BubbleItem = {
   /** Публикация канала: куда ведёт строка «N комментариев». */
   commentsTo?: string;
   commentCount?: number;
+  /** Опрос: вопрос — `body`, варианты и голоса — здесь. */
+  poll?: Poll | null;
 };
 
 /** Какие действия есть в меню. У публикации канала нет «Ответить», у
@@ -393,7 +395,9 @@ export type MessageAction =
   | { type: 'forward' }
   | { type: 'copy' }
   | { type: 'pin' }
-  | { type: 'react'; emoji: string | null };
+  | { type: 'react'; emoji: string | null }
+  | { type: 'vote'; options: number[] }
+  | { type: 'closePoll' };
 
 /** Реплики одного человека подряд и без долгой паузы собираются в серию:
  *  внутри неё пузыри жмутся друг к другу, а имя автора стоит один раз. */
@@ -458,6 +462,128 @@ type MenuState = { item: BubbleItem; x: number; y: number } | null;
  * переписки (`key`), иначе смена чата выглядела бы как «пришло 30 новых
  * сообщений» и прокрутка вела бы себя по правилам дозагрузки.
  */
+/* ─ Опрос ──────────────────────────────────────────────────────────────
+   Как в Телеграме: пока не проголосовал — варианты кнопками (при нескольких
+   ответах — флажки и «Голосовать»), после — проценты полосами, свой выбор
+   отмечен галочкой. Решает сервер: votes === null значит «результаты скрыты». */
+
+type PollCardProps = {
+  question: string;
+  poll: Poll;
+  readOnly: boolean;
+  onVote: (options: number[]) => void;
+  onClose: () => void;
+};
+
+function PollCard({ question, poll, readOnly, onVote, onClose }: PollCardProps) {
+  const [picked, setPicked] = useState<number[]>([]);
+  // Автору итоги видны и без голоса, но голосует он, как все: итоги — по кнопке.
+  const [peek, setPeek] = useState(false);
+  const voted = poll.myVotes.length > 0;
+  const resultsOpen = poll.options.some((o) => o.votes != null);
+  const canVote = !poll.closed && !voted && !readOnly;
+  const showResults = !canVote || peek;
+  const kind = poll.closed
+    ? 'Опрос завершён'
+    : [poll.anonymous ? 'Анонимный опрос' : 'Открытый опрос', poll.multiple ? 'несколько ответов' : null]
+      .filter(Boolean)
+      .join(', ');
+  const top = Math.max(0, ...poll.options.map((o) => o.votes ?? 0));
+
+  return (
+    <div className="poll" role="group" aria-label={`Опрос: ${question}`}>
+      <p className="poll-question">{question}</p>
+      <p className="poll-kind">{kind}</p>
+
+      {!showResults ? (
+        <ul className="poll-options">
+          {poll.options.map((o) => (
+            <li key={o.id}>
+              {poll.multiple ? (
+                <label className="poll-choice">
+                  <input
+                    type="checkbox"
+                    checked={picked.includes(o.id)}
+                    onChange={(e) =>
+                      setPicked((prev) => (e.target.checked ? [...prev, o.id] : prev.filter((x) => x !== o.id)))
+                    }
+                  />
+                  {o.text}
+                </label>
+              ) : (
+                <button className="poll-choice" type="button" onClick={() => onVote([o.id])}>
+                  <span className="poll-radio" aria-hidden="true" />
+                  {o.text}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <ul className="poll-results">
+          {poll.options.map((o) => {
+            const votes = o.votes ?? 0;
+            const share = poll.total > 0 ? Math.round((votes / poll.total) * 100) : 0;
+            const mine = poll.myVotes.includes(o.id);
+            return (
+              <li key={o.id} className={votes === top && votes > 0 && poll.closed ? 'poll-row lead' : 'poll-row'}>
+                <span className="poll-row-head">
+                  <span className="poll-share">{o.votes == null ? '' : `${share}%`}</span>
+                  <span className="poll-text">
+                    {o.text}
+                    {mine && (
+                      <span className="poll-mine" title="Ваш выбор">
+                        <Icon name="check" size={14} />
+                        <span className="sr-only"> — ваш выбор</span>
+                      </span>
+                    )}
+                  </span>
+                  {o.voters.length > 0 && (
+                    <span className="poll-voters" title={o.voters.map((v) => v.displayName).join(', ')}>
+                      {o.voters.slice(0, 3).map((v) => (
+                        <Monogram key={v.id} username={v.username} displayName={v.displayName} avatarUrl={v.avatarUrl} size="sm" />
+                      ))}
+                    </span>
+                  )}
+                </span>
+                <span className="poll-bar" aria-hidden="true">
+                  <span style={{ width: `${o.votes == null ? 0 : share}%` }} />
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <div className="poll-foot">
+        <span className="poll-total">
+          {poll.total === 0 ? 'Пока никто не голосовал' : `${poll.total} ${plural(poll.total, 'голос', 'голоса', 'голосов')}`}
+        </span>
+        {canVote && poll.multiple && !showResults && (
+          <button className="btn small" type="button" disabled={picked.length === 0} onClick={() => onVote(picked)}>
+            Голосовать
+          </button>
+        )}
+        {canVote && resultsOpen && (
+          <button className="btn link" type="button" aria-pressed={peek} onClick={() => setPeek((v) => !v)}>
+            {peek ? 'К голосованию' : 'Результаты'}
+          </button>
+        )}
+        {voted && !poll.closed && !readOnly && (
+          <button className="btn link" type="button" onClick={() => onVote([])}>
+            Отменить голос
+          </button>
+        )}
+        {poll.canClose && !readOnly && (
+          <button className="btn link" type="button" onClick={onClose}>
+            Завершить опрос
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ─ Упоминания ─────────────────────────────────────────────────────── */
 
 // То же правило, что в mentions.js на сервере: перед «@» — не буква и не
@@ -724,7 +850,18 @@ export function MessageList({
                         в последней строке: время встаёт справа внизу, как в
                         Телеграме, и никогда не наезжает на слова. Без текста
                         (фото, голосовое) подпись идёт отдельной строкой. */}
-                    {m.body ? (
+                    {m.poll ? (
+                      <>
+                        <PollCard
+                          question={m.body}
+                          poll={m.poll}
+                          readOnly={readOnly}
+                          onVote={(options) => onAction({ type: 'vote', options }, m)}
+                          onClose={() => onAction({ type: 'closePoll' }, m)}
+                        />
+                        {m.reactions.length === 0 && <span className="bubble-foot" aria-hidden="true" />}
+                      </>
+                    ) : m.body ? (
                       <p className="bubble-text">
                         <MessageText text={m.body} me={me} />
                         <span className="bubble-meta-space" aria-hidden="true">
@@ -937,7 +1074,7 @@ function MessageMenu({ state, readOnly, can, pinned, onClose, onAction }: MenuPr
             Копировать текст
           </MenuItem>
         )}
-        {can.forward && (
+        {can.forward && !item.poll && (
           <MenuItem icon="forward" onClick={() => onAction({ type: 'forward' })}>
             Переслать
           </MenuItem>
@@ -1021,6 +1158,8 @@ type ComposerProps = {
   autoFocus?: boolean;
   /** Кого можно упомянуть через @ — участники группы без себя. */
   mentionables?: Author[];
+  /** Создать опрос — кнопка рядом со скрепкой, только в группах и каналах. */
+  onCreatePoll?: () => void;
 };
 
 export function Composer({
@@ -1033,6 +1172,7 @@ export function Composer({
   onTyping,
   autoFocus = false,
   mentionables,
+  onCreatePoll,
 }: ComposerProps) {
   const id = useId();
   const [caret, setCaret] = useState(0);
@@ -1264,6 +1404,17 @@ export function Composer({
               >
                 <Icon name="paperclip" />
               </button>
+              {onCreatePoll && (
+                <button
+                  className="icon-btn composer-poll"
+                  type="button"
+                  aria-label="Создать опрос"
+                  title="Опрос"
+                  onClick={onCreatePoll}
+                >
+                  <Icon name="poll" />
+                </button>
+              )}
               <input
                 ref={picker}
                 type="file"

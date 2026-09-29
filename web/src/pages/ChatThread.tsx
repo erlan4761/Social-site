@@ -7,6 +7,7 @@ import {
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
+import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
 import { MemberSearch } from '../components/MemberSearch';
 import { Monogram } from '../components/Monogram';
@@ -55,6 +56,7 @@ function ChatView({ idParam }: { idParam: string }) {
   const [typing, setTyping] = useState<string[]>([]);
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
+  const [pollOpen, setPollOpen] = useState(false);
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [jump, setJump] = useState<{ id: number; seq: number } | null>(null);
@@ -243,6 +245,12 @@ function ChatView({ idParam }: { idParam: string }) {
         case 'react':
           put((await api.reactChatMessage(chatId, msg.id, action.emoji)).message);
           break;
+        case 'vote':
+          if (msg.poll) put({ ...msg, poll: (await api.votePoll(msg.poll.id, action.options)).poll });
+          break;
+        case 'closePoll':
+          if (msg.poll) put({ ...msg, poll: (await api.closePoll(msg.poll.id)).poll });
+          break;
         case 'delete': {
           const others = msg.author.id !== user?.id;
           if (!window.confirm(others ? `Удалить сообщение ${msg.author.displayName}? Оно исчезнет у всех участников.` : 'Удалить сообщение? Оно исчезнет у всех участников.')) return;
@@ -373,7 +381,9 @@ function ChatView({ idParam }: { idParam: string }) {
       replyTo: m.replyTo,
       reactions: m.reactions,
       attachment: m.attachment,
-      canEdit: mine && !m.forwardedFrom && editable(m.createdAt),
+      poll: m.poll,
+      // Опрос не правится: за него уже голосуют.
+      canEdit: mine && !m.forwardedFrom && !m.poll && editable(m.createdAt),
       // Владелец чата удаляет любое сообщение — как админ группы.
       canDelete: mine || Boolean(chat?.iAmOwner),
     };
@@ -572,8 +582,22 @@ function ChatView({ idParam }: { idParam: string }) {
         onEditLast={editLast}
         onTyping={() => void api.chatTyping(chatId).catch(() => undefined)}
         mentionables={chat?.members.filter((m) => m.id !== user?.id)}
+        onCreatePoll={() => setPollOpen(true)}
         autoFocus
       />
+
+      {pollOpen && chat && (
+        <PollDialog
+          where={`В чате «${chat.title}»`}
+          onSubmit={async (poll) => {
+            const res = await api.sendChatPoll(chatId, poll);
+            edits.current += 1;
+            setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
+            refreshList();
+          }}
+          onClose={() => setPollOpen(false)}
+        />
+      )}
 
       {forwarding && (
         <ForwardDialog

@@ -164,6 +164,25 @@ export type Channel = {
   subscriberCount: number;
 };
 
+/** Вариант опроса. `votes` — null, пока результаты скрыты: смотрящий ещё
+ *  не голосовал, опрос открыт и создал его не он. `voters` — только в открытом. */
+export type PollOption = { id: number; text: string; votes: number | null; voters: Author[] };
+
+/** Опрос при сообщении группы или публикации канала. Вопрос — текст сообщения. */
+export type Poll = {
+  id: number;
+  multiple: boolean;
+  anonymous: boolean;
+  closed: boolean;
+  /** Сколько людей проголосовало — не голосов. */
+  total: number;
+  myVotes: number[];
+  canClose: boolean;
+  options: PollOption[];
+};
+
+export type PollInput = { question: string; options: string[]; multiple?: boolean; anonymous?: boolean };
+
 export type ChannelPost = {
   id: number;
   channelId: number;
@@ -174,6 +193,7 @@ export type ChannelPost = {
   commentCount: number;
   attachment: Attachment | null;
   reactions: Reaction[];
+  poll?: Poll | null;
 };
 
 export type ChannelSummary = Channel & ChatPrefs & { unread: number; lastPost: ChannelPost | null };
@@ -280,6 +300,7 @@ export type ChatMessage = MessageExtras & {
   body: string;
   createdAt: string;
   author: Author;
+  poll?: Poll | null;
 };
 
 export type ChatSummary = Chat & ChatPrefs & {
@@ -644,6 +665,20 @@ const realApi = {
   // ─ Каналы ───────────────────────────────────────────────────────────────
 
   channels: () => request<{ channels: ChannelSummary[]; unreadTotal: number }>('/channels'),
+
+  // ─ Опросы ──────────────────────────────────────────────────────────────
+
+  sendChatPoll: (chatId: number, poll: PollInput) =>
+    request<{ message: ChatMessage }>(`/chats/${chatId}/messages`, { method: 'POST', body: body({ poll }) }),
+
+  publishPoll: (handle: string, poll: PollInput) =>
+    request<{ post: ChannelPost }>(`/channels/${encodeURIComponent(handle)}/posts`, { method: 'POST', body: body({ poll }) }),
+
+  /** Голос целиком: все выбранные варианты; пустой список — отозвать голос. */
+  votePoll: (pollId: number, options: number[]) =>
+    request<{ poll: Poll }>(`/polls/${pollId}/vote`, { method: 'PUT', body: body({ options }) }),
+
+  closePoll: (pollId: number) => request<{ poll: Poll }>(`/polls/${pollId}/close`, { method: 'PUT' }),
 
   // ─ Аккаунт ─────────────────────────────────────────────────────────────
 

@@ -580,7 +580,7 @@ function ChatRow({ c, meId }: { c: ChatSummary; meId?: number }) {
             {last ? (
               <>
                 <span className="dialog-you">{mine ? 'Вы: ' : `${last.author.displayName}: `}</span>
-                {previewText(last.body, last.attachment)}
+                {last.poll ? `Опрос: ${last.body}` : previewText(last.body, last.attachment)}
               </>
             ) : (
               `${c.memberCount} ${plural(c.memberCount, 'участник', 'участника', 'участников')}, сообщений пока нет`
@@ -619,7 +619,9 @@ function ChannelRow({ c }: { c: ChannelSummary }) {
         <span className="dialog-foot">
           <span className={c.unread > 0 ? 'dialog-last unread' : 'dialog-last'}>
             {last
-              ? previewText(last.body, last.attachment)
+              ? last.poll
+                ? `Опрос: ${last.body}`
+                : previewText(last.body, last.attachment)
               : c.iAmOwner
                 ? 'Ваш канал. Опубликуйте первую запись'
                 : 'Публикаций пока нет'}

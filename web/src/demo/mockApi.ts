@@ -12,7 +12,7 @@ import type {
   ArchiveMonth, Attachment, AttachmentInput, Author, Badges, Channel, ChannelComment, ChannelPost, ChannelSummary,
   ChatFolder, ConversationHit, FolderInput, ForwardedFrom, BlockedUser, Chat, ChatMessage, ChatSummary, Comment,
   Conversation, ForwardRef, ForwardTarget, Media, Message, Notification as NotificationItem,
-  LastSeenPrivacy, NotificationKind, Page, Person, PinnedPreview, PrefKind, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
+  LastSeenPrivacy, NotificationKind, Page, Person, PinnedPreview, Poll, PollInput, PrefKind, Post, Quote, Reaction, ReportReason, ReportTargetType, User,
 } from '../api';
 import { ApiError } from '../api';
 
@@ -141,6 +141,13 @@ type DbFolder = ChatFolder & { userId: number };
 let folders: DbFolder[] = [];
 /** Кого упомянули через @ в сообщении группы — как chat_mentions. */
 let chatMentions: { messageId: number; userId: number }[] = [];
+/** Опросы — как polls/poll_options/poll_votes: при сообщении группы или публикации. */
+type DbPoll = {
+  id: number; kind: 'chat' | 'channel'; messageId: number; multiple: boolean; anonymous: boolean;
+  closedAt: string | null; options: { id: number; text: string }[];
+};
+let polls: DbPoll[] = [];
+let pollVotes: { pollId: number; optionId: number; userId: number; createdAt: string }[] = [];
 /** Сеансы — чтобы в настройках было что показать и что завершить. */
 type DbSession = { id: number; userId: number; createdAt: string; userAgent: string | null };
 let sessions: DbSession[] = [];
@@ -271,6 +278,8 @@ function seed() {
   dmReactions = [];
   chatReactions = [];
   chatMentions = [];
+  polls = [];
+  pollVotes = [];
   channels = [];
   channelSubs = [];
   channelPosts = [];
@@ -431,6 +440,16 @@ function seed() {
   const mine = say(demo, 'Давайте. Принесу вторую плёнку и таймер, а то в прошлый раз считали вслух.', 65);
   const last = say(marina, '@demo, я приду с камерой деда — она пролежала на антресолях лет десять, надо проверить затвор.', 59, invite);
   chatMentions.push({ messageId: last.id, userId: demo.id });
+  const film = say(nina, 'Какую плёнку берём на субботу?', 57);
+  const filmPoll: DbPoll = {
+    id: id(), kind: 'chat', messageId: film.id, multiple: false, anonymous: false, closedAt: null,
+    options: [{ id: id(), text: 'Kodak Gold 200' }, { id: id(), text: 'Ilford HP5' }, { id: id(), text: 'Fomapan 100' }],
+  };
+  polls.push(filmPoll);
+  pollVotes.push(
+    { pollId: filmPoll.id, optionId: filmPoll.options[1].id, userId: marina.id, createdAt: ago(56) },
+    { pollId: filmPoll.id, optionId: filmPoll.options[1].id, userId: nina.id, createdAt: ago(56) },
+  );
   chatReactions.push(
     { messageId: mine.id, userId: nina.id, emoji: '👍', createdAt: ago(64) },
     { messageId: mine.id, userId: marina.id, emoji: '👍', createdAt: ago(60) },
@@ -906,6 +925,9 @@ function dropUser(uid: number) {
     }));
   sessions = sessions.filter((x) => x.userId !== uid);
   chatMentions = chatMentions.filter((x) => x.userId !== uid && chatMessages.some((m) => m.id === x.messageId));
+  polls = polls.filter((x) =>
+    x.kind === 'chat' ? chatMessages.some((m) => m.id === x.messageId) : channelPosts.some((m) => m.id === x.messageId));
+  pollVotes = pollVotes.filter((v) => v.userId !== uid && polls.some((x) => x.id === v.pollId));
 }
 
 const toFolder = ({ userId: _owner, ...f }: DbFolder): ChatFolder => ({ ...f, types: [...f.types], include: [...f.include], exclude: [...f.exclude] });
@@ -967,10 +989,12 @@ function forwardSource(source: ForwardRef, u: DbUser) {
   if (source.from === 'channel') {
     const post = channelPosts.find((x) => x.id === source.id);
     if (!post) fail(404, 'Сообщение для пересылки не найдено');
+    if (pollOf('channel', post!.id)) fail(400, 'Опрос переслать нельзя');
     return { body: post!.body, fwdUserId: null, fwdChannelId: post!.channelId, attachment: post!.attachment };
   }
   const m = chatMessages.find((x) => x.id === source.id && memberRow(x.chatId, u.id) && !hidden(x.authorId));
   if (!m) fail(404, 'Сообщение для пересылки не найдено');
+  if (pollOf('chat', m!.id)) fail(400, 'Опрос переслать нельзя');
   return origin(m!, m!.authorId);
 }
 
@@ -1173,8 +1197,71 @@ const visibleChatMessages = (chatId: number) =>
     .filter((m) => m.chatId === chatId && !hidden(m.authorId))
     .sort((a, b) => a.id - b.id);
 
+/** Опрос глазами смотрящего — как serializePoll() в polls.js. */
+function toPoll(poll: DbPoll, authorId: number): Poll {
+  const votes = pollVotes.filter((v) => v.pollId === poll.id);
+  const mine = votes.filter((v) => v.userId === meId).map((v) => v.optionId);
+  const closed = poll.closedAt != null;
+  const results = closed || mine.length > 0 || meId === authorId;
+  return {
+    id: poll.id, multiple: poll.multiple, anonymous: poll.anonymous, closed,
+    total: new Set(votes.map((v) => v.userId)).size,
+    myVotes: mine,
+    canClose: !closed && meId === authorId,
+    options: poll.options.map((o) => {
+      const here = votes.filter((v) => v.optionId === o.id);
+      return {
+        id: o.id, text: o.text,
+        votes: results ? here.length : null,
+        voters: results && !poll.anonymous
+          ? here.filter((v) => v.userId === meId || !hidden(v.userId)).map((v) => author(byId(v.userId)!))
+          : [],
+      };
+    }),
+  };
+}
+
+const pollOf = (kind: 'chat' | 'channel', messageId: number) => polls.find((x) => x.kind === kind && x.messageId === messageId);
+
+function readPoll(raw: PollInput) {
+  const question = (raw.question ?? '').trim();
+  if (!question) fail(400, 'У опроса должен быть вопрос');
+  if (question.length > 255) fail(400, 'Вопрос — не длиннее 255 символов');
+  const options = (raw.options ?? []).map((o) => o.trim()).filter(Boolean);
+  if (options.length < 2 || options.length > 10) fail(400, 'Вариантов ответа — от 2 до 10');
+  if (options.some((o) => o.length > 100)) fail(400, 'Вариант ответа — не длиннее 100 символов');
+  if (new Set(options.map((o) => o.toLocaleLowerCase('ru'))).size !== options.length) fail(400, 'Варианты ответа не должны повторяться');
+  return { question, options, multiple: raw.multiple === true, anonymous: raw.anonymous !== false };
+}
+
+function addPoll(kind: 'chat' | 'channel', messageId: number, input: ReturnType<typeof readPoll>) {
+  polls.push({
+    id: id(), kind, messageId, multiple: input.multiple, anonymous: input.anonymous, closedAt: null,
+    options: input.options.map((text) => ({ id: id(), text })),
+  });
+}
+
+/** Опрос, видимый смотрящему, и его автор — как visiblePoll() в routes/polls.js. */
+function requirePoll(pollId: number) {
+  const u = requireMe()!;
+  const poll = polls.find((x) => x.id === pollId);
+  if (poll?.kind === 'chat') {
+    const m = chatMessages.find((x) => x.id === poll.messageId);
+    if (m && memberRow(m.chatId, u.id) && !hidden(m.authorId)) return { u, poll, authorId: m.authorId };
+  } else if (poll) {
+    const post = channelPosts.find((x) => x.id === poll.messageId);
+    const c = post ? channels.find((x) => x.id === post.channelId) : undefined;
+    if (c) return { u, poll, authorId: c.ownerId };
+  }
+  return fail(404, 'Опрос не найден');
+}
+
 const toChatMessage = (m: DbChatMessage): ChatMessage => ({
   id: m.id, chatId: m.chatId, body: m.body, createdAt: m.createdAt, author: author(byId(m.authorId)!),
+  poll: (() => {
+    const poll = pollOf('chat', m.id);
+    return poll ? toPoll(poll, m.authorId) : null;
+  })(),
   editedAt: m.editedAt,
   forwardedFrom: forwardedOf(m),
   replyTo: quoteOf(m.replyToId, visibleChatMessages(m.chatId)),
@@ -1310,6 +1397,11 @@ const toChannelPost = (p: DbChannelPost): ChannelPost => ({
   commentCount: channelComments.filter((c) => c.postId === p.id && !hidden(c.authorId)).length,
   attachment: p.attachment,
   reactions: reactionsOf(postReactions, p.id),
+  poll: (() => {
+    const poll = pollOf('channel', p.id);
+    const c = channels.find((x) => x.id === p.channelId);
+    return poll && c ? toPoll(poll, c.ownerId) : null;
+  })(),
 });
 
 const postsOf = (channelId: number) => channelPosts.filter((p) => p.channelId === channelId).sort((a, b) => a.id - b.id);
@@ -2139,6 +2231,7 @@ export const mockApi = rejectInsteadOfThrow({
     const { u, chat } = requireChat(chatId);
     const m = requireChatMessage(chat.id, messageId);
     assertEditable(m.authorId, m.createdAt, m.fwdUserId, u, m.fwdChannelId);
+    if (pollOf('chat', m.id)) fail(403, 'Опрос изменить нельзя — за него уже голосуют');
     const body = text.trim();
     if (!body && !m.attachment) fail(400, '«сообщение»: минимум 1 символов');
     if (body.length > BODY_MAX) fail(400, `«сообщение»: максимум ${BODY_MAX} символов`);
@@ -2368,6 +2461,7 @@ export const mockApi = rejectInsteadOfThrow({
     const { c } = requireOwner(handle);
     const post = requirePost(c.id, postId);
     if (Date.now() - Date.parse(post.createdAt) > EDIT_WINDOW_MS) fail(403, 'Сообщение можно изменить только в течение 48 часов');
+    if (pollOf('channel', post.id)) fail(403, 'Опрос изменить нельзя — за него уже голосуют');
     const body = text.trim();
     if (!body && !post.attachment) fail(400, '«публикация»: минимум 1 символов');
     if (body !== post.body) {
@@ -2490,6 +2584,51 @@ export const mockApi = rejectInsteadOfThrow({
     const { c } = requireOwner(handle);
     setPin('channel', c.id, null);
     return tick({ ok: true as const });
+  },
+
+  // ─ Опросы ──────────────────────────────────────────────────────────────
+
+  sendChatPoll: (chatId: number, input: PollInput) => {
+    const { u, chat } = requireChat(chatId);
+    const poll = readPoll(input);
+    const m: DbChatMessage = {
+      id: id(), chatId: chat.id, authorId: u.id, body: poll.question, createdAt: new Date().toISOString(), ...NO_EXTRAS,
+    };
+    chatMessages.push(m);
+    addPoll('chat', m.id, poll);
+    for (const member of membersOf(chat.id)) notify({ userId: member.userId, actorId: u.id, kind: 'chat_message', chatId: chat.id });
+    return tick({ message: toChatMessage(m) });
+  },
+
+  publishPoll: (handle: string, input: PollInput) => {
+    const { u, c } = requireOwner(handle);
+    const poll = readPoll(input);
+    const post: DbChannelPost = {
+      id: id(), channelId: c.id, authorId: u.id, body: poll.question, createdAt: new Date().toISOString(), editedAt: null, attachment: null,
+    };
+    channelPosts.push(post);
+    addPoll('channel', post.id, poll);
+    const s = subOf(c.id, u.id);
+    if (s) s.lastReadId = post.id;
+    return tick({ post: toChannelPost(post) });
+  },
+
+  votePoll: (pollId: number, options: number[]) => {
+    const { u, poll, authorId } = requirePoll(pollId);
+    if (poll.closedAt) fail(400, 'Опрос завершён — голосовать больше нельзя');
+    const chosen = [...new Set(options)];
+    if (!poll.multiple && chosen.length > 1) fail(400, 'В этом опросе можно выбрать только один вариант');
+    if (chosen.some((x) => !poll.options.some((o) => o.id === x))) fail(400, 'Такого варианта в опросе нет');
+    pollVotes = pollVotes.filter((v) => !(v.pollId === poll.id && v.userId === u.id));
+    for (const optionId of chosen) pollVotes.push({ pollId: poll.id, optionId, userId: u.id, createdAt: new Date().toISOString() });
+    return tick({ poll: toPoll(poll, authorId) });
+  },
+
+  closePoll: (pollId: number) => {
+    const { u, poll, authorId } = requirePoll(pollId);
+    if (authorId !== u.id) fail(403, 'Завершить опрос может только его автор');
+    poll.closedAt ??= new Date().toISOString();
+    return tick({ poll: toPoll(poll, authorId) });
   },
 
   // ─ Аккаунт ─────────────────────────────────────────────────────────────

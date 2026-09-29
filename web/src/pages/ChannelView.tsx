@@ -7,6 +7,7 @@ import {
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog } from '../components/ForwardDialog';
+import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
 import { plural } from '../time';
 import { ChannelAvatar, type MessengerContext } from './Messenger';
@@ -38,6 +39,7 @@ function ChannelPane({ handle }: { handle: string }) {
   const [gone, setGone] = useState<string | null>(null);
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<ChannelPost | null>(null);
+  const [pollOpen, setPollOpen] = useState(false);
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [jump, setJump] = useState<{ id: number; seq: number } | null>(null);
@@ -198,6 +200,12 @@ function ChannelPane({ handle }: { handle: string }) {
         case 'react':
           put((await api.reactPost(handle, post.id, action.emoji)).post);
           break;
+        case 'vote':
+          if (post.poll) put({ ...post, poll: (await api.votePoll(post.poll.id, action.options)).poll });
+          break;
+        case 'closePoll':
+          if (post.poll) put({ ...post, poll: (await api.closePoll(post.poll.id)).poll });
+          break;
         case 'delete':
           if (!window.confirm('Удалить публикацию? Она исчезнет у всех подписчиков вместе с комментариями.')) return;
           await api.deleteChannelPost(handle, post.id);
@@ -255,7 +263,8 @@ function ChannelPane({ handle }: { handle: string }) {
     replyTo: null,
     reactions: p.reactions,
     attachment: p.attachment,
-    canEdit: owner && editable(p.createdAt),
+    poll: p.poll,
+    canEdit: owner && !p.poll && editable(p.createdAt),
     canDelete: owner,
     views: p.views,
     commentsTo: `/messages/ch/${handle}/${p.id}`,
@@ -364,6 +373,7 @@ function ChannelPane({ handle }: { handle: string }) {
           placeholder="Опубликовать…"
           onSend={send}
           onSendAttachment={sendAttachment}
+          onCreatePoll={() => setPollOpen(true)}
           mode={mode}
           onCancelMode={() => setMode(null)}
           autoFocus
@@ -383,6 +393,14 @@ function ChannelPane({ handle }: { handle: string }) {
           </button>
         </div>
       ) : null}
+
+      {pollOpen && channel && (
+        <PollDialog
+          where={`В канале «${channel.title}»`}
+          onSubmit={async (poll) => append((await api.publishPoll(handle, poll)).post)}
+          onClose={() => setPollOpen(false)}
+        />
+      )}
 
       {forwarding && (
         <ForwardDialog
