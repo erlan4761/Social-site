@@ -61,7 +61,8 @@ function makeClient() {
   }
   // Сырой GET с той же кукой — для файлов вложений: они отдаются не JSON'ом
   // и только тому, кто видит сообщение.
-  call.raw = (path) => fetch(BASE.replace(/\/api$/, '') + path, { headers: cookie ? { Cookie: cookie } : {} });
+  call.raw = (path, headers = {}) =>
+    fetch(BASE.replace(/\/api$/, '') + path, { headers: { ...(cookie ? { Cookie: cookie } : {}), ...headers } });
   return call;
 }
 
@@ -2177,6 +2178,28 @@ await kira(`/users/${userLe}/block`, { method: 'DELETE' });
 await kira(`/channels/${pinHandle}/posts`, { method: 'POST', body: JSON.stringify({ body: 'Сканер Epson V600 — впечатления' }) });
 r = await inSearch(yan, `/channels/${pinHandle}`, 'epson');
 check('поиск по каналу — любому вошедшему', r.status === 200 && r.body.results?.[0]?.body.startsWith('Сканер Epson'), `${r.status} ${JSON.stringify(r.body)}`);
+
+console.log('\n— видеосообщения —');
+r = await dmPost(kira, userLe, withFile(WEBM, 'note.webm', 'video/webm', { videonote: 1, duration: 12 }));
+const noteMsg = r.body.message;
+check('«кружок»: вид videonote, тип video/webm, длительность, без имени', r.status === 201 && noteMsg?.attachment?.kind === 'videonote' && noteMsg.attachment.mime === 'video/webm' && noteMsg.attachment.duration === 12 && noteMsg.attachment.name === null, `${r.status} ${JSON.stringify(noteMsg?.attachment)}`);
+raw = await lev.raw(noteMsg.attachment.url);
+check('отдаётся видео и показывается на месте', raw.status === 200 && raw.headers.get('content-type')?.startsWith('video/webm') && raw.headers.get('content-disposition')?.startsWith('inline'), `${raw.status} ${raw.headers.get('content-type')}`);
+raw = await lev.raw(noteMsg.attachment.url, { Range: 'bytes=0-9' });
+bytes = Buffer.from(await raw.arrayBuffer());
+check('перемотка: Range отдаёт кусок — 206 и ровно 10 байт', raw.status === 206 && bytes.length === 10, `${raw.status} ${bytes.length}`);
+r = await dmPost(kira, userLe, withFile(WEBM, 'n.webm', 'video/webm', { videonote: 1, duration: 61 }));
+check('длиннее минуты — 400', r.status === 400, `${r.status}`);
+r = await dmPost(kira, userLe, withFile(WEBM, 'n.webm', 'video/webm', { videonote: 1, duration: 0 }));
+check('ноль секунд — 400', r.status === 400, `${r.status}`);
+r = await dmPost(kira, userLe, withFile(PNG, 'n.png', 'image/png', { videonote: 1, duration: 5 }));
+check('картинка вместо видео — 400', r.status === 400, `${r.status}`);
+r = await dmPost(kira, userLe, withFile(WEBM, 'n.webm', 'video/webm', { videonote: 1, voice: 1, duration: 5 }));
+check('и голосовое, и видео сразу — 400', r.status === 400, `${r.status}`);
+r = await dmSend(lev, userKi, { body: 'Классный кружок!', replyTo: noteMsg.id });
+check('ответ на «кружок» цитирует «Видеосообщение»', r.body.message?.replyTo?.body === 'Видеосообщение', JSON.stringify(r.body.message?.replyTo));
+r = await chatPost(kira, actChat, withFile(WEBM, 'n.webm', 'video/webm', { videonote: 1, duration: 3 }));
+check('«кружок» в группу', r.status === 201 && r.body.message?.attachment?.kind === 'videonote', `${r.status}`);
 
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

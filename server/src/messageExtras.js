@@ -140,6 +140,8 @@ export const attachmentUpload = multer({
 
 /** Голосовое — до пяти минут, как запись в браузере и рассчитана. */
 export const VOICE_MAX_S = 300;
+/** «Кружок» — до минуты, как в Телеграме: это реплика, а не ролик. */
+export const VIDEO_NOTE_MAX_S = 60;
 
 /** Колонки вложения для выборок с явным списком полей. */
 export const ATTACH_COLUMNS =
@@ -168,6 +170,7 @@ export function attachmentLabel(kind, name) {
     case 'image': return 'Фото';
     case 'video': return 'Видео';
     case 'voice': return 'Голосовое сообщение';
+    case 'videonote': return 'Видеосообщение';
     case 'audio': return name || 'Аудио';
     case 'file': return name || 'Файл';
     default: return '';
@@ -183,8 +186,17 @@ export async function readAttachment(file, fields = {}) {
   if (!file) return null;
 
   const voice = fields.voice === '1' || fields.voice === 'true';
+  // «Кружок» — видеосообщение с фронтальной камеры, как в Телеграме: до минуты.
+  const videoNote = fields.videonote === '1' || fields.videonote === 'true';
+  if (voice && videoNote) throw bad('Сообщение — либо голосовое, либо видео, не оба сразу');
   let duration = null;
   let wave = null;
+  if (videoNote) {
+    duration = Number(fields.duration);
+    if (!Number.isInteger(duration) || duration < 1 || duration > VIDEO_NOTE_MAX_S) {
+      throw bad(`Длительность видеосообщения — от 1 до ${VIDEO_NOTE_MAX_S} секунд`);
+    }
+  }
   if (voice) {
     duration = Number(fields.duration);
     if (!Number.isInteger(duration) || duration < 1 || duration > VOICE_MAX_S) {
@@ -196,19 +208,21 @@ export async function readAttachment(file, fields = {}) {
     if (wave != null && !/^[0-9]{1,64}$/.test(wave)) throw bad('Некорректная форма голосового');
   }
 
-  const name = voice ? null : str(fileName(file.originalname), 'имя файла', { max: 200 }) || null;
+  // У записанного в браузере нет осмысленного имени файла — только у выбранного.
+  const recorded = voice || videoNote;
+  const name = recorded ? null : str(fileName(file.originalname), 'имя файла', { max: 200 }) || null;
 
   // Голосовое записывает браузер: Chrome и Firefox — в WebM или Ogg, Safari —
   // в MP4. Контейнер WebM и MP4 по сигнатуре — «видео», поэтому для голосового
-  // допустимы и они, а тип переписывается на audio/*.
+  // допустимы и они, а тип переписывается на audio/*. «Кружок» — только видео.
   const stored = await storeUpload(file.buffer, {
-    allowedKinds: voice ? ['audio', 'video'] : ['image', 'video', 'audio', 'file'],
+    allowedKinds: videoNote ? ['video'] : voice ? ['audio', 'video'] : ['image', 'video', 'audio', 'file'],
     into: 'attachment',
   });
 
   return {
     path: stored.filename,
-    kind: voice ? 'voice' : stored.kind,
+    kind: videoNote ? 'videonote' : voice ? 'voice' : stored.kind,
     mime: voice ? stored.mime.replace(/^video\//, 'audio/') : stored.mime,
     name,
     size: file.size,
