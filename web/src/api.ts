@@ -241,7 +241,26 @@ export type FolderInput = Partial<Omit<ChatFolder, 'id'>>;
 /** Кому видно время захода: всем, тем, на кого я подписан, никому. */
 export type LastSeenPrivacy = 'all' | 'follows' | 'nobody';
 
-export type AccountSettings = { email: string | null; lastSeen: LastSeenPrivacy; createdAt: string };
+export type AccountSettings = {
+  email: string | null;
+  /** Номер в формате E.164 или null. */
+  phone: string | null;
+  /** Есть ли пароль: у аккаунта по номеру — это двухэтапная проверка. */
+  hasPassword: boolean;
+  /** Входит ли по логину и паролю — только старые аккаунты, созданные до входа по номеру. */
+  passwordLogin: boolean;
+  lastSeen: LastSeenPrivacy;
+  createdAt: string;
+};
+
+/** Код отправлен: через сколько секунд он сгорит и когда можно попросить новый. */
+export type CodeSent = { ok: true; phone: string; expiresIn: number; resendIn: number; demoCode?: string };
+
+/** Что дальше после верного кода: войти, ввести пароль или придумать логин. */
+export type PhoneVerdict =
+  | { status: 'signed-in'; user: User }
+  | { status: 'password'; ticket: string }
+  | { status: 'signup'; ticket: string };
 
 /** Открытый вход в аккаунт. Токена здесь нет и не будет — только номер. */
 export type Session = { id: number; current: boolean; createdAt: string; userAgent: string | null };
@@ -352,9 +371,20 @@ const body = (payload: unknown) => JSON.stringify(payload);
 const realApi = {
   me: () => request<{ user: User | null }>('/auth/me'),
 
-  register: (input: { username: string; displayName: string; email: string; password: string }) =>
-    request<{ user: User }>('/auth/register', { method: 'POST', body: body(input) }),
+  // ─ Вход по номеру: номер → код → (пароль | логин и имя) ────────────
 
+  phoneStart: (phone: string) => request<CodeSent>('/auth/phone/start', { method: 'POST', body: body({ phone }) }),
+
+  phoneVerify: (phone: string, code: string) =>
+    request<PhoneVerdict>('/auth/phone/verify', { method: 'POST', body: body({ phone, code }) }),
+
+  phonePassword: (ticket: string, password: string) =>
+    request<{ user: User }>('/auth/phone/password', { method: 'POST', body: body({ ticket, password }) }),
+
+  phoneSignup: (ticket: string, username: string, displayName: string) =>
+    request<{ user: User }>('/auth/phone/signup', { method: 'POST', body: body({ ticket, username, displayName }) }),
+
+  /** Вход по логину и паролю — только для аккаунтов, созданных до входа по номеру. */
   login: (input: { username: string; password: string }) =>
     request<{ user: User }>('/auth/login', { method: 'POST', body: body(input) }),
 
@@ -729,6 +759,18 @@ const realApi = {
   setLastSeen: (lastSeen: LastSeenPrivacy) =>
     request<{ lastSeen: LastSeenPrivacy }>('/account/privacy', { method: 'PUT', body: body({ lastSeen }) }),
 
+  linkPhoneStart: (phone: string) => request<CodeSent>('/account/phone/start', { method: 'POST', body: body({ phone }) }),
+
+  linkPhone: (phone: string, code: string) =>
+    request<{ phone: string }>('/account/phone', { method: 'PUT', body: body({ phone, code }) }),
+
+  unlinkPhone: () => request<{ phone: null }>('/account/phone', { method: 'DELETE' }),
+
+  /** Выключить двухэтапную проверку — только у аккаунта по номеру. */
+  removePassword: (currentPassword: string) =>
+    request<{ ok: true }>('/account/password', { method: 'DELETE', body: body({ currentPassword }) }),
+
+  /** Задать пароль впервые (текущего нет — пустая строка) или сменить по текущему. */
   changePassword: (currentPassword: string, newPassword: string) =>
     request<{ ok: true; ended: number }>('/account/password', { method: 'PUT', body: body({ currentPassword, newPassword }) }),
 
@@ -738,8 +780,12 @@ const realApi = {
 
   endOtherSessions: () => request<{ ok: true; ended: number }>('/account/sessions', { method: 'DELETE' }),
 
-  deleteAccount: (password: string) =>
-    request<{ ok: true }>('/account', { method: 'DELETE', body: body({ password }) }),
+  /** Код на свой номер для удаления аккаунта без пароля. */
+  deleteCode: () => request<CodeSent>('/account/delete-code', { method: 'POST' }),
+
+  /** Удалить: паролем, а если его нет — кодом из SMS. */
+  deleteAccount: (proof: { password: string } | { code: string }) =>
+    request<{ ok: true }>('/account', { method: 'DELETE', body: body(proof) }),
 
   folders: () => request<{ folders: ChatFolder[] }>('/folders'),
 

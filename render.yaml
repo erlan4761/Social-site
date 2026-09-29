@@ -36,3 +36,16 @@ services:
       # в лог сервиса, а не уходят на почту.
       - key: RESEND_API_KEY
         sync: false
+      # Вход по номеру: SMS платные — провайдер подключается вашим аккаунтом.
+      # twilio или smsru; Render спросит значения при создании сервиса. Пустые —
+      # вход по номеру ответит «не настроен», а старые аккаунты войдут по логину.
+      - key: SMS_PROVIDER
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM
+        sync: false
+      - key: SMSRU_API_ID
+        sync: false

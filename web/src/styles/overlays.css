@@ -115,6 +115,45 @@
 }
 
 .auth-switch { margin-top: var(--s-5); font-size: 0.875rem; color: var(--ink-2); }
+.auth-lede .btn.link,
+.auth-switch .btn.link { font-size: inherit; }
+
+/* Номер: код страны списком и номер полем — одной строкой, как одно поле. */
+.phone-row { display: flex; gap: var(--s-2); }
+
+.phone-row select {
+  flex: none;
+  width: 6.5rem;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  padding: 0.5625rem var(--s-2);
+}
+
+.phone-row input { flex: 1; min-width: 0; }
+.phone-row select:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+
+/* Код из SMS: шесть цифр вразрядку, моноширинно — видно, сколько набрано. */
+.field input.code-input {
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.4em;
+  text-align: center;
+}
+
+/* Витрина: SMS не уходят — код показывается прямо здесь. */
+.auth-demo {
+  margin: 0 0 1.125rem;
+  padding: var(--s-2) var(--s-3);
+  border-left: 2px solid var(--accent);
+  background: var(--accent-tint);
+  border-radius: 0 var(--r-xs) var(--r-xs) 0;
+  font-size: var(--t-meta);
+}
+
+.auth-demo strong { font-size: 1rem; letter-spacing: 0.15em; }
 
 /* ─ Плашка витрины ────────────────────────────────────────────────────── */
 .demo-banner {

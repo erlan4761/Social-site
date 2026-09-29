@@ -4,6 +4,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError, type AccountSettings, type LastSeenPrivacy, type Session } from '../api';
 import { disablePush, enablePush, install, isStandalone, pushState, useInstallAvailable, type PushState } from '../pwa';
 import { useSession } from '../session';
+import { EMPTY_PHONE, PhoneField } from '../components/PhoneField';
+import { formatPhone, toE164 } from '../phone';
 import { fullDate, joinedOn, plural } from '../time';
 
 const LAST_SEEN_CHOICES: { value: LastSeenPrivacy; title: string; hint: string }[] = [
@@ -24,9 +26,10 @@ export function Settings() {
   const [account, setAccount] = useState<AccountSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const reload = useCallback(() => {
     api.account().then(setAccount).catch((err) => setError(errorText(err, 'Не удалось загрузить настройки')));
   }, []);
+  useEffect(reload, [reload]);
 
   return (
     <>
@@ -53,6 +56,10 @@ export function Settings() {
                 <dd>@{user?.username}</dd>
               </div>
               <div>
+                <dt>Телефон</dt>
+                <dd>{account.phone ? formatPhone(account.phone) : 'не привязан'}</dd>
+              </div>
+              <div>
                 <dt>Почта</dt>
                 <dd>{account.email ?? 'не указана'}</dd>
               </div>
@@ -64,13 +71,136 @@ export function Settings() {
           </section>
         )}
 
+        {account && <PhoneBlock account={account} onChange={reload} />}
         {account && <Privacy initial={account.lastSeen} />}
-        <Password />
+        {account && <Password account={account} onChange={reload} />}
         <Device />
         <Sessions />
-        <DeleteAccount />
+        {account && <DeleteAccount account={account} />}
       </div>
     </>
+  );
+}
+
+/* ─ Номер телефона ─────────────────────────────────────────────────────── */
+
+function PhoneBlock({ account, onChange }: { account: AccountSettings; onChange: () => void }) {
+  const [step, setStep] = useState<'idle' | 'phone' | 'code'>('idle');
+  const [phone, setPhone] = useState(EMPTY_PHONE);
+  const [target, setTarget] = useState('');
+  const [demoCode, setDemoCode] = useState<string | undefined>(undefined);
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+    } catch (err) {
+      setError(errorText(err, 'Не получилось'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const sendCode = (e: FormEvent) => {
+    e.preventDefault();
+    void run(async () => {
+      const res = await api.linkPhoneStart(toE164(phone.dial, phone.number));
+      setTarget(res.phone);
+      setDemoCode(res.demoCode);
+      setCode('');
+      setStep('code');
+    });
+  };
+
+  const confirm = (e: FormEvent) => {
+    e.preventDefault();
+    void run(async () => {
+      await api.linkPhone(target, code);
+      setStep('idle');
+      onChange();
+    });
+  };
+
+  return (
+    <section className="settings-block" aria-labelledby="settings-phone">
+      <h2 className="settings-title" id="settings-phone">
+        Номер телефона
+      </h2>
+      <p className="settings-note">
+        {account.phone
+          ? account.passwordLogin
+            ? `Привязан ${formatPhone(account.phone)}: входить можно и по нему, как в Телеграме, — вторым шагом спросят пароль.`
+            : `${formatPhone(account.phone)} — ваш вход в аккаунт. Его можно сменить на другой, но не убрать.`
+          : 'Привяжите номер — сможете входить по нему кодом из SMS, как в Телеграме.'}
+      </p>
+      {error && <p className="error">{error}</p>}
+
+      {step === 'idle' && (
+        <div className="settings-actions">
+          <button className="btn ghost" type="button" onClick={() => setStep('phone')}>
+            {account.phone ? 'Сменить номер' : 'Привязать номер'}
+          </button>
+          {account.phone && account.passwordLogin && (
+            <button className="btn ghost" type="button" disabled={busy} onClick={() => void run(async () => {
+              await api.unlinkPhone();
+              onChange();
+            })}>
+              Отвязать
+            </button>
+          )}
+        </div>
+      )}
+
+      {step === 'phone' && (
+        <form className="settings-form" onSubmit={sendCode}>
+          <PhoneField value={phone} onChange={setPhone} label="Новый номер" autoFocus />
+          <div className="settings-actions">
+            <button className="btn" type="submit" disabled={busy}>
+              {busy ? 'Отправляю код…' : 'Получить код'}
+            </button>
+            <button className="btn ghost" type="button" onClick={() => setStep('idle')}>
+              Отмена
+            </button>
+          </div>
+        </form>
+      )}
+
+      {step === 'code' && (
+        <form className="settings-form" onSubmit={confirm}>
+          <p className="settings-note">Код отправлен на {formatPhone(target)}.</p>
+          {demoCode && (
+            <p className="auth-demo" role="status">
+              В витрине SMS не отправляются — вот код: <strong>{demoCode}</strong>
+            </p>
+          )}
+          <label className="field">
+            <span>Код из SMS</span>
+            <input
+              className="code-input"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              autoComplete="one-time-code"
+              inputMode="numeric"
+              maxLength={6}
+              autoFocus
+              required
+            />
+          </label>
+          <div className="settings-actions">
+            <button className="btn" type="submit" disabled={busy || code.length !== 6}>
+              {busy ? 'Проверяю…' : 'Подтвердить'}
+            </button>
+            <button className="btn ghost" type="button" onClick={() => setStep('phone')}>
+              Другой номер
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
   );
 }
 
@@ -131,8 +261,12 @@ function Privacy({ initial }: { initial: LastSeenPrivacy }) {
 
 /* ─ Пароль ─────────────────────────────────────────────────────────────── */
 
-function Password() {
+function Password({ account, onChange }: { account: AccountSettings; onChange: () => void }) {
   const id = useId();
+  // У аккаунта по номеру пароль — двухэтапная проверка: его можно не иметь,
+  // задать без текущего и выключить. У старого — это вход, он есть всегда.
+  const twoStep = !account.passwordLogin;
+  const needsCurrent = account.hasPassword;
   const [current, setCurrent] = useState('');
   const [fresh, setFresh] = useState('');
   const [repeat, setRepeat] = useState('');
@@ -148,13 +282,16 @@ function Password() {
     setBusy(true);
     setStatus(null);
     try {
-      const res = await api.changePassword(current, fresh);
+      const res = await api.changePassword(needsCurrent ? current : '', fresh);
       setCurrent('');
       setFresh('');
       setRepeat('');
+      onChange();
       setStatus({
         ok: true,
-        text: res.ended
+        text: !needsCurrent
+          ? 'Двухэтапная проверка включена: после кода из SMS теперь спросят этот пароль.'
+          : res.ended
           ? `Пароль сменён. ${plural(res.ended, 'Завершён', 'Завершены', 'Завершено')} ${res.ended} ${plural(res.ended, 'другой сеанс', 'других сеанса', 'других сеансов')}.`
           : 'Пароль сменён.',
       });
@@ -166,23 +303,47 @@ function Password() {
     }
   }
 
+  async function turnOff() {
+    setBusy(true);
+    setStatus(null);
+    try {
+      await api.removePassword(current);
+      setCurrent('');
+      onChange();
+      setStatus({ ok: true, text: 'Двухэтапная проверка выключена: входить будете по одному коду из SMS.' });
+    } catch (err) {
+      setStatus({ ok: false, text: errorText(err, 'Не удалось выключить') });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="settings-block" aria-labelledby="settings-password">
       <h2 className="settings-title" id="settings-password">
-        Пароль
+        {twoStep ? 'Двухэтапная проверка' : 'Пароль'}
       </h2>
+      {twoStep && (
+        <p className="settings-note">
+          {account.hasPassword
+            ? 'Включена: после кода из SMS спрашивается пароль. Даже с доступом к вашим SMS в аккаунт без него не войти.'
+            : 'Выключена. Задайте пароль — и после кода из SMS будут спрашивать ещё и его.'}
+        </p>
+      )}
       <form className="settings-form" onSubmit={submit}>
-        <label className="field" htmlFor={`${id}-current`}>
-          <span>Текущий пароль</span>
-          <input
-            id={`${id}-current`}
-            type="password"
-            autoComplete="current-password"
-            value={current}
-            required
-            onChange={(e) => setCurrent(e.target.value)}
-          />
-        </label>
+        {needsCurrent && (
+          <label className="field" htmlFor={`${id}-current`}>
+            <span>Текущий пароль</span>
+            <input
+              id={`${id}-current`}
+              type="password"
+              autoComplete="current-password"
+              value={current}
+              required
+              onChange={(e) => setCurrent(e.target.value)}
+            />
+          </label>
+        )}
         <label className="field" htmlFor={`${id}-new`}>
           <span>Новый пароль</span>
           <input
@@ -207,15 +368,24 @@ function Password() {
             onChange={(e) => setRepeat(e.target.value)}
           />
         </label>
-        <p className="settings-note">Не короче 8 символов. После смены все другие сеансы завершатся.</p>
+        <p className="settings-note">
+          {needsCurrent ? 'Не короче 8 символов. После смены все другие сеансы завершатся.' : 'Не короче 8 символов.'}
+        </p>
         {status && (
           <p className={status.ok ? 'settings-status' : 'error'} role="status">
             {status.text}
           </p>
         )}
-        <button className="btn" type="submit" disabled={busy}>
-          {busy ? 'Сохраняю…' : 'Сменить пароль'}
-        </button>
+        <div className="settings-actions">
+          <button className="btn" type="submit" disabled={busy}>
+            {busy ? 'Сохраняю…' : needsCurrent ? 'Сменить пароль' : 'Включить проверку'}
+          </button>
+          {twoStep && account.hasPassword && (
+            <button className="btn ghost" type="button" disabled={busy || !current} onClick={() => void turnOff()}>
+              Выключить проверку
+            </button>
+          )}
+        </div>
       </form>
     </section>
   );
@@ -399,7 +569,7 @@ function Device() {
 
 /* ─ Удаление аккаунта ──────────────────────────────────────────────────── */
 
-function DeleteAccount() {
+function DeleteAccount({ account }: { account: AccountSettings }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -414,19 +584,36 @@ function DeleteAccount() {
       <button className="btn danger" type="button" onClick={() => setOpen(true)}>
         Удалить аккаунт…
       </button>
-      {open && <DeleteDialog onClose={() => setOpen(false)} />}
+      {open && <DeleteDialog account={account} onClose={() => setOpen(false)} />}
     </section>
   );
 }
 
-function DeleteDialog({ onClose }: { onClose: () => void }) {
+/** Подтверждение — паролем, а у аккаунта по номеру без пароля — кодом из SMS. */
+function DeleteDialog({ account, onClose }: { account: AccountSettings; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const { setUser } = useSession();
   const navigate = useNavigate();
   const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
+  const [codeSent, setCodeSent] = useState<{ demoCode?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const byCode = !account.hasPassword;
+
+  async function requestCode() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.deleteCode();
+      setCodeSent({ demoCode: res.demoCode });
+    } catch (err) {
+      setError(errorText(err, 'Не удалось отправить код'));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const closeHandler = useRef(onClose);
   closeHandler.current = onClose;
@@ -448,7 +635,7 @@ function DeleteDialog({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await api.deleteAccount(password);
+      await api.deleteAccount(byCode ? { code } : { password });
       setUser(null);
       navigate('/login', { replace: true });
     } catch (err) {
@@ -473,22 +660,54 @@ function DeleteDialog({ onClose }: { onClose: () => void }) {
           Группы, где остались другие, не пропадут: их владельцем станет самый давний участник.
         </p>
         {error && <p className="error">{error}</p>}
-        <label className="field">
-          <span>Пароль — чтобы подтвердить</span>
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            required
-            autoFocus
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
+        {byCode ? (
+          codeSent ? (
+            <>
+              {codeSent.demoCode && (
+                <p className="auth-demo" role="status">
+                  В витрине SMS не отправляются — вот код: <strong>{codeSent.demoCode}</strong>
+                </p>
+              )}
+              <label className="field">
+                <span>Код из SMS на {account.phone ? formatPhone(account.phone) : 'ваш номер'}</span>
+                <input
+                  className="code-input"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  maxLength={6}
+                  autoFocus
+                  required
+                />
+              </label>
+            </>
+          ) : (
+            <p className="settings-note">
+              Подтвердите удаление кодом из SMS.{' '}
+              <button className="btn link" type="button" disabled={busy} onClick={() => void requestCode()}>
+                Отправить код
+              </button>
+            </p>
+          )
+        ) : (
+          <label className="field">
+            <span>Пароль — чтобы подтвердить</span>
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              required
+              autoFocus
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+        )}
         <div className="sheet-foot">
           <button className="btn ghost" type="button" disabled={busy} onClick={() => dialog.current?.close()}>
             Отмена
           </button>
-          <button className="btn danger solid" type="submit" disabled={busy || !password}>
+          <button className="btn danger solid" type="submit" disabled={busy || (byCode ? code.length !== 6 : !password)}>
             {busy ? 'Удаляю…' : 'Удалить навсегда'}
           </button>
         </div>

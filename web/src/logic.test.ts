@@ -4,6 +4,7 @@ import { folderUnread, inFolder, toggleInFolder, type FolderRow } from './folder
 import { lastSeenLabel, plural } from './time';
 import { mergeLatest, previewText, revealOlder, typingLabel } from './components/chat/format';
 import { mentionQuery } from './components/chat/MessageText';
+import { formatPhone, toE164 } from './phone';
 
 /** Правила интерфейса, которые проще проверить функцией, чем глазами. */
 
@@ -102,5 +103,20 @@ describe('упоминания при наборе', () => {
   it('адрес почты и слово без «@» — не упоминание', () => {
     expect(mentionQuery('pia@mail', 8)).toBeNull();
     expect(mentionQuery('просто текст', 12)).toBeNull();
+  });
+});
+
+describe('номер телефона', () => {
+  it('собирает E.164 из кода страны и набранного', () => {
+    expect(toE164('+996', '555 12-34-56')).toBe('+996555123456');
+    expect(toE164('+996', '0555 123 456')).toBe('+996555123456');
+    expect(toE164('+996', '+7 916 123-45-67')).toBe('+79161234567');
+    expect(toE164('+7', '00996555123456')).toBe('+996555123456');
+  });
+
+  it('показывает номер по-человечески', () => {
+    expect(formatPhone('+996555123456')).toBe('+996 555 12 34 56');
+    expect(formatPhone('+79161234567')).toBe('+7 916 123-45-67');
+    expect(formatPhone('+4915112345678')).toBe('+49 151 123 456 78');
   });
 });

@@ -6,20 +6,76 @@ import { deleteUpload } from '../media.js';
 import { dropPrefs } from '../prefs.js';
 import { unpin } from '../pins.js';
 import { LAST_SEEN_OPTIONS } from '../presence.js';
+import { checkCode, hasPassword, normalizePhone, sendCode } from '../phone.js';
 import * as v from '../validate.js';
 
 /**
- * Настройки аккаунта: почта, кому видно время визита, пароль, сеансы и
- * удаление. Всё — только о себе, поэтому чужого id в путях нет вовсе.
+ * Настройки аккаунта: почта и номер, кому видно время визита, пароль, сеансы
+ * и удаление. Всё — только о себе, поэтому чужого id в путях нет вовсе.
+ *
+ * Два вида аккаунтов (см. users.password_login): старые входят по логину и
+ * паролю и могут привязать номер; созданные по номеру входят только по нему, а
+ * пароль у них — необязательная двухэтапная проверка.
  */
 export const router = Router();
 router.use(requireAuth);
 
 const WRONG_PASSWORD = 'Пароль не подходит';
 
+const me = (req) => db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+
 router.get('/', (req, res) => {
-  const row = db.prepare('SELECT email, last_seen_privacy, created_at FROM users WHERE id = ?').get(req.user.id);
-  res.json({ email: row.email ?? null, lastSeen: row.last_seen_privacy, createdAt: row.created_at });
+  const row = me(req);
+  res.json({
+    email: row.email ?? null,
+    phone: row.phone ?? null,
+    hasPassword: hasPassword(row),
+    passwordLogin: Boolean(row.password_login),
+    lastSeen: row.last_seen_privacy,
+    createdAt: row.created_at,
+  });
+});
+
+/* ─ Номер телефона ─────────────────────────────────────────────────────
+ * Привязать или сменить: код приходит на новый номер — так подтверждается,
+ * что он ваш. Номер, уже привязанный к другому аккаунту, не отдаётся.
+ */
+
+router.post('/phone/start', async (req, res, next) => {
+  try {
+    const phone = normalizePhone(req.body?.phone);
+    const owner = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);
+    if (owner?.id === req.user.id) return res.status(400).json({ error: 'Это уже ваш номер' });
+    if (owner) return res.status(409).json({ error: 'Этот номер привязан к другому аккаунту' });
+    res.json({ ok: true, phone, ...(await sendCode({ phone, purpose: 'link', userId: req.user.id })) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/phone', (req, res, next) => {
+  try {
+    const phone = normalizePhone(req.body?.phone);
+    checkCode({ phone, purpose: 'link', code: req.body?.code, userId: req.user.id });
+    // Пока шёл код, номер мог уйти другому.
+    if (db.prepare('SELECT 1 FROM users WHERE phone = ? AND id <> ?').get(phone, req.user.id)) {
+      return res.status(409).json({ error: 'Этот номер привязан к другому аккаунту' });
+    }
+    db.prepare('UPDATE users SET phone = ? WHERE id = ?').run(phone, req.user.id);
+    res.json({ phone });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Отвязать номер может только старый аккаунт: у созданного по номеру это единственный вход. */
+router.delete('/phone', (req, res) => {
+  const row = me(req);
+  if (!row.password_login) {
+    return res.status(400).json({ error: 'Номер — ваш способ входа: его можно сменить, но не убрать' });
+  }
+  db.prepare('UPDATE users SET phone = NULL WHERE id = ?').run(req.user.id);
+  res.json({ phone: null });
 });
 
 router.put('/privacy', (req, res) => {
@@ -37,13 +93,19 @@ async function passwordMatches(userId, candidate) {
   return typeof candidate === 'string' && candidate.length > 0 && verifyPassword(candidate, row.password_hash);
 }
 
+const hasOwnPassword = (userId) => hasPassword(db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId));
+
 const otherSessions = (userId, token) =>
   db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(userId, token).changes;
 
+/**
+ * Задать или сменить пароль. Сменить — по текущему; задать впервые (аккаунт
+ * по номеру, двухэтапная проверка ещё не включена) — без него: текущего нет.
+ */
 router.put('/password', async (req, res, next) => {
   try {
     const fresh = v.password(req.body?.newPassword);
-    if (!(await passwordMatches(req.user.id, req.body?.currentPassword))) {
+    if (hasOwnPassword(req.user.id) && !(await passwordMatches(req.user.id, req.body?.currentPassword))) {
       return res.status(403).json({ error: WRONG_PASSWORD });
     }
     if (fresh === req.body.currentPassword) {
@@ -55,6 +117,25 @@ router.put('/password', async (req, res, next) => {
     const ended = otherSessions(req.user.id, req.sessionToken);
     db.prepare('DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL').run(req.user.id);
     res.json({ ok: true, ended });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Выключить двухэтапную проверку — только у аккаунта по номеру: у старого
+ * пароль — это и есть вход по логину, без него аккаунт осиротел бы.
+ */
+router.delete('/password', async (req, res, next) => {
+  try {
+    const row = me(req);
+    if (row.password_login) return res.status(400).json({ error: 'Пароль нужен для входа по логину — убрать его нельзя' });
+    if (!hasPassword(row)) return res.status(400).json({ error: 'Пароля и так нет' });
+    if (!(await passwordMatches(req.user.id, req.body?.currentPassword))) {
+      return res.status(403).json({ error: WRONG_PASSWORD });
+    }
+    db.prepare("UPDATE users SET password_hash = '' WHERE id = ?").run(req.user.id);
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -171,10 +252,28 @@ function deleteAccount(me) {
   files.attachment.forEach(dropAttachment);
 }
 
+/** Удаление без пароля подтверждается кодом из SMS на свой номер. */
+router.post('/delete-code', async (req, res, next) => {
+  try {
+    const row = me(req);
+    if (hasPassword(row)) return res.status(400).json({ error: 'Удаление подтверждается паролем' });
+    if (!row.phone) return res.status(400).json({ error: 'Нет ни пароля, ни номера — удаление подтвердить нечем' });
+    res.json({ ok: true, ...(await sendCode({ phone: row.phone, purpose: 'delete', userId: row.id })) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.delete('/', async (req, res, next) => {
   try {
-    if (!(await passwordMatches(req.user.id, req.body?.password))) {
-      return res.status(403).json({ error: WRONG_PASSWORD });
+    const row = me(req);
+    if (hasPassword(row)) {
+      if (!(await passwordMatches(req.user.id, req.body?.password))) {
+        return res.status(403).json({ error: WRONG_PASSWORD });
+      }
+    } else {
+      if (!row.phone) return res.status(400).json({ error: 'Нет ни пароля, ни номера — удаление подтвердить нечем' });
+      checkCode({ phone: row.phone, purpose: 'delete', code: req.body?.code, userId: row.id });
     }
     deleteAccount(req.user.id);
     res.clearCookie(SESSION_COOKIE, { path: '/' });

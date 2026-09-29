@@ -99,13 +99,45 @@ describe('витрина: аккаунт', () => {
 
   it('пароль меняется только по текущему; удалённый аккаунт больше не входит', async () => {
     await expect(api.changePassword('ne-tot', 'novyi-parol')).rejects.toMatchObject({ status: 403 });
-    await expect(api.deleteAccount('ne-tot')).rejects.toMatchObject({ status: 403 });
-    await api.deleteAccount(PASSWORD);
+    await expect(api.deleteAccount({ password: 'ne-tot' })).rejects.toMatchObject({ status: 403 });
+    await api.deleteAccount({ password: PASSWORD });
     expect((await api.me()).user).toBeNull();
     await expect(loginAs('demo')).rejects.toMatchObject({ status: 401 });
   });
 
   it('папка без видов и чатов — 400', async () => {
     await expect(api.createFolder({ title: 'Пусто' })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe('витрина: вход по номеру', () => {
+  it('новый номер: код → регистрация → вход; по логину такой аккаунт не входит', async () => {
+    await api.logout();
+    const sent = await api.phoneStart('+996 700 11-22-33');
+    expect(sent.phone).toBe('+996700112233');
+    await expect(api.phoneVerify(sent.phone, '000000' === sent.demoCode ? '111111' : '000000')).rejects.toMatchObject({ status: 400 });
+    const verdict = await api.phoneVerify(sent.phone, sent.demoCode!);
+    expect(verdict.status).toBe('signup');
+    if (verdict.status !== 'signup') return;
+    const { user } = await api.phoneSignup(verdict.ticket, 'novyi_nomer', 'Новый');
+    expect((await api.me()).user?.id).toBe(user.id);
+    expect(await api.account()).toMatchObject({ phone: '+996700112233', hasPassword: false, passwordLogin: false });
+    await expect(api.login({ username: 'novyi_nomer', password: '' })).rejects.toMatchObject({ status: 401 });
+  });
+
+  it('старый аккаунт с номером: после кода спрашивают пароль', async () => {
+    await api.logout();
+    const sent = await api.phoneStart('+996555000001');
+    const verdict = await api.phoneVerify(sent.phone, sent.demoCode!);
+    expect(verdict.status).toBe('password');
+    if (verdict.status !== 'password') return;
+    await expect(api.phonePassword(verdict.ticket, 'ne-tot')).rejects.toMatchObject({ status: 403 });
+    expect((await api.phonePassword(verdict.ticket, PASSWORD)).user.username).toBe('demo');
+  });
+
+  it('новый код сразу — 429, мусор вместо номера — 400', async () => {
+    await api.phoneStart('+996700445566');
+    await expect(api.phoneStart('+996700445566')).rejects.toMatchObject({ status: 429 });
+    await expect(api.phoneStart('123')).rejects.toMatchObject({ status: 400 });
   });
 });
