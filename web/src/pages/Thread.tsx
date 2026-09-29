@@ -11,7 +11,8 @@ import { Icon } from '../components/Icon';
 import { SavedAvatar } from '../components/Monogram';
 import { useSession } from '../session';
 import { isOnline, lastSeenLabel } from '../time';
-import { SAVED_TITLE, type MessengerContext } from './Messenger';
+import { SAVED_TITLE } from '../components/messenger/rows';
+import type { MessengerContext } from './Messenger';
 
 /** Открытая переписка — это ожидание ответа, и «печатает…» живёт шесть
  *  секунд: опрос чаще, чем у списка. */

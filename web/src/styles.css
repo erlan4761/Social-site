@@ -13,7 +13,8 @@
      5. feed       лента, композер, запись, медиа, ветка комментариев
      6. profile    шапка профиля, метрики, архив, блокировки
      7. discovery  поиск, результаты, события
-     8. messaging  диалоги, переписка, групповые чаты
+     8. messaging  диалоги, переписка, группы, каналы — папка messaging/ из
+                   девяти частей, порядок которых тоже каскад
      9. overlays   модалки, плашка витрины, экраны входа и 404
 
    Модули 5–9 не должны переопределять друг друга: если правило нужно
@@ -28,5 +29,13 @@
 @import "./styles/feed.css";
 @import "./styles/profile.css";
 @import "./styles/discovery.css";
-@import "./styles/messaging.css";
+@import "./styles/messaging/shell.css";
+@import "./styles/messaging/conversation.css";
+@import "./styles/messaging/channels.css";
+@import "./styles/messaging/menus.css";
+@import "./styles/messaging/composer.css";
+@import "./styles/messaging/polls.css";
+@import "./styles/messaging/groups.css";
+@import "./styles/messaging/folders.css";
+@import "./styles/messaging/phone.css";
 @import "./styles/overlays.css";

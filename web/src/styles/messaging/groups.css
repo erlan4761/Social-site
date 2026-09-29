@@ -1,0 +1,48 @@
+/* messaging/groups.css — Групповой чат: участники и поиск человека.
+   Часть мессенджера; порядок частей задан в styles.css и важен. */
+
+/* ─ Участники группового чата ────────────────────────────────────────── */
+.members-list { list-style: none; margin: 0 0 var(--s-4); padding: 0; }
+
+.members-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+  padding: var(--s-2) 0;
+}
+
+.members-list li + li { border-top: 1px solid var(--line); }
+
+.members-who {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.members-who strong { display: block; font-weight: 600; }
+.members-handle { display: block; font-size: var(--t-micro); color: var(--ink-3); }
+
+.members-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3) 1.25rem;
+}
+
+.rename-form .field { margin-bottom: var(--s-3); max-width: 22rem; }
+
+/* ─ Поиск человека для нового чата ────────────────────────────────────
+   Рамка и выпадающий список достаются от общего поиска людей
+   (discovery.css), своя здесь только подпись поля. */
+.member-search { margin-bottom: 1.125rem; }
+
+.member-search-label {
+  display: block;
+  font-size: var(--t-meta);
+  font-weight: 500;
+  color: var(--ink-2);
+  margin-bottom: 0.375rem;
+}

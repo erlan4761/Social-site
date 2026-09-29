@@ -1,0 +1,278 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   messaging/ — мессенджер: список чатов, личная переписка, группы, каналы.
+   Разложен на части по смыслу, порядок импорта — в styles.css:
+     shell → conversation → channels → menus → composer → polls → groups →
+     folders → phone. Эта часть — место в оболочке и список чатов.
+
+   Компоненты: pages/Messenger.tsx, Thread.tsx, ChatThread.tsx, ChannelView.tsx,
+   components/chat/*, components/messenger/*, MemberSearch.tsx.
+
+   Устройство — как у Телеграма: слева список, справа открытая переписка.
+   Две колонки или одна, решает не окно, а ширина самого мессенджера
+   (container query): на узком планшете рядом с полосой навигации двум
+   колонкам тесно, и там он ведёт себя как на телефоне.
+
+   ОСТОРОЖНО, тёзки: .thread / .comment-* в feed.css — ветка комментариев
+   под записью, к переписке отношения не имеет.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ─ Место в оболочке ─────────────────────────────────────────────────── */
+.shell.messenger-mode .main { padding: 0; }
+
+/* Высоту экрана здесь задаёт сам мессенджер. Обычный min-height оболочки
+   (100% окна) вместе с плашкой витрины давал бы лишнюю прокрутку страницы. */
+.shell.messenger-mode { min-height: 0; }
+
+.messenger {
+  container: messenger / inline-size;
+  background: var(--surface);
+}
+
+.messenger-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+}
+
+@media (min-width: 46.001rem) {
+  /* Мессенджер занимает и колонку ленты, и правую зону — правой зоны на
+     этом экране нет (см. Shell.tsx). */
+  .shell.messenger-mode .main { grid-column: 2 / -1; }
+
+  /* --banner-h — плашка витрины над сайтом (DemoBanner.tsx); вне витрины
+     её нет и поправка нулевая. */
+  .messenger {
+    height: calc(100dvh - var(--topbar-h) - var(--banner-h, 0px));
+    border-inline: 1px solid var(--line);
+  }
+}
+
+@media (min-width: 78rem) {
+  /* На десктопе шапки нет — мессенджер во всю высоту окна. */
+  .messenger { height: calc(100dvh - var(--banner-h, 0px)); }
+}
+
+@container messenger (min-width: 44rem) {
+  .messenger-grid { grid-template-columns: clamp(17rem, 38%, 22rem) minmax(0, 1fr); }
+  .messenger-list { border-right: 1px solid var(--line); }
+  /* Через .messenger — иначе проиграло бы display самой кнопки ниже по
+     файлу: у правил одинаковый вес, и побеждает позднее. */
+  .messenger .pane-back { display: none; }
+}
+
+/* Одна колонка: либо список, либо переписка. */
+@container messenger (max-width: 43.999rem) {
+  .messenger-grid.has-open .messenger-list { display: none; }
+  .messenger-grid:not(.has-open) .messenger-pane { display: none; }
+}
+
+.messenger-list,
+.messenger-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ─ Список чатов ──────────────────────────────────────────────────────── */
+.list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-4) var(--s-2);
+}
+
+.list-title {
+  margin: 0;
+  font-size: var(--t-h2);
+  font-weight: 700;
+  letter-spacing: var(--tr-h2);
+  line-height: var(--lh-h2);
+}
+
+.list-search {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0 var(--s-4) var(--s-3);
+  padding: 0 var(--s-3);
+  height: 2.375rem;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  color: var(--ink-3);
+  border: 1px solid transparent;
+  transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+}
+
+.list-search:focus-within {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: var(--ring);
+}
+
+.list-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--t-body);
+  outline: none;
+}
+
+.list-search input::placeholder { color: var(--ink-3); }
+
+.list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--s-2) var(--s-3);
+}
+
+.list-note {
+  margin: var(--s-4) var(--s-3);
+  color: var(--ink-2);
+  font-size: var(--t-body);
+}
+
+.list-note strong { display: block; color: var(--ink); margin-bottom: var(--s-1); }
+.list-error { margin: var(--s-2) var(--s-3); }
+
+.list-section {
+  margin: var(--s-4) var(--s-3) var(--s-2);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  color: var(--ink-3);
+}
+
+.dialogs { list-style: none; margin: 0; padding: 0; }
+
+.dialog {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--s-3);
+  align-items: center;
+  width: 100%;
+  padding: 0.5625rem var(--s-2);
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease);
+}
+
+.dialog:hover { background: var(--surface-2); }
+
+/* Открытый чат подсвечен заливкой, как в Телеграме: в две колонки это
+   единственная подсказка, чья переписка сейчас справа. */
+.dialog.active { background: var(--accent-tint); }
+
+.dialog-body { display: block; min-width: 0; }
+
+.dialog-head,
+.dialog-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.dialog-head { margin-bottom: 0.125rem; }
+
+.dialog-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dialog-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1875rem;
+  flex: none;
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.dialog-last {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--t-body);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dialog-last.unread { color: var(--ink); }
+
+/* Приглушённый чат: колокольчик у имени и серый счётчик — непрочитанное
+   видно, но не зовёт, как в Телеграме. */
+.dialog-muted { display: inline-flex; flex: none; color: var(--ink-3); }
+.dialog-foot .badge.muted { background: var(--ink-3); color: var(--surface); }
+.dialog-pin { display: inline-flex; flex: none; color: var(--ink-3); transform: rotate(-12deg); }
+.dialog-you { color: var(--ink-3); }
+.dialog-foot .badge { margin-left: 0; }
+
+/* Пометка в списке: «блокировка» (одинаковая для обеих сторон), «владелец». */
+.dialog-flag {
+  flex: none;
+  padding: 0 0.4375rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-full);
+  font-size: 0.6875rem;
+  line-height: var(--lh-meta);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/* ─ Аватар с отметкой «в сети» ───────────────────────────────────────── */
+.presence { position: relative; display: inline-flex; flex: none; }
+
+.presence-dot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.presence.sm .presence-dot { width: 0.5625rem; height: 0.5625rem; }
+.dialog:hover .presence-dot { box-shadow: 0 0 0 2px var(--surface-2); }
+
+/* ─ Галочки ───────────────────────────────────────────────────────────── */
+.ticks { display: inline-flex; align-items: center; color: var(--ink-3); }
+.ticks.read { color: var(--accent); }
+
+/* ─ Кнопка-иконка (новый чат, участники) ─────────────────────────────── */
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+
+.icon-btn:hover { background: var(--surface-2); color: var(--ink); }
+.icon-btn.on { background: var(--accent-tint); color: var(--accent); }

@@ -1,0 +1,28 @@
+/* messaging/phone.css — Телефон и reduced-motion — последними: они переопределяют всё выше.
+   Часть мессенджера; порядок частей задан в styles.css и важен. */
+
+/* ─ Телефон ───────────────────────────────────────────────────────────── */
+@media (max-width: 46rem) {
+  /* Список — обычная страница под шапкой и над таб-баром. */
+  .shell.messenger-mode:not(.in-conversation) .main {
+    padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .messenger-list .list-scroll { overflow: visible; }
+
+  /* Открытая переписка — весь экран, шапка и таб-бар убраны (Shell.tsx). */
+  .shell.in-conversation .messenger { height: calc(100dvh - var(--banner-h, 0px)); }
+
+  .bubble { max-width: 86%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-send,
+  .reaction,
+  .msg-menu-reactions button { transition: none; }
+  .msg-menu,
+  .bubble.flash,
+  .rec-dot,
+  .typing-dots span { animation: none; }
+  .typing-dots span { opacity: 0.7; }
+}

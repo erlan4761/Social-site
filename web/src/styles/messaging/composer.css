@@ -1,0 +1,347 @@
+/* messaging/composer.css — Поле ввода и всё, что вокруг него: «кружки», стикеры, упоминания, отложенные.
+   Часть мессенджера; порядок частей задан в styles.css и важен. */
+
+/* ─ Поле ввода ────────────────────────────────────────────────────────── */
+/* position: relative — от поля ввода отсчитывается предпросмотр «кружка». */
+.composer-wrap { position: relative; flex: none; background: var(--surface); border-top: 1px solid var(--line); }
+
+/* ─ «Кружки» ──────────────────────────────────────────────────────────── */
+.note-circle {
+  position: relative;
+  display: block;
+  width: min(15rem, 62vw);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #000;
+}
+
+.note-circle video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.note-ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; }
+.note-ring circle { fill: none; stroke-width: 3; }
+.note-ring-track { stroke: rgb(255 255 255 / 0.18); }
+.note-ring-bar { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 0.12s linear; }
+
+/* Предпросмотр записи — над полем ввода, зеркально, как в зеркале. */
+.note-preview {
+  position: absolute;
+  bottom: calc(100% + var(--s-4));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  filter: drop-shadow(0 10px 30px rgb(0 0 0 / 0.35));
+}
+
+.note-preview .note-circle { width: min(17rem, 70vw); }
+.note-preview video { transform: scaleX(-1); }
+
+/* «Кружок» в ленте — кнопка: нажатие включает звук. */
+.note-bubble { padding: 0; border: 0; cursor: pointer; font: inherit; color: #fff; }
+.note-bubble:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.note-time,
+.note-muted {
+  position: absolute;
+  bottom: 0.625rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.4375rem;
+  border-radius: var(--r-full);
+  background: rgb(0 0 0 / 0.45);
+  font-size: var(--t-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.note-time { left: 50%; transform: translateX(-50%); bottom: 0.5rem; }
+.note-muted { right: 22%; bottom: 14%; padding: 0.25rem; }
+
+/* Пузырь с «кружком» без подписи — без фона и тени: только круг и время. */
+.bubble.has-note { background: none; box-shadow: none; padding: 0; }
+.bubble.has-note .att-note-wrap { margin: 0; }
+.bubble.has-note .bubble-meta {
+  right: 0.25rem;
+  bottom: 0.25rem;
+  padding: 0.125rem 0.4375rem;
+  border-radius: var(--r-full);
+  background: rgb(0 0 0 / 0.45);
+  color: #fff;
+}
+.bubble.has-note .bubble-meta .ticks { color: #fff; }
+.bubble.has-note .bubble-foot { display: none; }
+.bubble.has-note .reactions { padding-right: 0; }
+
+.composer-video { align-self: flex-end; margin-bottom: 0.125rem; }
+
+/* ─ Стикеры ──────────────────────────────────────────────────────────
+   Стикер стоит без пузыря, как «кружок»: картинка и время плашкой поверх
+   нижнего угла. Панель выбора — над полем ввода, в потоке: вкладки наборов
+   и сетка, по щелчку стикер сразу уходит. */
+.bubble.has-sticker { background: none; box-shadow: none; padding: 0; }
+.bubble.has-sticker .sticker-art { display: block; }
+.bubble.has-sticker .bubble-author,
+.bubble.has-sticker .bubble-forwarded,
+.bubble.has-sticker .bubble-quote { margin-bottom: var(--s-1); }
+
+.bubble.has-sticker .bubble-meta {
+  right: 0.25rem;
+  bottom: 0.25rem;
+  padding: 0.125rem 0.4375rem;
+  border-radius: var(--r-full);
+  background: rgb(0 0 0 / 0.45);
+  color: #fff;
+}
+
+.bubble.has-sticker .bubble-meta .ticks { color: #fff; }
+.bubble.has-sticker .bubble-foot { display: none; }
+.bubble.has-sticker .reactions { padding-right: 0; }
+
+.composer-sticker { align-self: flex-end; margin-bottom: 0.125rem; }
+
+.sticker-picker { border-bottom: 1px solid var(--line); background: var(--surface); }
+
+.sticker-tabs {
+  display: flex;
+  gap: var(--s-1);
+  padding: var(--s-2) var(--s-3) 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sticker-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex: none;
+  padding: 0.25rem 0.625rem 0.25rem 0.25rem;
+  border: 1px solid transparent;
+  border-radius: var(--r-full);
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--t-meta);
+  cursor: pointer;
+}
+
+.sticker-tab:hover { background: var(--surface-2); }
+.sticker-tab.on { border-color: var(--accent); color: var(--accent); background: var(--accent-tint); }
+
+.sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(4.75rem, 1fr));
+  gap: var(--s-1);
+  max-height: 13.5rem;
+  overflow-y: auto;
+  padding: var(--s-2) var(--s-3) var(--s-3);
+}
+
+.sticker-cell {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
+}
+
+.sticker-cell:hover:not(:disabled),
+.sticker-cell:focus-visible { background: var(--surface-2); transform: scale(1.06); }
+.sticker-cell svg { width: 100%; height: auto; max-width: 4.5rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sticker-cell { transition: none; }
+  .sticker-cell:hover:not(:disabled),
+  .sticker-cell:focus-visible { transform: none; }
+}
+
+/* Полоса над полем: «ответ на …» или «редактирование». */
+/* ─ Упоминания ───────────────────────────────────────────────────────
+   @логин в тексте — ссылка на профиль цветом акцента; своё имя — плашкой,
+   чтобы упоминание себя находилось глазом в длинной ленте. */
+.mention { color: var(--accent); font-weight: 600; text-decoration: none; }
+.mention:hover { text-decoration: underline; text-underline-offset: 2px; }
+.mention.me {
+  /* Отрицательные поля — чтобы плашка не раздвигала строку: «@имя,» без зазора. */
+  margin: 0 -0.125rem;
+  padding: 0 0.125rem;
+  border-radius: var(--r-xs);
+  background: color-mix(in oklab, var(--accent) 16%, transparent);
+}
+
+/* Подсказка «кого упомянуть» — над полем ввода, в потоке, как полоса ответа. */
+.mention-pop {
+  list-style: none;
+  margin: 0;
+  padding: var(--s-1);
+  max-height: 14rem;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.mention-pop li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 0.375rem var(--s-3);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.mention-pop li.on,
+.mention-pop li:hover { background: var(--surface-2); }
+.mention-pop strong { font-weight: 600; }
+.mention-pop span { font-size: var(--t-meta); color: var(--ink-2); }
+
+/* «@» в строке списка: чат зовёт именно вас — даже приглушённый. */
+.dialog-foot .badge.at { padding: 0; min-width: 1.25rem; margin-right: var(--s-1); }
+
+.composer-mode {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3) 0 var(--s-4);
+  color: var(--accent);
+}
+
+.composer-mode-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  padding-left: var(--s-2);
+  border-left: 2px solid var(--accent);
+}
+
+.composer-mode-text strong { font-size: var(--t-meta); color: var(--accent); }
+
+.composer-mode-text span {
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Выбранный файл — над полем, с миниатюрой, пока не отправлен. */
+.composer-file {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3) 0 var(--s-4);
+}
+
+.composer-file-thumb {
+  flex: none;
+  width: 3rem;
+  height: 3rem;
+  border-radius: var(--r-sm);
+  object-fit: cover;
+}
+
+.composer-file-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 3rem;
+  height: 3rem;
+  border-radius: var(--r-sm);
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.composer-file-text { display: grid; flex: 1; min-width: 0; }
+
+.composer-file-text strong,
+.composer-file-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-file-text strong { font-size: var(--t-meta); }
+.composer-file-text span { font-size: var(--t-micro); color: var(--ink-3); }
+
+.composer-error {
+  margin: var(--s-2) var(--s-4) 0;
+  font-size: var(--t-meta);
+  color: var(--danger);
+}
+
+.composer-attach,
+.composer-poll { align-self: flex-end; margin-bottom: 0.125rem; }
+
+/* ─ Отложенные сообщения ─────────────────────────────────────────────
+   Полоса над полем ввода — как полоса закреплённого, только внизу: это
+   очередь того, что ещё впереди, а не того, что уже было. */
+.scheduled-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-2) var(--s-4);
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.scheduled-bar:hover { background: var(--surface-2); }
+.scheduled-bar > span { display: grid; flex: 1; min-width: 0; }
+.scheduled-bar strong { font-size: var(--t-meta); font-weight: 600; }
+.scheduled-bar span span { font-size: var(--t-micro); color: var(--ink-2); }
+
+.schedule-sheet { width: min(24rem, calc(100vw - 2rem)); }
+
+.schedule-preview {
+  padding: var(--s-2) var(--s-3);
+  border-left: 2px solid var(--accent);
+  background: var(--surface-2);
+  border-radius: 0 var(--r-xs) var(--r-xs) 0;
+  white-space: pre-wrap;
+  max-height: 6rem;
+  overflow: hidden;
+}
+
+.schedule-presets { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-bottom: 1.125rem; }
+
+.scheduled-sheet { width: min(30rem, calc(100vw - 2rem)); }
+
+.scheduled-list {
+  list-style: none;
+  margin: 0 0 1.25rem;
+  padding: 0;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.scheduled-list li { padding: var(--s-3) 0; }
+.scheduled-list li + li { border-top: 1px solid var(--line); }
+
+.scheduled-when {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: var(--t-micro);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.scheduled-text {
+  margin: var(--s-1) 0 var(--s-2);
+  font-family: var(--read);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.scheduled-actions { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-4); }
+.scheduled-actions .btn.link { font-size: var(--t-meta); }
+.btn.link.danger-link { color: var(--danger); }

@@ -1,0 +1,108 @@
+/* messaging/channels.css — Каналы: публикации, подписка, комментарии.
+   Часть мессенджера; порядок частей задан в styles.css и важен. */
+
+/* ─ Каналы ────────────────────────────────────────────────────────────── */
+
+/* Аватар канала — монограмма и рупор в углу: канал в списке отличим от
+   человека и от группы с первого взгляда. */
+.channel-avatar { position: relative; display: inline-flex; flex: none; }
+
+.channel-mark {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: grid;
+  place-items: center;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.channel-avatar.sm .channel-mark { width: 0.875rem; height: 0.875rem; }
+.dialog:hover .channel-mark { box-shadow: 0 0 0 2px var(--surface-2); }
+
+/* Меню «+» над списком чатов. */
+.list-new { position: relative; }
+/* Через .list-new: у .msg-menu ниже по файлу position: fixed, и при равном
+   весе позднее правило перебило бы это. */
+.list-new .list-new-menu { position: absolute; top: calc(100% + 4px); right: 0; left: auto; min-width: 12rem; }
+
+/* Публикации канала шире реплик в чате: это текст для чтения, а не реплика. */
+.msgs.channel .bubble { max-width: min(38rem, 92%); }
+.msgs.channel .bubble-text { font-size: var(--t-read); line-height: var(--lh-read); }
+
+.bubble-views { display: inline-flex; align-items: center; gap: 0.1875rem; margin-right: 0.25rem; }
+
+/* «N комментариев» — строка во всю ширину пузыря под чертой, как в Телеграме. */
+.bubble-comments {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: var(--s-2) -0.625rem -0.375rem -0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 var(--r-md) var(--r-md);
+  color: var(--accent);
+  font-size: var(--t-meta);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.bubble-comments .ico:last-child { margin-left: auto; color: var(--ink-3); }
+.bubble-comments:hover { background: var(--surface-2); }
+
+/* С комментариями время встаёт над их строкой, а не в самом низу пузыря. */
+.bubble:has(.bubble-comments) .bubble-meta { bottom: 2.9rem; }
+
+.pane-subscribe {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4) calc(var(--s-3) + env(safe-area-inset-bottom, 0px));
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+
+.pane-subscribe.subscribed { color: var(--ink-2); font-size: var(--t-meta); }
+.pane-subscribe.subscribed .ico { color: var(--accent); }
+.pane-subscribe.subscribed .act { margin-left: auto; }
+
+.pane-hint {
+  margin: 0;
+  padding: var(--s-2) var(--s-4);
+  text-align: center;
+  font-size: var(--t-meta);
+  color: var(--ink-3);
+  background: var(--canvas);
+}
+
+.channel-about { margin: 0 0 var(--s-3); color: var(--ink); white-space: pre-wrap; }
+
+.channel-facts { display: grid; gap: var(--s-1); margin: 0 0 var(--s-4); }
+.channel-facts div { display: flex; gap: var(--s-3); font-size: var(--t-meta); }
+.channel-facts dt { min-width: 6.5rem; color: var(--ink-3); }
+.channel-facts dd { margin: 0; }
+
+/* «Назад в канал» из комментариев нужна и в две колонки: список рядом, а
+   канала — нет. */
+.messenger .pane-back.always { display: inline-grid; }
+
+/* Поле адреса канала: «@» — часть поля, но не часть значения. */
+.handle-input {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  padding-left: 0.75rem;
+  color: var(--ink-3);
+}
+
+.handle-input:focus-within { border-color: var(--accent); box-shadow: var(--ring); }
+.handle-input input { flex: 1; min-width: 0; border: 0; box-shadow: none; background: none; }
+.handle-input input:focus { outline: none; box-shadow: none; }
+.hint.over { color: var(--danger); }

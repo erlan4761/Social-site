@@ -4,7 +4,7 @@ import { api, ApiError, type Channel, type ChannelComment, type ChannelPost } fr
 import { Composer, MessageList, PaneHead, type BubbleItem, type MessageAction } from '../components/Chat';
 import { useSession } from '../session';
 import { plural } from '../time';
-import { ChannelAvatar } from './Messenger';
+import { ChannelAvatar } from '../components/messenger/ListRows';
 
 /** Обсуждение живее канала: ответ ждут, как в чате. */
 const POLL_MS = 5_000;

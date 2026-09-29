@@ -1,0 +1,104 @@
+/* messaging/menus.css — Меню сообщения, «печатает…», окно «Переслать».
+   Часть мессенджера; порядок частей задан в styles.css и важен. */
+
+/* ─ Меню сообщения ────────────────────────────────────────────────────── */
+.msg-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 13.5rem;
+  padding: var(--s-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-3);
+  animation: menu-in var(--dur-1) var(--ease);
+}
+
+@keyframes menu-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: none; }
+}
+
+.msg-menu-reactions {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.125rem;
+  padding: 0.125rem 0.125rem var(--s-1);
+  margin-bottom: var(--s-1);
+  border-bottom: 1px solid var(--line);
+}
+
+.msg-menu-reactions button {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform var(--dur-2) var(--ease-spring), background var(--dur-1) var(--ease);
+}
+
+.msg-menu-reactions button:hover,
+.msg-menu-reactions button:focus-visible { transform: scale(1.18); background: var(--surface-2); }
+.msg-menu-reactions button.on { background: var(--accent-tint); }
+
+.msg-menu-list { display: grid; }
+
+.msg-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 0.5rem 0.625rem;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--t-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.msg-menu-item .ico { color: var(--ink-3); }
+.msg-menu-item:hover,
+.msg-menu-item:focus-visible { background: var(--surface-2); outline: none; }
+.msg-menu-item.danger,
+.msg-menu-item.danger .ico { color: var(--danger); }
+
+/* ─ «Печатает…» ───────────────────────────────────────────────────────── */
+.typing-dots { display: inline-flex; gap: 2px; margin-left: 3px; vertical-align: 1px; }
+
+.typing-dots span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: typing 1.2s infinite ease-in-out;
+}
+
+.typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes typing {
+  0%, 60%, 100% { opacity: 0.3; transform: none; }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+
+/* ─ Окно «Переслать» ──────────────────────────────────────────────────── */
+.forward-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: var(--s-2) var(--s-3);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-xs);
+  background: var(--accent-tint);
+}
+
+.forward-search { margin: 0 0 var(--s-2); }
+.forward-list { max-height: min(22rem, 50vh); overflow-y: auto; margin: 0 calc(var(--s-2) * -1); }
+.forward-list .dialog:disabled { opacity: 0.6; cursor: default; }

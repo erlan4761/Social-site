@@ -11,7 +11,8 @@ import { ScheduledBar } from '../components/Scheduled';
 import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
 import { plural } from '../time';
-import { ChannelAvatar, type MessengerContext } from './Messenger';
+import { ChannelAvatar } from '../components/messenger/ListRows';
+import type { MessengerContext } from './Messenger';
 
 /** Канал — не переписка: публикации выходят редко, а «печатает…» здесь нет.
  *  Десять секунд — как у списка чатов. */

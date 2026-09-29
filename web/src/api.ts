@@ -841,5 +841,5 @@ const realApi = {
  * мока в бандл не попадает.
  */
 export const api: typeof realApi = import.meta.env.VITE_DEMO === '1'
-  ? (mockApi as unknown as typeof realApi)
+  ? mockApi
   : realApi;
