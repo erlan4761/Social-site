@@ -3,6 +3,7 @@ import { isBlockedPair } from './blocks.js';
 import { saveMentions } from './mentions.js';
 import { notify } from './notifications.js';
 import { touchChannel, touchChat, touchDm } from './live.js';
+import { postBlock } from './chatRoles.js';
 
 /**
  * Отложенные сообщения — «отправить позже», как в Телеграме: в личную
@@ -32,6 +33,9 @@ function deliverDm(row, at) {
 function deliverChat(row, at) {
   const member = db.prepare('SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?').get(row.target_id, row.user_id);
   if (!member) return null;
+  // За время ожидания группу могли закрыть для участников или включить медленный режим.
+  const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(row.target_id);
+  if (postBlock(chat, row.user_id)) return null;
   const info = db.prepare('INSERT INTO chat_messages (chat_id, author_id, body, created_at) VALUES (?, ?, ?, ?)')
     .run(row.target_id, row.user_id, row.body, at);
   const id = Number(info.lastInsertRowid);

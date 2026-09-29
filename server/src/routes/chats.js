@@ -17,6 +17,7 @@ import { saveMentions, unreadMentions } from '../mentions.js';
 import { createPoll, hasPoll, readPoll, withPolls } from '../polls.js';
 import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import { clearDraft, draftsOf, dropDrafts } from '../drafts.js';
+import { SLOW_MODE_OPTIONS, heirOf, isAdmin, nextPostAt, outranks, postBlock, roleOf } from '../chatRoles.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -134,7 +135,7 @@ function memberChat(rawId, viewerId) {
  */
 function chatMembers(chatId) {
   return db.prepare(`
-    SELECT u.id, u.username, u.display_name, u.avatar_path, u.last_seen_at, u.last_seen_privacy
+    SELECT u.id, u.username, u.display_name, u.avatar_path, u.last_seen_at, u.last_seen_privacy, cm.role
     FROM chat_members cm JOIN users u ON u.id = cm.user_id
     WHERE cm.chat_id = ?
     ORDER BY cm.joined_at, u.id
@@ -148,9 +149,17 @@ const serializeChat = (chat, viewerId) => {
     title: chat.title,
     ownerId: chat.owner_id,
     createdAt: chat.created_at,
-    members: members.map((row) => member(row, viewerId)),
+    members: members.map((row) => ({
+      ...member(row, viewerId),
+      role: row.id === chat.owner_id ? 'owner' : row.role === 'admin' ? 'admin' : 'member',
+    })),
     memberCount: members.length,
     iAmOwner: chat.owner_id === viewerId,
+    myRole: roleOf(chat, viewerId),
+    slowMode: chat.slow_mode ?? 0,
+    adminsOnly: Boolean(chat.admins_only),
+    // Когда смотрящему снова можно написать в медленном режиме; null — уже можно.
+    nextPostAt: nextPostAt(chat, viewerId),
     // Ссылку видит каждый участник: звать людей может любой (см. POST /:id/members).
     invite: chat.invite_token ?? null,
   };
@@ -377,12 +386,27 @@ router.patch('/:id', (req, res, next) => {
     if (!chat) return res.status(404).json({ error: NOT_FOUND });
     // Здесь уже 403, а не 404: членство подтверждено, чат человек и так видит,
     // скрывать его существование не от кого.
-    if (chat.owner_id !== req.user.id) {
-      return res.status(403).json({ error: 'Переименовать чат может только владелец' });
+    if (!isAdmin(chat, req.user.id)) {
+      return res.status(403).json({ error: 'Менять группу могут владелец и администраторы' });
     }
 
-    const title = v.str(req.body?.title, 'название чата', { min: 1, max: MAX_TITLE });
-    db.prepare('UPDATE chats SET title = ? WHERE id = ?').run(title, chat.id);
+    // Любое подмножество: название, медленный режим, «пишут только администраторы».
+    const changes = {};
+    if (req.body?.title !== undefined) changes.title = v.str(req.body.title, 'название чата', { min: 1, max: MAX_TITLE });
+    if (req.body?.slowMode !== undefined) {
+      if (!SLOW_MODE_OPTIONS.includes(req.body.slowMode)) {
+        return res.status(400).json({ error: `Медленный режим — одно из: ${SLOW_MODE_OPTIONS.join(', ')} секунд` });
+      }
+      changes.slow_mode = req.body.slowMode;
+    }
+    if (req.body?.adminsOnly !== undefined) {
+      if (typeof req.body.adminsOnly !== 'boolean') return res.status(400).json({ error: 'adminsOnly — да или нет' });
+      changes.admins_only = req.body.adminsOnly ? 1 : 0;
+    }
+    if (Object.keys(changes).length === 0) return res.status(400).json({ error: 'Нечего менять' });
+    for (const [column, value] of Object.entries(changes)) {
+      db.prepare(`UPDATE chats SET ${column} = ? WHERE id = ?`).run(value, chat.id);
+    }
 
     const updated = db.prepare('SELECT * FROM chats WHERE id = ?').get(chat.id);
     res.json({ chat: serializeChat(updated, req.user.id) });
@@ -419,7 +443,7 @@ router.delete('/:id', (req, res) => {
 router.post('/:id/invite', (req, res) => {
   const chat = memberChat(req.params.id, req.user.id);
   if (!chat) return res.status(404).json({ error: NOT_FOUND });
-  if (chat.owner_id !== req.user.id) return res.status(403).json({ error: 'Ссылкой-приглашением управляет владелец' });
+  if (!isAdmin(chat, req.user.id)) return res.status(403).json({ error: 'Ссылкой-приглашением управляют владелец и администраторы' });
   const token = randomBytes(16).toString('base64url');
   db.prepare('UPDATE chats SET invite_token = ? WHERE id = ?').run(token, chat.id);
   res.json({ invite: token });
@@ -428,7 +452,7 @@ router.post('/:id/invite', (req, res) => {
 router.delete('/:id/invite', (req, res) => {
   const chat = memberChat(req.params.id, req.user.id);
   if (!chat) return res.status(404).json({ error: NOT_FOUND });
-  if (chat.owner_id !== req.user.id) return res.status(403).json({ error: 'Ссылкой-приглашением управляет владелец' });
+  if (!isAdmin(chat, req.user.id)) return res.status(403).json({ error: 'Ссылкой-приглашением управляют владелец и администраторы' });
   db.prepare('UPDATE chats SET invite_token = NULL WHERE id = ?').run(chat.id);
   res.json({ invite: null });
 });
@@ -486,6 +510,11 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
     const me = req.user.id;
     const chat = memberChat(req.params.id, me);
     if (!chat) return res.status(404).json({ error: NOT_FOUND });
+    const blocked = postBlock(chat, me);
+    if (blocked) {
+      if (blocked.retryAfter) res.set('Retry-After', String(blocked.retryAfter));
+      return res.status(blocked.status).json({ error: blocked.error });
+    }
 
     // Опрос — JSON с полем poll: вопрос становится текстом сообщения.
     const poll = req.file || req.body?.poll == null ? null : readPoll(req.body.poll);
@@ -604,8 +633,8 @@ router.delete('/:id/messages/:mid', (req, res) => {
 
   const msg = chatMessage(chat.id, req.params.mid, me);
   if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
-  if (msg.author_id !== me && chat.owner_id !== me) {
-    return res.status(403).json({ error: 'Удалить можно только своё сообщение' });
+  if (msg.author_id !== me && !outranks(chat, me, msg.author_id)) {
+    return res.status(403).json({ error: 'Удалить можно своё сообщение, а администратору — сообщения участников' });
   }
 
   db.prepare('DELETE FROM chat_messages WHERE id = ?').run(msg.id);
@@ -658,7 +687,7 @@ router.put('/:id/messages/:mid/pin', (req, res) => {
   const me = req.user.id;
   const chat = memberChat(req.params.id, me);
   if (!chat) return res.status(404).json({ error: NOT_FOUND });
-  if (chat.owner_id !== me) return res.status(403).json({ error: 'Закреплять сообщения может только владелец чата' });
+  if (!isAdmin(chat, me)) return res.status(403).json({ error: 'Закреплять сообщения могут владелец и администраторы' });
   const msg = chatMessage(chat.id, req.params.mid, me);
   if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
   pin('chat', chat.id, msg.id, me);
@@ -669,7 +698,7 @@ router.delete('/:id/pin', (req, res) => {
   const me = req.user.id;
   const chat = memberChat(req.params.id, me);
   if (!chat) return res.status(404).json({ error: NOT_FOUND });
-  if (chat.owner_id !== me) return res.status(403).json({ error: 'Откреплять сообщения может только владелец чата' });
+  if (!isAdmin(chat, me)) return res.status(403).json({ error: 'Откреплять сообщения могут владелец и администраторы' });
   unpin('chat', chat.id);
   res.json({ ok: true });
 });
@@ -694,6 +723,23 @@ router.put('/:id/read', (req, res) => {
 });
 
 /* ─ Участники ──────────────────────────────────────────────────────────── */
+
+/** Сделать участника администратором или вернуть в участники — только владелец. */
+function setAdmin(req, res, admin) {
+  const me = req.user.id;
+  const chat = memberChat(req.params.id, me);
+  if (!chat) return res.status(404).json({ error: NOT_FOUND });
+  if (chat.owner_id !== me) return res.status(403).json({ error: 'Назначать администраторов может только владелец' });
+  const target = findUserByName(req.params.username);
+  const role = target ? roleOf(chat, target.id) : null;
+  if (!role) return res.status(404).json({ error: 'Участник не найден' });
+  if (role === 'owner') return res.status(400).json({ error: 'Владелец и так главный' });
+  db.prepare('UPDATE chat_members SET role = ? WHERE chat_id = ? AND user_id = ?').run(admin ? 'admin' : 'member', chat.id, target.id);
+  res.json({ chat: serializeChat(chat, me) });
+}
+
+router.put('/:id/admins/:username', (req, res) => setAdmin(req, res, true));
+router.delete('/:id/admins/:username', (req, res) => setAdmin(req, res, false));
 
 /**
  * Добавлять может любой участник: чат — общая комната, а не собственность
@@ -752,8 +798,8 @@ router.delete('/:id/members/:username', (req, res, next) => {
     if (!member) return res.status(404).json({ error: 'Участник не найден' });
 
     const leaving = target.id === me;
-    if (!leaving && chat.owner_id !== me) {
-      return res.status(403).json({ error: 'Удалять участников может только владелец' });
+    if (!leaving && !outranks(chat, me, target.id)) {
+      return res.status(403).json({ error: 'Удалять участников могут владелец, а администраторы — только обычных участников' });
     }
 
     let orphaned = [];
@@ -770,11 +816,9 @@ router.delete('/:id/members/:username', (req, res, next) => {
       db.prepare('DELETE FROM notifications WHERE user_id = ? AND chat_id = ? AND read_at IS NULL')
         .run(target.id, chat.id);
 
-      const rest = db.prepare(
-        'SELECT user_id FROM chat_members WHERE chat_id = ? ORDER BY joined_at, user_id LIMIT 1',
-      ).get(chat.id);
+      const heir = heirOf(chat.id, target.id);
 
-      if (!rest) {
+      if (heir == null) {
         // Ушёл последний — чат больше некому открыть. Сообщения и события
         // уходят каскадом, файлы вложений — после COMMIT.
         orphaned = chatAttachments(chat.id);
@@ -782,9 +826,10 @@ router.delete('/:id/members/:username', (req, res, next) => {
         unpin('chat', chat.id);
         dropPrefs({ kind: 'chat', targetId: chat.id });
       } else if (chat.owner_id === target.id) {
-        // Владение переходит старейшему участнику: чат без владельца нельзя
-        // было бы ни переименовать, ни удалить.
-        db.prepare('UPDATE chats SET owner_id = ? WHERE id = ?').run(rest.user_id, chat.id);
+        // Владение переходит старейшему администратору, а без них — старейшему
+        // участнику: чат без владельца нельзя было бы ни настроить, ни удалить.
+        db.prepare('UPDATE chats SET owner_id = ? WHERE id = ?').run(heir, chat.id);
+        db.prepare("UPDATE chat_members SET role = 'member' WHERE chat_id = ? AND user_id = ?").run(chat.id, heir);
       }
 
       db.exec('COMMIT');

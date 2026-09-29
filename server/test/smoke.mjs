@@ -3353,5 +3353,117 @@ check('ссылка отключена', r.status === 200 && r.body.invite === n
 r = await idd(`/chats/join/${token2}`, { method: 'POST' });
 check('по отключённой ссылке не вступить', r.status === 404, `${r.status}`);
 
+console.log('\n— администраторы, медленный режим, «пишут только администраторы» —');
+const ga = makeClient();
+const gb = makeClient();
+const gc = makeClient();
+const gd = makeClient();
+const userGa = `grpa_${stamp}`;
+const userGb = `grpb_${stamp}`;
+const userGc = `grpc_${stamp}`;
+const userGd = `grpd_${stamp}`;
+await legacySignUp(ga, userGa, 'Владелица');
+await legacySignUp(gb, userGb, 'Админ');
+await legacySignUp(gc, userGc, 'Участница');
+await legacySignUp(gd, userGd, 'Лишний');
+r = await ga('/chats', { method: 'POST', body: JSON.stringify({ title: 'Порядок', members: [userGb, userGc, userGd] }) });
+const grp = r.body.chat;
+const roleIn = (chat, username) => chat?.members?.find((m) => m.username === username)?.role;
+check('новая группа: владелец и участники, порядок выключен', grp?.myRole === 'owner' && roleIn(grp, userGa) === 'owner' && roleIn(grp, userGb) === 'member'
+  && grp.slowMode === 0 && grp.adminsOnly === false && grp.nextPostAt === null, JSON.stringify({ myRole: grp?.myRole, slow: grp?.slowMode }));
+const gpost = (client, body) => client(`/chats/${grp.id}/messages`, { method: 'POST', body: JSON.stringify({ body }) });
+const gpatch = (client, body) => client(`/chats/${grp.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+
+r = await gb(`/chats/${grp.id}/admins/${userGc}`, { method: 'PUT' });
+check('назначать администраторов может только владелец', r.status === 403, `${r.status}`);
+r = await ga(`/chats/${grp.id}/admins/net_takogo_${stamp}`, { method: 'PUT' });
+check('не участник — 404', r.status === 404, `${r.status}`);
+r = await ga(`/chats/${grp.id}/admins/${userGa}`, { method: 'PUT' });
+check('владельца в администраторы — 400', r.status === 400, `${r.status}`);
+r = await ga(`/chats/${grp.id}/admins/${userGb}`, { method: 'PUT' });
+check('владелец назначил администратора', r.status === 200 && roleIn(r.body.chat, userGb) === 'admin', JSON.stringify(r.body.chat?.members?.map((m) => m.role)));
+r = await gb(`/chats/${grp.id}`);
+check('администратор видит свою роль', r.body.chat?.myRole === 'admin', JSON.stringify(r.body.chat?.myRole));
+
+r = await gpatch(gc, { title: 'Захват' });
+check('участник группу не меняет — 403', r.status === 403, `${r.status}`);
+r = await gpatch(gb, { title: 'Порядок и тишина' });
+check('администратор переименовал', r.status === 200 && r.body.chat?.title === 'Порядок и тишина', `${r.status}`);
+r = await gpatch(gb, { slowMode: 7 });
+check('медленный режим не из списка — 400', r.status === 400, `${r.status}`);
+r = await gpatch(gb, { adminsOnly: 'да' });
+check('adminsOnly не да/нет — 400', r.status === 400, `${r.status}`);
+r = await gpatch(gb, {});
+check('пустая правка — 400', r.status === 400, `${r.status}`);
+r = await gpatch(gb, { slowMode: 30 });
+check('медленный режим включён', r.status === 200 && r.body.chat?.slowMode === 30 && r.body.chat.title === 'Порядок и тишина', `${r.status}`);
+
+r = await gpost(gc, 'Первое');
+const gcFirst = r.body.message;
+check('участник пишет в медленном режиме', r.status === 201, `${r.status}`);
+r = await gpost(gc, 'Второе сразу');
+check('второе сразу — 429 с временем ожидания', r.status === 429 && /Медленный режим: следующее сообщение — через \d+ с/.test(r.body.error ?? ''), `${r.status} ${r.body.error}`);
+r = await gc(`/chats/${grp.id}`);
+check('в чате видно, когда можно снова', Date.parse(r.body.chat?.nextPostAt ?? '') > Date.now(), JSON.stringify(r.body.chat?.nextPostAt));
+r = await gc('/chats');
+check('и в списке чатов тоже', Date.parse(r.body.chats?.find((c) => c.id === grp.id)?.nextPostAt ?? '') > Date.now(), '');
+r = await gc(`/chats/${grp.id}/messages`, { method: 'POST', body: JSON.stringify({ sticker: 'plenka/hi' }) });
+check('стикер медленный режим тоже не обходит', r.status === 429, `${r.status}`);
+r = await gc('/scheduled', { method: 'POST', body: JSON.stringify({ kind: 'chat', target: grp.id, body: 'потом', sendAt: new Date(Date.now() + 3_600_000).toISOString() }) });
+check('в медленном режиме участнику не отложить', r.status === 403, `${r.status}`);
+r = await gpost(gb, 'Админ раз');
+const gbMsg = r.body.message;
+const r2 = await gpost(gb, 'Админ два');
+check('администратора медленный режим не касается', r.status === 201 && r2.status === 201, `${r.status} ${r2.status}`);
+r = await gpost(ga, 'Владелица');
+const gaMsg = r.body.message;
+check('владельца тоже', r.status === 201 && (await gb(`/chats/${grp.id}`)).body.chat.nextPostAt === null, `${r.status}`);
+await gpatch(ga, { slowMode: 0 });
+r = await gpost(gc, 'Режим выключили');
+check('выключили — пишет сразу', r.status === 201, `${r.status}`);
+
+r = await gpatch(gb, { adminsOnly: true });
+check('«пишут только администраторы» включено', r.status === 200 && r.body.chat?.adminsOnly === true, `${r.status}`);
+r = await gpost(gc, 'Можно?');
+check('участнику писать нельзя — 403', r.status === 403 && /только администраторы/.test(r.body.error ?? ''), `${r.status}`);
+r = await gc(`/chats/${grp.id}/messages/${gbMsg.id}/reaction`, { method: 'PUT', body: JSON.stringify({ emoji: '👍' }) });
+check('реакции участникам остаются', r.status === 200, `${r.status}`);
+r = await gpost(gb, 'Объявление');
+check('администратор пишет', r.status === 201, `${r.status}`);
+await gpatch(ga, { adminsOnly: false });
+
+r = await gc(`/chats/${grp.id}/messages/${gbMsg.id}`, { method: 'DELETE' });
+check('участник чужое не удаляет', r.status === 403, `${r.status}`);
+r = await gb(`/chats/${grp.id}/messages/${gaMsg.id}`, { method: 'DELETE' });
+check('администратор не удаляет сообщение владельца', r.status === 403, `${r.status}`);
+r = await gb(`/chats/${grp.id}/messages/${gcFirst.id}`, { method: 'DELETE' });
+check('администратор удаляет сообщение участника', r.status === 200, `${r.status}`);
+r = await ga(`/chats/${grp.id}/messages/${gbMsg.id}`, { method: 'DELETE' });
+check('владелец удаляет и сообщение администратора', r.status === 200, `${r.status}`);
+
+r = await gc(`/chats/${grp.id}/messages/${gaMsg.id}/pin`, { method: 'PUT' });
+check('участник не закрепляет', r.status === 403, `${r.status}`);
+r = await gb(`/chats/${grp.id}/messages/${gaMsg.id}/pin`, { method: 'PUT' });
+check('администратор закрепляет', r.status === 200 && r.body.pinned?.id === gaMsg.id, `${r.status}`);
+r = await gb(`/chats/${grp.id}/invite`, { method: 'POST' });
+check('администратор управляет ссылкой-приглашением', r.status === 200 && typeof r.body.invite === 'string', `${r.status}`);
+
+await ga(`/chats/${grp.id}/admins/${userGc}`, { method: 'PUT' });
+r = await gb(`/chats/${grp.id}/members/${userGc}`, { method: 'DELETE' });
+check('администратор не убирает другого администратора', r.status === 403, `${r.status}`);
+r = await gb(`/chats/${grp.id}/members/${userGa}`, { method: 'DELETE' });
+check('и владельца', r.status === 403, `${r.status}`);
+r = await gb(`/chats/${grp.id}/members/${userGd}`, { method: 'DELETE' });
+check('администратор убирает обычного участника', r.status === 200, `${r.status}`);
+r = await ga(`/chats/${grp.id}/admins/${userGc}`, { method: 'DELETE' });
+check('владелец снял администратора', r.status === 200 && roleIn(r.body.chat, userGc) === 'member', JSON.stringify(r.body.chat?.members?.map((m) => m.role)));
+r = await gb(`/chats/${grp.id}`, { method: 'DELETE' });
+check('удалить группу может только владелец', r.status === 403, `${r.status}`);
+
+r = await ga(`/chats/${grp.id}/members/${userGa}`, { method: 'DELETE' });
+r = await gb(`/chats/${grp.id}`);
+check('ушёл владелец — группа переходит администратору', r.body.chat?.ownerId !== undefined && r.body.chat.myRole === 'owner'
+  && roleIn(r.body.chat, userGb) === 'owner' && roleIn(r.body.chat, userGc) === 'member', JSON.stringify(r.body.chat?.members?.map((m) => [m.username, m.role])));
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
