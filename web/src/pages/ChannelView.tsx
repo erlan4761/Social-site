@@ -6,7 +6,7 @@ import {
   Composer, ConversationSearch, MessageList, PaneHead, PinnedBar, editable, mergeLatest, previewText, revealOlder,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
-import { ForwardDialog } from '../components/ForwardDialog';
+import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
 import { ScheduledBar } from '../components/Scheduled';
 import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
@@ -43,7 +43,7 @@ function ChannelPane({ handle }: { handle: string }) {
   const [error, setError] = useState<string | null>(null);
   const [gone, setGone] = useState<string | null>(null);
   const [mode, setMode] = useState<ComposerMode>(null);
-  const [forwarding, setForwarding] = useState<ChannelPost | null>(null);
+  const [forwarding, setForwarding] = useState<Forwarding | null>(null);
   const [pollOpen, setPollOpen] = useState(false);
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -208,7 +208,7 @@ function ChannelPane({ handle }: { handle: string }) {
           await navigator.clipboard.writeText(post.body);
           break;
         case 'forward':
-          setForwarding(post);
+          setForwarding(forwardingOf('channel', item, previewText(post.body, post.attachment)));
           break;
         case 'pin':
           await togglePin(post.id);
@@ -222,14 +222,18 @@ function ChannelPane({ handle }: { handle: string }) {
         case 'closePoll':
           if (post.poll) put({ ...post, poll: (await api.closePoll(post.poll.id)).poll });
           break;
-        case 'delete':
-          if (!window.confirm('Удалить публикацию? Она исчезнет у всех подписчиков вместе с комментариями.')) return;
-          await api.deleteChannelPost(handle, post.id);
+        case 'delete': {
+          // У альбома удаляются все его снимки разом — как в переписке.
+          const ids = action.ids ?? [post.id];
+          const what = ids.length > 1 ? `альбом — ${ids.length} ${plural(ids.length, 'снимок', 'снимка', 'снимков')}` : 'публикацию';
+          if (!window.confirm(`Удалить ${what}? Исчезнет у всех подписчиков вместе с комментариями.`)) return;
+          for (const id of ids) await api.deleteChannelPost(handle, id);
           edits.current += 1;
-          setPosts((prev) => prev.filter((p) => p.id !== post.id));
-          if (mode?.id === post.id) setMode(null);
+          setPosts((prev) => prev.filter((p) => !ids.includes(p.id)));
+          if (mode && ids.includes(mode.id)) setMode(null);
           refreshList();
           break;
+        }
         case 'reply':
           break;
       }
@@ -280,6 +284,7 @@ function ChannelPane({ handle }: { handle: string }) {
     reactions: p.reactions,
     attachment: p.attachment,
     expiresAt: p.expiresAt ?? null,
+    albumId: p.albumId,
     poll: p.poll,
     canEdit: owner && !p.poll && editable(p.createdAt),
     canDelete: owner,
@@ -402,6 +407,7 @@ function ChannelPane({ handle }: { handle: string }) {
             onCreatePoll={() => setPollOpen(true)}
             mode={mode}
             onCancelMode={() => setMode(null)}
+            albums
             autoFocus
           />
         </>
@@ -431,8 +437,8 @@ function ChannelPane({ handle }: { handle: string }) {
 
       {forwarding && (
         <ForwardDialog
-          source={{ from: 'channel', id: forwarding.id }}
-          preview={previewText(forwarding.body, forwarding.attachment)}
+          sources={forwarding.sources}
+          preview={forwarding.preview}
           onClose={() => setForwarding(null)}
         />
       )}

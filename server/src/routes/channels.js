@@ -5,7 +5,7 @@ import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { publicUrl } from '../media.js';
 import {
   ATTACH_COLUMNS, ATTACH_INSERT_COLUMNS, assertEditable, attachmentOf, attachmentUpload, attachmentValues,
-  dropAttachment, emojiOf, reactionsFor, readAttachment, searchQuery, searchResult, searchRows,
+  checkAlbum, dropAttachment, emojiOf, reactionsFor, readAlbum, readAttachment, searchQuery, searchResult, searchRows,
 } from '../messageExtras.js';
 import { dropPrefs, inArchive, prefFor, prefsOf } from '../prefs.js';
 import { clearDraft, draftsOf, dropDrafts } from '../drafts.js';
@@ -96,7 +96,7 @@ function serializeChannel(c, viewerId) {
 }
 
 const POST_SELECT = `
-  SELECT m.id, m.channel_id, m.body, m.created_at, m.edited_at, m.expires_at, ${ATTACH_COLUMNS},
+  SELECT m.id, m.channel_id, m.body, m.created_at, m.edited_at, m.expires_at, m.album_id, ${ATTACH_COLUMNS},
          (SELECT COUNT(*) FROM channel_post_views pv WHERE pv.post_id = m.id) AS views,
          (SELECT COUNT(*) FROM channel_comments cc
           WHERE cc.post_id = m.id AND ${blockPairSql('cc.author_id')}) AS comment_count
@@ -123,6 +123,7 @@ function serializePosts(rows, viewerId) {
     attachment: attachmentOf('channel', row),
     reactions: reactions.get(row.id) ?? [],
     expiresAt: row.expires_at ?? null,
+    albumId: row.album_id ?? null,
   })), viewerId, (post) => ownerOf(post.channelId));
 }
 
@@ -384,7 +385,11 @@ router.get('/:handle/posts', (req, res) => {
   });
 });
 
-/** Публикация: текст до 4000 символов и/или одно вложение — multipart, как в переписке. */
+/**
+ * Публикация: текст до 4000 символов и/или одно вложение — multipart, как в
+ * переписке. Альбом — те же правила, что в переписке: несколько публикаций с
+ * общим `album`, только фото и видео, не больше десяти, только в этом канале.
+ */
 router.post('/:handle/posts', attachmentUpload.single('file'), async (req, res, next) => {
   let attachment = null;
   try {
@@ -393,12 +398,17 @@ router.post('/:handle/posts', attachmentUpload.single('file'), async (req, res, 
 
     const poll = req.file || req.body?.poll == null ? null : readPoll(req.body.poll);
     const body = poll ? poll.question : v.str(req.body?.body ?? '', 'публикация', { min: req.file ? 0 : 1, max: MAX_POST });
+    const album = req.file ? readAlbum(req.body?.album) : null;
     attachment = await readAttachment(req.file, req.body);
+    if (album) {
+      const rows = db.prepare('SELECT channel_id FROM channel_posts WHERE album_id = ?').all(album);
+      checkAlbum(album, attachment, rows, (r) => r.channel_id === channel.id);
+    }
 
     const info = db.prepare(`
-      INSERT INTO channel_posts (channel_id, author_id, body, created_at, expires_at, ${ATTACH_INSERT_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(channel.id, req.user.id, body, nowIso(), expiryFor('channel', channel.id), ...attachmentValues(attachment));
+      INSERT INTO channel_posts (channel_id, author_id, body, created_at, expires_at, album_id, ${ATTACH_INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(channel.id, req.user.id, body, nowIso(), expiryFor('channel', channel.id), album, ...attachmentValues(attachment));
 
     const id = Number(info.lastInsertRowid);
     if (poll) createPoll('channel', id, poll);

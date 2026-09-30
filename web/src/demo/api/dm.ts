@@ -63,7 +63,7 @@ export const dmApi = {
     });
   },
 
-  sendMessage: (username: string, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput, sticker?: string) => {
+  sendMessage: (username: string, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput, sticker?: string, fwdAlbum?: string) => {
     const u = requireMe()!;
     const other = byName(username);
     if (!other) fail(404, 'Пользователь не найден');
@@ -83,8 +83,9 @@ export const dmApi = {
       fail(400, 'Сообщение, на которое вы отвечаете, не найдено');
     }
 
-    const albumId = checkAlbum(file?.album, attachment,
-      db.messages.filter((x) => x.albumId && x.albumId === file?.album).map((x) => ({ mine: x.fromId === u.id && x.toId === other!.id })));
+    const album = file?.album ?? fwdAlbum;
+    const albumId = checkAlbum(album, attachment,
+      db.messages.filter((x) => x.albumId && x.albumId === album).map((x) => ({ mine: x.fromId === u.id && x.toId === other!.id })));
     const m: DbMessage = {
       id: id(), fromId: u.id, toId: other!.id, body, albumId, expiresAt: expiryFor('dm', other!.id, u.id),
       createdAt: new Date().toISOString(), readAt: saved ? new Date().toISOString() : null,
@@ -153,10 +154,10 @@ export const dmApi = {
   },
 
   /** Переслать — это та же отправка, только текст берётся из оригинала. */
-  forward: (target: ForwardTarget, source: ForwardRef): Promise<{ message: Message }> | Promise<{ message: ChatMessage }> =>
+  forward: (target: ForwardTarget, source: ForwardRef, album?: string): Promise<{ message: Message }> | Promise<{ message: ChatMessage }> =>
     target.kind === 'dm'
-      ? dmApi.sendMessage(target.username, '', null, source)
-      : chatsApi.sendChatMessage(target.id, '', null, source),
+      ? dmApi.sendMessage(target.username, '', null, source, undefined, undefined, album)
+      : chatsApi.sendChatMessage(target.id, '', null, source, undefined, undefined, album),
 
   markRead: (username: string) => {
     const u = requireMe()!;

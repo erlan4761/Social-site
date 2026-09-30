@@ -6,7 +6,7 @@ import {
   Composer, ConversationSearch, MessageList, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText, typingLabel,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
-import { ForwardDialog } from '../components/ForwardDialog';
+import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
 import { ScheduledBar } from '../components/Scheduled';
 import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
@@ -62,7 +62,7 @@ function ChatView({ idParam }: { idParam: string }) {
 
   const [typing, setTyping] = useState<string[]>([]);
   const [mode, setMode] = useState<ComposerMode>(null);
-  const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
+  const [forwarding, setForwarding] = useState<Forwarding | null>(null);
   const [pollOpen, setPollOpen] = useState(false);
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -267,7 +267,7 @@ function ChatView({ idParam }: { idParam: string }) {
           await navigator.clipboard.writeText(msg.body);
           break;
         case 'forward':
-          setForwarding(msg);
+          setForwarding(forwardingOf('chat', item, previewText(msg.body, msg.attachment, msg.sticker)));
           break;
         case 'pin':
           await togglePin(msg.id);
@@ -286,7 +286,7 @@ function ChatView({ idParam }: { idParam: string }) {
           break;
         case 'delete': {
           const ids = action.ids ?? [msg.id];
-          const what = ids.length > 1 ? `альбом — ${ids.length} снимков` : 'сообщение';
+          const what = ids.length > 1 ? `альбом — ${ids.length} ${plural(ids.length, 'снимок', 'снимка', 'снимков')}` : 'сообщение';
           const others = msg.author.id !== user?.id;
           if (!window.confirm(others ? `Удалить ${what} от ${msg.author.displayName}? Исчезнет у всех участников.` : `Удалить ${what}? Исчезнет у всех участников.`)) return;
           for (const id of ids) await api.deleteChatMessage(chatId, id);
@@ -710,8 +710,8 @@ function ChatView({ idParam }: { idParam: string }) {
 
       {forwarding && (
         <ForwardDialog
-          source={{ from: 'chat', id: forwarding.id }}
-          preview={previewText(forwarding.body, forwarding.attachment, forwarding.sticker)}
+          sources={forwarding.sources}
+          preview={forwarding.preview}
           onClose={() => setForwarding(null)}
         />
       )}

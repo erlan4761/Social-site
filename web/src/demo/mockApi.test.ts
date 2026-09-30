@@ -324,6 +324,23 @@ describe('витрина: альбомы', () => {
     const { messages } = await api.thread('marina');
     expect(messages.filter((m) => m.albumId === album)).toHaveLength(2);
   });
+
+  it('альбом в канале и пересылка альбома целиком', async () => {
+    const album = 'albumchan0001';
+    const first = await api.publish('chronika_dev', { file: photo('1.png'), name: '1.png', body: 'Репортаж', album });
+    const second = await api.publish('chronika_dev', { file: photo('2.png'), name: '2.png', album });
+    expect([first.post.albumId, second.post.albumId]).toEqual([album, album]);
+
+    const copy = 'albumfwd00001';
+    for (const post of [first.post, second.post]) await api.forward({ kind: 'dm', username: 'oleg_k' }, { from: 'channel', id: post.id }, copy);
+    const { messages } = await api.thread('oleg_k');
+    const forwarded = messages.filter((m) => m.albumId === copy);
+    expect(forwarded.map((m) => m.body)).toEqual(['Репортаж', '']);
+    expect(forwarded.every((m) => m.forwardedFrom?.kind === 'channel')).toBe(true);
+    // Текст альбомом не переслать — как на сервере.
+    const text = (await api.sendMessage('oleg_k', 'Просто текст')).message;
+    await expect(api.forward({ kind: 'dm', username: 'marina' }, { from: 'dm', id: text.id }, 'albumtext0001')).rejects.toMatchObject({ status: 400 });
+  });
 });
 
 describe('витрина: смена логина', () => {

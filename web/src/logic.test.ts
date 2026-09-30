@@ -4,6 +4,7 @@ import { folderUnread, inFolder, toggleInFolder, type FolderRow } from './folder
 import { lastSeenLabel, plural } from './time';
 import { callText, mergeLatest, previewText, revealOlder, typingLabel } from './components/chat/format';
 import { groupAlbums, type BubbleItem } from './components/chat/MessageList';
+import { forwardingOf } from './components/ForwardDialog';
 import { mentionQuery } from './components/chat/MessageText';
 import { dialOf, formatPhone, looksLikePhone, toE164 } from './phone';
 import { toPhones } from './contacts';
@@ -183,6 +184,14 @@ describe('альбомы в ленте', () => {
   it('удалить альбом можно, только если можно удалить каждый снимок', () => {
     const [one] = groupAlbums([item(1, { albumId: 'x' }), item(2, { albumId: 'x', canDelete: false })]);
     expect(one.canDelete).toBe(false);
+  });
+
+  it('пересылается альбом целиком, по порядку; одиночное — одно', () => {
+    const [album] = groupAlbums([item(1, { albumId: 'x' }), item(2, { albumId: 'x', body: 'Подпись' }), item(3, { albumId: 'x' })]);
+    const f = forwardingOf('channel', album, 'Подпись');
+    expect(f.sources).toEqual([1, 2, 3].map((id) => ({ from: 'channel', id })));
+    expect(f.preview).toBe('Альбом: 3 снимка — Подпись');
+    expect(forwardingOf('dm', item(7), 'Фото')).toEqual({ sources: [{ from: 'dm', id: 7 }], preview: 'Фото' });
   });
 });
 

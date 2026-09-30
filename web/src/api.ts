@@ -214,6 +214,8 @@ export type ChannelPost = {
   reactions: Reaction[];
   poll?: Poll | null;
   expiresAt?: string | null;
+  /** Альбом: публикации с одним кодом — снимки одной отправки, одной сеткой. */
+  albumId?: string | null;
 };
 
 export type ChannelSummary = Channel & ChatPrefs & WithDraft & { unread: number; lastPost: ChannelPost | null };
@@ -650,16 +652,17 @@ const realApi = {
   typing: (username: string) =>
     request<{ ok: true }>(`/messages/${encodeURIComponent(username)}/typing`, { method: 'PUT' }),
 
-  /** Переслать сообщение в личную переписку или в чат. */
-  forward: (target: ForwardTarget, source: ForwardRef) =>
+  /** Переслать сообщение в личную переписку или в чат. `album` — общий код
+   *  для снимков альбома, пересылаемого целиком: у получателя он снова сетка. */
+  forward: (target: ForwardTarget, source: ForwardRef, album?: string) =>
     target.kind === 'dm'
       ? request<{ message: Message }>(`/messages/${encodeURIComponent(target.username)}`, {
           method: 'POST',
-          body: body({ forward: source }),
+          body: body({ forward: source, album }),
         })
       : request<{ message: ChatMessage }>(`/chats/${target.id}/messages`, {
           method: 'POST',
-          body: body({ forward: source }),
+          body: body({ forward: source, album }),
         }),
 
   markRead: (username: string) =>

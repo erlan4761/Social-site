@@ -3649,6 +3649,57 @@ check('чужой альбом в группе не продолжить', r.sta
 r = await ac(`/chats/${achat}/messages`);
 check('участники видят альбом в группе', r.body.messages?.filter((m) => m.albumId === album3).length === 2, '');
 
+// Канал: альбом публикаций — те же правила.
+const chAlbHandle = `albch_${stamp}`.slice(0, 32);
+await aa('/channels', { method: 'POST', body: JSON.stringify({ title: 'Фотоканал', handle: chAlbHandle }) });
+await ab(`/channels/${chAlbHandle}/subscription`, { method: 'PUT' });
+const albPublish = (client, fd) => client(`/channels/${chAlbHandle}/posts`, { method: 'POST', body: fd });
+const album4 = `alb${stamp}chn`;
+r = await albPublish(aa, withFile(PNG, 'c1.png', 'image/png', { album: album4, body: 'Репортаж' }));
+const albC2 = await albPublish(aa, withFile(PNG, 'albC2.png', 'image/png', { album: album4 }));
+const albC3 = await albPublish(aa, withFile(PNG, 'albC3.png', 'image/png', { album: album4 }));
+check('альбом в канале: три публикации с общим кодом', r.status === 201 && r.body.post?.albumId === album4 && albC3.body.post?.albumId === album4 && albC2.status === 201,
+  `${r.status} ${albC2.status} ${JSON.stringify(r.body)}`);
+const chAlb = [r.body.post, albC2.body.post, albC3.body.post];
+r = await albPublish(aa, withFile(PDF, 'c.pdf', 'application/pdf', { album: album4 }));
+check('документ в альбом канала — 400', r.status === 400, `${r.status}`);
+const chAlbOther = `albcx_${stamp}`.slice(0, 32);
+await aa('/channels', { method: 'POST', body: JSON.stringify({ title: 'Второй фотоканал', handle: chAlbOther }) });
+r = await aa(`/channels/${chAlbOther}/posts`, { method: 'POST', body: withFile(PNG, 'c4.png', 'image/png', { album: album4 }) });
+check('альбом другого канала не продолжить — 400', r.status === 400 && /Альбом не найден/.test(r.body.error ?? ''), `${r.status} ${r.body.error}`);
+r = await ab(`/channels/${chAlbHandle}/posts`);
+check('подписчик видит альбом канала', r.body.posts?.filter((x) => x.albumId === album4).length === 3, '');
+
+// Пересылка альбома целиком: те же пересылки с новым общим кодом.
+const fwdAlbum = `alb${stamp}fwd`;
+const fwdOne = (client, to, id, album) =>
+  client(`/messages/${to}`, { method: 'POST', body: JSON.stringify({ forward: { from: 'channel', id }, album }) });
+const fw = [];
+for (const post of chAlb) fw.push(await fwdOne(ab, userAc, post.id, fwdAlbum));
+check('альбом канала переслан целиком — новый общий код, подпись и «из канала»',
+  fw.every((x) => x.status === 201 && x.body.message?.albumId === fwdAlbum && x.body.message.forwardedFrom?.handle === chAlbHandle)
+  && fw[0].body.message.body === 'Репортаж' && fw[1].body.message.attachment?.kind === 'image',
+  JSON.stringify(fw.map((x) => [x.status, x.body.message?.albumId, x.body.error])));
+r = await ac(`/messages/${userAb}`);
+check('получатель видит пересланный альбом одной группой', r.body.messages?.filter((m) => m.albumId === fwdAlbum).length === 3, '');
+r = await fwdOne(ab, userAc, chAlb[0].id, 'кривой код');
+check('кривой код у пересылки — 400', r.status === 400, `${r.status}`);
+r = await fwdOne(ac, userAb, chAlb[1].id, fwdAlbum);
+check('пересылкой в чужой альбом не подклеить — 400', r.status === 400 && /Альбом не найден/.test(r.body.error ?? ''), `${r.status} ${r.body.error}`);
+const fwdText = `alb${stamp}txt`;
+r = await ab(`/messages/${userAc}`, { method: 'POST', body: JSON.stringify({ body: 'Просто текст' }) });
+r = await ab(`/messages/${userAa}`, { method: 'POST', body: JSON.stringify({ forward: { from: 'dm', id: r.body.message.id }, album: fwdText }) });
+check('текст альбомом не переслать — 400', r.status === 400 && /только фото и видео/.test(r.body.error ?? ''), `${r.status} ${r.body.error}`);
+
+// В группу с медленным режимом пересланный альбом уходит целиком, как и отправленный.
+const fwdGroup = `alb${stamp}fgr`;
+const gf = [];
+for (const post of chAlb) {
+  gf.push(await ac(`/chats/${achat}/messages`, { method: 'POST', body: JSON.stringify({ forward: { from: 'channel', id: post.id }, album: fwdGroup }) }));
+}
+check('пересылка альбома в группу с медленным режимом — целиком', gf.every((x) => x.status === 201 && x.body.message?.albumId === fwdGroup),
+  JSON.stringify(gf.map((x) => [x.status, x.body.error])));
+
 console.log('\n— смена логина —');
 const un = makeClient();
 const uo = makeClient();
