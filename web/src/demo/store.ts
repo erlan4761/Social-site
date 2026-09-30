@@ -27,6 +27,12 @@ export type DbUser = {
   moderator?: boolean;
   bannedAt?: string | null;
   banReason?: string;
+  /** Вход с кодом из приложения — как users.totp_* и totp_backup_codes (model/twoFactor.ts). */
+  totpSecret?: string | null;
+  totpPending?: string | null;
+  totpEnabledAt?: string | null;
+  totpLastStep?: number | null;
+  backupCodes?: { code: string; used: boolean }[];
   /** Кто найдёт по номеру и кому он виден — phone_find / phone_show; нет — «никто». */
   phoneFind?: LastSeenPrivacy;
   phoneShow?: LastSeenPrivacy;

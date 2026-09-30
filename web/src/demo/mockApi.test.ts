@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { mockApi as api } from './mockApi';
 import { seed } from './seed';
 import { deliverDueScheduled } from './model/scheduled';
+import { totpNow } from './model/twoFactor';
 
 /**
  * Сценарии витрины — как смоук-тест сервера, только для подставного API.
@@ -132,7 +133,8 @@ describe('витрина: вход по номеру', () => {
     expect(verdict.status).toBe('password');
     if (verdict.status !== 'password') return;
     await expect(api.phonePassword(verdict.ticket, 'ne-tot')).rejects.toMatchObject({ status: 403 });
-    expect((await api.phonePassword(verdict.ticket, PASSWORD)).user.username).toBe('demo');
+    const res = await api.phonePassword(verdict.ticket, PASSWORD);
+    expect(res.status === 'signed-in' && res.user.username).toBe('demo');
   });
 
   it('вход — событие «вход в аккаунт», регистрация — без него', async () => {
@@ -323,6 +325,33 @@ describe('витрина: кто поставил реакцию', () => {
   });
 });
 
+describe('витрина: вход с кодом из приложения', () => {
+  it('подключение, вход с кодом и резервным, отключение', async () => {
+    await expect(api.twoFactorSetup('ne-tot')).rejects.toMatchObject({ status: 403 });
+    const { secret, uri } = await api.twoFactorSetup(PASSWORD);
+    expect(uri).toContain(`secret=${secret}`);
+    await expect(api.twoFactorEnable('000000' === totpNow(secret) ? '111111' : '000000')).rejects.toMatchObject({ status: 403 });
+    const { backupCodes } = await api.twoFactorEnable(totpNow(secret));
+    expect(backupCodes).toHaveLength(10);
+    expect((await api.account()).twoFactor).toEqual({ enabled: true, backupCodesLeft: 10 });
+
+    const step = await loginAs('demo');
+    expect(step.status).toBe('two-factor');
+    const ticket = step.status === 'two-factor' ? step.ticket : '';
+    await expect(api.twoFactorLogin(ticket, '12345')).rejects.toMatchObject({ status: 403 });
+    expect((await api.twoFactorLogin(ticket, totpNow(secret, 1))).user.username).toBe('demo');
+    await expect(api.twoFactorLogin(ticket, totpNow(secret, 1))).rejects.toMatchObject({ status: 410 });
+
+    const again = await loginAs('demo');
+    const res = await api.twoFactorLogin(again.status === 'two-factor' ? again.ticket : '', backupCodes[0].toUpperCase());
+    expect(res.backupCodesLeft).toBe(9);
+
+    await expect(api.twoFactorDisable(PASSWORD, backupCodes[0])).rejects.toMatchObject({ status: 403 });
+    await api.twoFactorDisable(PASSWORD, backupCodes[1]);
+    expect((await loginAs('demo')).status).toBeUndefined();
+  });
+});
+
 describe('витрина: предпросмотр ссылок', () => {
   it('карточка только у заготовленной ссылки', async () => {
     expect((await api.linkPreview('https://github.com/erlan4761/Social-site')).preview?.siteName).toBe('GitHub');
@@ -392,7 +421,8 @@ describe('витрина: модерация', () => {
     await expect(loginAs('nina')).rejects.toMatchObject({ status: 403 });
     await loginAs('demo');
     await api.unbanUser('nina');
-    expect((await loginAs('nina')).user.username).toBe('nina');
+    const back = await loginAs('nina');
+    expect('user' in back ? back.user.username : null).toBe('nina');
   });
 
   it('не модератору панель закрыта', async () => {

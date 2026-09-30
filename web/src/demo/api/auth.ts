@@ -6,7 +6,14 @@ import { byId, byName, byEmail, me, requireMe } from '../model/people';
 import { publicUser } from '../model/posts';
 import { notifyLogin } from '../model/notifications';
 import { checkCode, dropTicket, issueTicket, normalizePhone, readTicket, sendCode } from '../model/phone';
-import type { PhoneVerdict } from '../../api';
+import type { PhoneVerdict, TwoFactorNeeded } from '../../api';
+import {
+  backupCodesLeft, dropTwoFactorTicket, failTwoFactorTicket, issueBackupCodes, issueTwoFactorTicket, matchTotp, newSecret,
+  otpauthUri, readTwoFactorTicket, twoFactorOn, useSecondFactor,
+} from '../model/twoFactor';
+
+const twoFactorStep = (userId: number): TwoFactorNeeded => ({ status: 'two-factor', ticket: issueTwoFactorTicket(userId) });
+const WRONG_CODE = 'Код не подходит — проверьте, что время на телефоне точное';
 
 /** Методы витрины: вход, регистрация, пароль, настройки аккаунта. */
 
@@ -83,6 +90,7 @@ export const authApi = {
     let verdict: PhoneVerdict;
     if (!u) verdict = { status: 'signup', ticket: issueTicket('signup', phone) };
     else if (u.password) verdict = { status: 'password', ticket: issueTicket('password', phone, u.id) };
+    else if (twoFactorOn(u)) verdict = twoFactorStep(u.id);
     else {
       db.meId = u.id;
       openSession(u.id);
@@ -101,10 +109,68 @@ export const authApi = {
       fail(403, 'Пароль не подходит');
     }
     dropTicket(ticket.token);
+    if (twoFactorOn(u)) return tick(twoFactorStep(u!.id));
     db.meId = u!.id;
     openSession(u!.id);
     notifyLogin(u!.id);
-    return tick({ user: publicUser(u!) });
+    return tick({ status: 'signed-in' as const, user: publicUser(u!) });
+  },
+
+  twoFactorLogin: (token: string, code: string) => {
+    const ticket = readTwoFactorTicket(token);
+    const u = byId(ticket.userId);
+    const how = u && twoFactorOn(u) ? useSecondFactor(u, code) : null;
+    if (!how) {
+      failTwoFactorTicket(token);
+      fail(403, 'Код не подходит');
+    }
+    dropTwoFactorTicket(token);
+    if (u!.bannedAt) fail(403, 'Аккаунт заблокирован модератором');
+    db.meId = u!.id;
+    openSession(u!.id);
+    notifyLogin(u!.id);
+    return tick({ user: publicUser(u!), ...(how === 'backup' ? { backupCodesLeft: backupCodesLeft(u!) } : {}) });
+  },
+
+  twoFactorSetup: (password?: string) => {
+    const u = requireMe()!;
+    if (twoFactorOn(u)) fail(400, 'Вход с кодом уже включён');
+    if (u.password && u.password !== password) fail(403, 'Пароль не подходит');
+    u.totpPending = newSecret();
+    return tick({ secret: u.totpPending, uri: otpauthUri(u.username, u.totpPending) });
+  },
+
+  twoFactorEnable: (code: string) => {
+    const u = requireMe()!;
+    if (twoFactorOn(u)) fail(400, 'Вход с кодом уже включён');
+    if (!u.totpPending) fail(400, 'Сначала получите новый секрет');
+    const step = matchTotp(u.totpPending!, code);
+    if (step == null) fail(403, WRONG_CODE);
+    u.totpSecret = u.totpPending;
+    u.totpPending = null;
+    u.totpEnabledAt = new Date().toISOString();
+    u.totpLastStep = step;
+    return tick({ backupCodes: issueBackupCodes(u) });
+  },
+
+  twoFactorDisable: (password: string | undefined, code: string) => {
+    const u = requireMe()!;
+    if (!twoFactorOn(u)) fail(400, 'Вход с кодом и так выключен');
+    if (u.password && u.password !== password) fail(403, 'Пароль не подходит');
+    if (!useSecondFactor(u, code)) fail(403, WRONG_CODE);
+    u.totpSecret = null;
+    u.totpPending = null;
+    u.totpEnabledAt = null;
+    u.totpLastStep = null;
+    u.backupCodes = [];
+    return tick({ ok: true as const });
+  },
+
+  twoFactorBackupCodes: (code: string) => {
+    const u = requireMe()!;
+    if (!twoFactorOn(u)) fail(400, 'Вход с кодом выключен');
+    if (!useSecondFactor(u, code)) fail(403, WRONG_CODE);
+    return tick({ backupCodes: issueBackupCodes(u) });
   },
 
   phoneSignup: (token: string, rawName: string, displayName: string, findable = false) => {
@@ -129,13 +195,14 @@ export const authApi = {
     return tick({ user: publicUser(u) });
   },
 
-  login: (input: { username: string; password: string }) => {
+  login: (input: { username: string; password: string }): Promise<{ user: User; status?: undefined } | TwoFactorNeeded> => {
     const u = byName(input.username.trim());
     // Аккаунт по номеру по логину не входит: его пароль — второй шаг после кода.
     if (!u || u.passwordLogin === false || !u.password || u.password !== input.password) {
       fail(401, 'Неверное имя пользователя или пароль');
     }
     if (u!.bannedAt) fail(403, 'Аккаунт заблокирован модератором');
+    if (twoFactorOn(u!)) return tick(twoFactorStep(u!.id));
     db.meId = u!.id;
     openSession(u!.id);
     notifyLogin(u!.id);
@@ -204,6 +271,7 @@ export const authApi = {
       phoneFind: u.phoneFind ?? 'nobody',
       phoneShow: u.phoneShow ?? 'nobody',
       createdAt: u.createdAt,
+      twoFactor: twoFactorOn(u) ? { enabled: true, backupCodesLeft: backupCodesLeft(u) } : { enabled: false },
     });
   },
 
