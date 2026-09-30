@@ -926,3 +926,10 @@ a.pane-who:hover { background: var(--surface-2); }
   line-height: 1.25rem;
   text-align: center;
 }
+
+/* Несколько закреплённых: вместо сплошной линии слева — риски, одна на
+   закреплённое (не больше четырёх), горит та, что сейчас на виду. */
+.pinned-open.many { display: flex; gap: var(--s-2); padding-left: 0; border-left: 0; }
+.pinned-marks { display: grid; grid-auto-rows: 1fr; gap: 2px; flex: none; width: 2px; }
+.pinned-marks span { border-radius: 1px; background: color-mix(in oklab, var(--accent) 30%, transparent); }
+.pinned-marks span.on { background: var(--accent); }

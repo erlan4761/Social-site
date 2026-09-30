@@ -2,7 +2,7 @@ import { type AttachmentInput, type Channel, type ChannelSummary, type PollInput
 import { type DbChannel, type DbChannelPost, type DbChannelComment, db, id, tick, fail } from '../store';
 import { requireMe, blockedPair, hidden } from '../model/people';
 import { EDIT_WINDOW_MS, attachmentFrom, setReaction, findHits, checkAlbum } from '../model/messages';
-import { pinnedOf, setPin, pinPreview } from '../model/folders';
+import { addPin, removePin, pinsPayload } from '../model/folders';
 import { prefFields, dropPrefs } from '../model/notifications';
 import { clearDraft, draftOf } from '../model/drafts';
 import { expiryFor } from '../model/autoDelete';
@@ -126,7 +126,7 @@ export const channelsApi = {
       channel: toChannel(c),
       posts: page.map(toChannelPost),
       nextCursor: list.length > 20 ? page[0].id : null,
-      pinned: pinPreview('channel', c.id, postsOf(c.id)),
+      ...pinsPayload('channel', c.id, postsOf(c.id)),
     });
   },
 
@@ -168,7 +168,7 @@ export const channelsApi = {
     const { c } = requireOwner(handle);
     const post = requirePost(c.id, postId);
     db.channelPosts = db.channelPosts.filter((p) => p.id !== post.id);
-    if (pinnedOf('channel', c.id)?.messageId === post.id) setPin('channel', c.id, null);
+    removePin('channel', c.id, post.id);
     db.channelComments = db.channelComments.filter((x) => x.postId !== post.id);
     db.postReactions = db.postReactions.filter((r) => r.messageId !== post.id);
     return tick({ ok: true as const });
@@ -222,14 +222,14 @@ export const channelsApi = {
   pinPost: (handle: string, postId: number) => {
     const { c } = requireOwner(handle);
     const post = requirePost(c.id, postId);
-    setPin('channel', c.id, post.id);
-    return tick({ pinned: pinPreview('channel', c.id, postsOf(c.id)) });
+    addPin('channel', c.id, post.id);
+    return tick(pinsPayload('channel', c.id, postsOf(c.id)));
   },
 
-  unpinPost: (handle: string) => {
+  unpinPost: (handle: string, id?: number) => {
     const { c } = requireOwner(handle);
-    setPin('channel', c.id, null);
-    return tick({ ok: true as const });
+    removePin('channel', c.id, id ?? null);
+    return tick(pinsPayload('channel', c.id, postsOf(c.id)));
   },
 
   publishPoll: (handle: string, input: PollInput) => {

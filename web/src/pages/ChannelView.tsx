@@ -47,7 +47,7 @@ function ChannelPane({ handle }: { handle: string }) {
   const [notice, notify] = useNotice();
   const selection = useSelection(posts.map((p) => p.id));
   const [pollOpen, setPollOpen] = useState(false);
-  const [pinned, setPinned] = useState<PinnedPreview | null>(null);
+  const [pins, setPins] = useState<PinnedPreview[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [jump, setJump] = useState<{ id: number; seq: number } | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -72,7 +72,7 @@ function ChannelPane({ handle }: { handle: string }) {
       .then((res) => {
         if (cancelled) return;
         setChannel(res.channel);
-        setPinned(res.pinned);
+        setPins(res.pins);
         setPosts(res.posts);
         setCursor(res.nextCursor);
         markRead(res.channel);
@@ -105,7 +105,7 @@ function ChannelPane({ handle }: { handle: string }) {
         .then((res) => {
           if (cancelled) return;
           setChannel(res.channel);
-          setPinned(res.pinned);
+          setPins(res.pins);
           if (edits.current !== startedAt) return;
           setPosts((prev) => {
             const newest = prev.at(-1)?.id ?? 0;
@@ -165,13 +165,10 @@ function ChannelPane({ handle }: { handle: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, wanted]);
 
+  /** Закрепить или открепить — ответ сервера приносит весь список закреплённых. */
   async function togglePin(id: number) {
-    if (pinned?.id === id) {
-      await api.unpinPost(handle);
-      setPinned(null);
-    } else {
-      setPinned((await api.pinPost(handle, id)).pinned);
-    }
+    const res = pins.some((x) => x.id === id) ? await api.unpinPost(handle, id) : await api.pinPost(handle, id);
+    setPins(res.pins);
   }
 
   function put(updated: ChannelPost) {
@@ -376,11 +373,11 @@ function ChannelPane({ handle }: { handle: string }) {
         />
       )}
 
-      {pinned && (
+      {pins.length > 0 && (
         <PinnedBar
-          pinned={pinned}
-          onOpen={() => void reveal(pinned.id)}
-          onUnpin={owner ? () => void api.unpinPost(handle).then(() => setPinned(null)).catch(() => undefined) : undefined}
+          pins={pins}
+          onOpen={(id) => void reveal(id)}
+          onUnpin={owner ? (id) => void api.unpinPost(handle, id).then((r) => setPins(r.pins)).catch(() => undefined) : undefined}
         />
       )}
 
@@ -409,7 +406,7 @@ function ChannelPane({ handle }: { handle: string }) {
         onAction={(action, item) => void act(action, item)}
         selection={selection}
         actions={{ reply: false, pin: owner, link: true }}
-        pinnedId={pinned?.id ?? null}
+        pinnedIds={pins.map((x) => x.id)}
         jump={jump}
         variant="channel"
         empty={

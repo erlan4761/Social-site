@@ -6,7 +6,7 @@ export type SendExtra = SendOptions & { forward?: ForwardRef; file?: AttachmentI
 import { type DbMessage, db, id, tick, fail } from '../store';
 import { byId, byName, requireMe, person, blockedPair } from '../model/people';
 import { attachmentFrom, toMessage, assertEditable, setReaction, pairThread, requirePairMessage, findHits, dmKey, setTyping, clearTyping, isTyping, forwardSource, marinaAnswers, readSticker, CHAT_PAGE, BODY_MAX, checkAlbum } from '../model/messages';
-import { pinScope, pinnedOf, setPin, pinPreview } from '../model/folders';
+import { pinScope, addPin, removePin, pinsPayload } from '../model/folders';
 import { prefFields, dmUnreadTotal, notify, markNotificationsRead } from '../model/notifications';
 import { clearDraft, draftOf } from '../model/drafts';
 import { dmAutoDelete, expiryFor, setDmAutoDelete } from '../model/autoDelete';
@@ -62,7 +62,7 @@ export const dmApi = {
       nextCursor: list.length > CHAT_PAGE ? page.at(-1)!.id : null,
       blocked: blockedPair(u.id, other!.id),
       typing: !blockedPair(u.id, other!.id) && isTyping(dmKey(u.id, other!.id), other!.id),
-      pinned: pinPreview('dm', pinScope(u.id, other!.id), pairThread(u.id, other!.id)),
+      ...pinsPayload('dm', pinScope(u.id, other!.id), pairThread(u.id, other!.id)),
       autoDelete: dmAutoDelete(u.id, other!.id),
     });
   },
@@ -138,7 +138,7 @@ export const dmApi = {
     const { u, m } = requirePairMessage(username, messageId);
     if (m.fromId !== u.id) fail(403, 'Удалить можно только своё сообщение');
     db.messages = db.messages.filter((x) => x.id !== m.id);
-    if (pinnedOf('dm', pinScope(m.fromId, m.toId))?.messageId === m.id) setPin('dm', pinScope(m.fromId, m.toId), null);
+    removePin('dm', pinScope(m.fromId, m.toId), m.id);
     db.dmReactions = db.dmReactions.filter((r) => r.messageId !== m.id);
     return tick({ ok: true as const });
   },
@@ -195,16 +195,16 @@ export const dmApi = {
   pinMessage: (username: string, messageId: number) => {
     const { u, other, m } = requirePairMessage(username, messageId);
     if (blockedPair(u.id, other.id)) fail(403, 'Переписка с этим пользователем недоступна');
-    setPin('dm', pinScope(u.id, other.id), m.id);
-    return tick({ pinned: pinPreview('dm', pinScope(u.id, other.id), pairThread(u.id, other.id)) });
+    addPin('dm', pinScope(u.id, other.id), m.id);
+    return tick(pinsPayload('dm', pinScope(u.id, other.id), pairThread(u.id, other.id)));
   },
 
-  unpinMessage: (username: string) => {
+  unpinMessage: (username: string, id?: number) => {
     const u = requireMe()!;
     const other = byName(username);
     if (!other) fail(404, 'Пользователь не найден');
-    setPin('dm', pinScope(u.id, other!.id), null);
-    return tick({ ok: true as const });
+    removePin('dm', pinScope(u.id, other!.id), id ?? null);
+    return tick(pinsPayload('dm', pinScope(u.id, other!.id), pairThread(u.id, other!.id)));
   },
 
   // ─ Стикеры ────────────────────────────────────────────────────────────

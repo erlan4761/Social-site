@@ -1,4 +1,4 @@
-import { type Attachment, type ChatFolder, type FolderInput, type PinnedPreview, type PrefKind } from '../../api';
+import { type Attachment, type ChatFolder, type FolderInput, type PinnedPreview, type PinsPayload, type PrefKind } from '../../api';
 import { type DbFolder, db, fail } from '../store';
 import { attachmentLabelOf } from './messages';
 import { plainText } from '../../components/chat/markup';
@@ -33,16 +33,30 @@ export function checkFolder(input: FolderInput, current: ChatFolder | null): Omi
 
 export const pinScope = (a: number, b: number) => `${Math.min(a, b)}-${Math.max(a, b)}`;
 
-export const pinnedOf = (kind: PrefKind, scope: string | number) => db.pins.find((x) => x.kind === kind && x.scope === String(scope));
+/** Закреплённые переписки — свежие по сообщению сверху, как pins.js. */
+const pinnedIdsOf = (kind: PrefKind, scope: string | number) =>
+  db.pins.filter((x) => x.kind === kind && x.scope === String(scope)).map((x) => x.messageId).sort((a, b) => b - a);
 
-export const setPin = (kind: PrefKind, scope: string | number, messageId: number | null) => {
-  db.pins = db.pins.filter((x) => !(x.kind === kind && x.scope === String(scope)));
-  if (messageId != null) db.pins.push({ kind, scope: String(scope), messageId });
+export const PINS_MAX = 20;
+
+export function addPin(kind: PrefKind, scope: string | number, messageId: number) {
+  const ids = pinnedIdsOf(kind, scope);
+  if (ids.includes(messageId)) return;
+  if (ids.length >= PINS_MAX) fail(400, `Закреплено уже ${PINS_MAX} — открепите что-нибудь`);
+  db.pins.push({ kind, scope: String(scope), messageId });
+}
+
+/** Открепить одно (`messageId`) или все. */
+export const removePin = (kind: PrefKind, scope: string | number, messageId: number | null = null) => {
+  db.pins = db.pins.filter((x) => !(x.kind === kind && x.scope === String(scope) && (messageId == null || x.messageId === messageId)));
 };
 
-/** Закреплённое глазами смотрящего: не нашлось среди видимых — полосы нет. */
-export function pinPreview(kind: PrefKind, scope: string | number, visible: { id: number; body: string; attachment: Attachment | null }[]): PinnedPreview | null {
-  const pin = pinnedOf(kind, scope);
-  const m = pin ? visible.find((x) => x.id === pin.messageId) : undefined;
-  return m ? { id: m.id, body: m.body ? plainText(m.body) : attachmentLabelOf(m.attachment), attachmentKind: m.attachment?.kind ?? null } : null;
+/** Закреплённые глазами смотрящего: не нашлось среди видимых — для него его нет. */
+export function pinsPayload(kind: PrefKind, scope: string | number, visible: { id: number; body: string; attachment: Attachment | null }[]): PinsPayload {
+  const pins: PinnedPreview[] = [];
+  for (const id of pinnedIdsOf(kind, scope)) {
+    const m = visible.find((x) => x.id === id);
+    if (m) pins.push({ id: m.id, body: m.body ? plainText(m.body) : attachmentLabelOf(m.attachment), attachmentKind: m.attachment?.kind ?? null });
+  }
+  return { pinned: pins[0] ?? null, pins };
 }

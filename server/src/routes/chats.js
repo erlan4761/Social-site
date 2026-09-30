@@ -15,7 +15,7 @@ import { dropPrefs, inArchive, prefFor, prefsOf } from '../prefs.js';
 import { presenceFor } from '../presence.js';
 import { saveMentions } from '../mentions.js';
 import { createPoll, hasPoll, readPoll, withPolls } from '../polls.js';
-import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
+import { pin, pinsPayload, unpin, unpinIfPinned } from '../pins.js';
 import { clearDraft, draftsOf, dropDrafts } from '../drafts.js';
 import { SLOW_MODE_OPTIONS, heirOf, isAdmin, nextPostAt, outranks, postBlock, roleOf } from '../chatRoles.js';
 import { expiryFor, readAutoDelete } from '../autoDelete.js';
@@ -530,7 +530,7 @@ router.get('/:id/messages', (req, res) => {
     ...(unreadMentions ? { unreadMentions } : {}),
     readUpTo: othersReadUpTo(chat.id, me),
     typing,
-    pinned: pinnedPreview('chat', chat.id, (id) => chatMessage(chat.id, id, me)),
+    ...pinsPayload('chat', chat.id, (id) => chatMessage(chat.id, id, me)),
   });
 });
 
@@ -734,16 +734,29 @@ router.put('/:id/messages/:mid/pin', (req, res) => {
   const msg = chatMessage(chat.id, req.params.mid, me);
   if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
   pin('chat', chat.id, msg.id, me);
-  res.json({ pinned: pinnedPreview('chat', chat.id, (id) => chatMessage(chat.id, id, me)) });
+  res.json(pinsPayload('chat', chat.id, (id) => chatMessage(chat.id, id, me)));
 });
 
+/** Открепить все закреплённые группы. */
 router.delete('/:id/pin', (req, res) => {
   const me = req.user.id;
   const chat = memberChat(req.params.id, me);
   if (!chat) return res.status(404).json({ error: NOT_FOUND });
   if (!isAdmin(chat, me)) return res.status(403).json({ error: 'Откреплять сообщения могут владелец и администраторы' });
   unpin('chat', chat.id);
-  res.json({ ok: true });
+  res.json({ ok: true, pinned: null, pins: [] });
+});
+
+/** Открепить одно из закреплённых. */
+router.delete('/:id/messages/:mid/pin', (req, res) => {
+  const me = req.user.id;
+  const chat = memberChat(req.params.id, me);
+  if (!chat) return res.status(404).json({ error: NOT_FOUND });
+  if (!isAdmin(chat, me)) return res.status(403).json({ error: 'Откреплять сообщения могут владелец и администраторы' });
+  const id = Number.parseInt(req.params.mid, 10);
+  if (!Number.isSafeInteger(id) || id <= 0) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
+  unpin('chat', chat.id, id);
+  res.json(pinsPayload('chat', chat.id, (x) => chatMessage(chat.id, x, me)));
 });
 
 /**

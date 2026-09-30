@@ -366,6 +366,24 @@ describe('витрина: кнопка «@»', () => {
   });
 });
 
+describe('витрина: несколько закреплённых', () => {
+  it('закрепить ещё одно, открепить одно, лимит — двадцать', async () => {
+    const ids: number[] = [];
+    for (let i = 0; i < 21; i++) ids.push((await api.sendMessage('oleg_k', `Закреп ${i}`)).message.id);
+    await api.pinMessage('oleg_k', ids[0]);
+    let r = await api.pinMessage('oleg_k', ids[1]);
+    expect(r.pins.map((x) => x.id)).toEqual([ids[1], ids[0]]);
+    expect(r.pinned?.id).toBe(ids[1]);
+    r = await api.unpinMessage('oleg_k', ids[1]);
+    expect(r.pins.map((x) => x.id)).toEqual([ids[0]]);
+    for (const id of ids.slice(1, 20)) await api.pinMessage('oleg_k', id);
+    await expect(api.pinMessage('oleg_k', ids[20])).rejects.toMatchObject({ status: 400 });
+    r = await api.unpinMessage('oleg_k');
+    expect(r.pins).toEqual([]);
+    expect((await api.thread('oleg_k')).pins).toEqual([]);
+  });
+});
+
 describe('витрина: предпросмотр ссылок', () => {
   it('карточка только у заготовленной ссылки', async () => {
     expect((await api.linkPreview('https://github.com/erlan4761/Social-site')).preview?.siteName).toBe('GitHub');

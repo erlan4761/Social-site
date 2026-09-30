@@ -45,7 +45,7 @@ function ThreadView({ username }: { username: string }) {
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<Forwarding | null>(null);
   const selection = useSelection(messages.map((m) => m.id));
-  const [pinned, setPinned] = useState<PinnedPreview | null>(null);
+  const [pins, setPins] = useState<PinnedPreview[]>([]);
   const [autoDelete, setAutoDelete] = useState(0);
   const [timerOpen, setTimerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -82,7 +82,7 @@ function ThreadView({ username }: { username: string }) {
         setCursor(res.nextCursor);
         setBlocked(Boolean(res.blocked));
         setTyping(res.typing);
-        setPinned(res.pinned);
+        setPins(res.pins);
         setAutoDelete(res.autoDelete ?? 0);
         // Всегда, а не только при непрочитанных: вместе с перепиской гаснет и
         // событие о ней в «Событиях».
@@ -122,7 +122,7 @@ function ThreadView({ username }: { username: string }) {
           setTyping(res.typing);
           window.clearTimeout(typingTimer.current);
           if (res.typing) typingTimer.current = window.setTimeout(() => pullRef.current(), 6_500);
-          setPinned(res.pinned);
+          setPins(res.pins);
           if (edits.current !== startedAt) return;
           setMessages((prev) => {
             const newest = prev.at(-1)?.id ?? 0;
@@ -155,13 +155,10 @@ function ThreadView({ username }: { username: string }) {
     }
   }
 
+  /** Закрепить или открепить — ответ сервера приносит весь список закреплённых. */
   async function togglePin(id: number) {
-    if (pinned?.id === id) {
-      await api.unpinMessage(username);
-      setPinned(null);
-    } else {
-      setPinned((await api.pinMessage(username, id)).pinned);
-    }
+    const res = pins.some((x) => x.id === id) ? await api.unpinMessage(username, id) : await api.pinMessage(username, id);
+    setPins(res.pins);
   }
 
   async function loadOlder() {
@@ -435,11 +432,11 @@ function ThreadView({ username }: { username: string }) {
         />
       )}
 
-      {pinned && (
+      {pins.length > 0 && (
         <PinnedBar
-          pinned={pinned}
-          onOpen={() => void reveal(pinned.id)}
-          onUnpin={blocked ? undefined : () => void api.unpinMessage(username).then(() => setPinned(null)).catch(() => undefined)}
+          pins={pins}
+          onOpen={(id) => void reveal(id)}
+          onUnpin={blocked ? undefined : (id) => void api.unpinMessage(username, id).then((r) => setPins(r.pins)).catch(() => undefined)}
         />
       )}
 
@@ -452,7 +449,7 @@ function ThreadView({ username }: { username: string }) {
         onAction={(action, item) => void act(action, item)}
         selection={selection}
         actions={{ pin: !blocked }}
-        pinnedId={pinned?.id ?? null}
+        pinnedIds={pins.map((x) => x.id)}
         jump={jump}
         readOnly={blocked}
         empty={
