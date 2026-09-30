@@ -4057,5 +4057,46 @@ await ae(`/users/${userAd}/block`, { method: 'PUT' });
 r = await setTimer(ad, userAe, DAY);
 check('в блокировке таймер не поставить', r.status === 403, `${r.status}`);
 
+console.log('\n— выгрузка своих данных —');
+const ex = makeClient();
+const ey = makeClient();
+const userEx = `expa_${stamp}`;
+const userEy = `expb_${stamp}`;
+await legacySignUp(ex, userEx, 'Выгружающий');
+await legacySignUp(ey, userEy, 'Собеседник');
+r = await ex('/posts', { method: 'POST', body: JSON.stringify({ body: 'Моя запись для выгрузки' }) });
+const exPost = r.body.post.id;
+await ey(`/posts/${exPost}/comments`, { method: 'POST', body: JSON.stringify({ body: 'Чужой комментарий' }) });
+await ex(`/posts/${exPost}/comments`, { method: 'POST', body: JSON.stringify({ body: 'Мой комментарий' }) });
+await ex(`/users/${userEy}/follow`, { method: 'PUT' });
+await dmSend(ex, userEy, { body: 'Я пишу' });
+await dmSend(ey, userEx, { body: 'Мне отвечают' });
+r = await ex('/chats', { method: 'POST', body: JSON.stringify({ title: 'Выгрузочная', members: [userEy] }) });
+const exChat = r.body.chat.id;
+await ex(`/chats/${exChat}/messages`, { method: 'POST', body: JSON.stringify({ body: 'Моё в группе' }) });
+await ey(`/chats/${exChat}/messages`, { method: 'POST', body: JSON.stringify({ body: 'Чужое в группе' }) });
+await ex('/channels', { method: 'POST', body: JSON.stringify({ title: 'Мой канал', handle: `expch_${stamp}` }) });
+await ex(`/channels/expch_${stamp}/posts`, { method: 'POST', body: JSON.stringify({ body: 'Публикация в канале' }) });
+
+r = await guest('/account/export');
+check('выгрузка — гостю 401', r.status === 401, `${r.status}`);
+raw = await ex.raw('/api/account/export');
+const exportText = await raw.text();
+const dump = JSON.parse(exportText);
+check('выгрузка — файлом с именем', raw.status === 200 && /attachment; filename="hronika-expa_\w+-\d{4}-\d{2}-\d{2}\.json"/.test(raw.headers.get('content-disposition') ?? '')
+  && /no-store/.test(raw.headers.get('cache-control') ?? ''), raw.headers.get('content-disposition'));
+check('профиль и формат', dump.format === 'hronika-export/1' && dump.profile?.username === userEx && dump.profile.displayName === 'Выгружающий', JSON.stringify(dump.profile));
+check('записи и только свои комментарии', dump.posts?.some((x) => x.body === 'Моя запись для выгрузки')
+  && dump.comments?.length === 1 && dump.comments[0].body === 'Мой комментарий', JSON.stringify(dump.comments));
+check('подписки', dump.following?.some((f) => f.username === userEy), JSON.stringify(dump.following));
+const exConv = dump.conversations?.find((c) => c.with === userEy);
+check('личная переписка — обе стороны', exConv?.messages.some((m) => m.from === 'me' && m.body === 'Я пишу')
+  && exConv.messages.some((m) => m.from === userEy && m.body === 'Мне отвечают'), JSON.stringify(exConv));
+const exGroup = dump.groups?.find((g) => g.id === exChat);
+check('в группе — только свои сообщения', exGroup?.myMessages.length === 1 && exGroup.myMessages[0].body === 'Моё в группе', JSON.stringify(exGroup));
+check('свой канал с публикациями', dump.channels?.own?.[0]?.posts?.[0]?.body === 'Публикация в канале', JSON.stringify(dump.channels));
+check('сеансы — без токенов', dump.sessions?.length >= 1 && dump.sessions.every((s) => !('token' in s)), JSON.stringify(dump.sessions));
+check('ни хеша пароля, ни токенов', !/scrypt\$|password_hash|"token"/.test(exportText), exportText.match(/scrypt\$|password_hash|"token"/)?.[0]);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
