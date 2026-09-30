@@ -136,6 +136,8 @@ export type MessageExtras = {
   sticker?: string | null;
   /** Альбом: сообщения с одним кодом — снимки одной отправки, показываются сеткой. */
   albumId?: string | null;
+  /** Когда исчезнет по таймеру автоудаления; null — не исчезнет. */
+  expiresAt?: string | null;
   editedAt: string | null;
   forwardedFrom: ForwardedFrom | null;
   replyTo: Quote | null;
@@ -173,6 +175,8 @@ export type Channel = {
   iAmOwner: boolean;
   subscribed: boolean;
   subscriberCount: number;
+  /** Таймер автоудаления новых публикаций, секунды; 0 — выключен. */
+  autoDelete: number;
 };
 
 /** Вариант опроса. `votes` — null, пока результаты скрыты: смотрящий ещё
@@ -209,6 +213,7 @@ export type ChannelPost = {
   attachment: Attachment | null;
   reactions: Reaction[];
   poll?: Poll | null;
+  expiresAt?: string | null;
 };
 
 export type ChannelSummary = Channel & ChatPrefs & WithDraft & { unread: number; lastPost: ChannelPost | null };
@@ -377,6 +382,9 @@ export type BannedUser = Author & { bannedAt: string; reason: string };
 export type ChatRole = 'owner' | 'admin' | 'member';
 export type ChatMember = Person & { role: ChatRole };
 
+/** Таймер автоудаления: выключен, сутки, неделя, месяц. */
+export const AUTO_DELETE_OPTIONS = [0, 86_400, 604_800, 2_592_000] as const;
+
 /** Ступени медленного режима, секунды; 0 — выключен. */
 export const SLOW_MODE_OPTIONS = [0, 10, 30, 60, 300, 900, 3600] as const;
 
@@ -395,6 +403,8 @@ export type Chat = {
   adminsOnly: boolean;
   /** Когда смотрящему снова можно написать в медленном режиме; null — уже можно. */
   nextPostAt: string | null;
+  /** Таймер автоудаления новых сообщений, секунды; 0 — выключен. */
+  autoDelete: number;
   /** Код ссылки-приглашения (`/join/<код>`) или null — ссылки нет. */
   invite: string | null;
 };
@@ -576,10 +586,16 @@ const realApi = {
       /** Собеседник набирает сообщение прямо сейчас. */
       typing: boolean;
       pinned: PinnedPreview | null;
+      /** Общий таймер автоудаления пары, секунды; 0 — выключен. */
+      autoDelete: number;
     }>(
       `/messages/${encodeURIComponent(username)}${qs}`,
     );
   },
+
+  /** Таймер автоудаления пары — общий, ставит любой из двоих. */
+  setDmAutoDelete: (username: string, seconds: number) =>
+    request<{ autoDelete: number }>(`/messages/${encodeURIComponent(username)}/auto-delete`, { method: 'PUT', body: body({ seconds }) }),
 
   sendMessage: (username: string, text: string, replyTo?: number | null) =>
     request<{ message: Message }>(`/messages/${encodeURIComponent(username)}`, {
@@ -769,7 +785,7 @@ const realApi = {
     request<{ chat: Chat }>(`/chats/${id}`, { method: 'PATCH', body: body({ title }) }),
 
   /** Настройки группы — владелец и администраторы; меняется только присланное. */
-  updateChat: (id: number, patch: { slowMode?: number; adminsOnly?: boolean }) =>
+  updateChat: (id: number, patch: { slowMode?: number; adminsOnly?: boolean; autoDelete?: number }) =>
     request<{ chat: Chat }>(`/chats/${id}`, { method: 'PATCH', body: body(patch) }),
 
   /** Назначить или снять администратора — только владелец. */
@@ -984,7 +1000,7 @@ const realApi = {
 
   channel: (handle: string) => request<{ channel: Channel }>(`/channels/${encodeURIComponent(handle)}`),
 
-  updateChannel: (handle: string, input: { title?: string; description?: string }) =>
+  updateChannel: (handle: string, input: { title?: string; description?: string; autoDelete?: number }) =>
     request<{ channel: Channel }>(`/channels/${encodeURIComponent(handle)}`, { method: 'PATCH', body: body(input) }),
 
   deleteChannel: (handle: string) =>

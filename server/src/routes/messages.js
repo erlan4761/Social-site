@@ -12,6 +12,7 @@ import { markNotificationsRead, notify } from '../notifications.js';
 import { dmUnreadTotal, inArchive, prefFor, prefsOf } from '../prefs.js';
 import { dmScope, pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import { clearDraft, draftsOf } from '../drafts.js';
+import { dmAutoDelete, expiryFor, readAutoDelete, setDmAutoDelete } from '../autoDelete.js';
 import { presenceFor, privacyOf } from '../presence.js';
 import * as v from '../validate.js';
 
@@ -42,6 +43,8 @@ const serialize = (row) => ({
   ...extraFields(row),
   // Запись о звонке (calls.js): у обычного сообщения — null.
   call: row.call ? JSON.parse(row.call) : null,
+  // Когда исчезнет по таймеру автоудаления; null — не исчезнет.
+  expiresAt: row.expires_at ?? null,
 });
 
 /** Одно сообщение пары целиком: с цитатой и реакциями, как в переписке. */
@@ -182,7 +185,26 @@ router.get('/:username', (req, res) => {
     // «Печатает…» — тоже только вне блокировки.
     typing: !blocked && isTyping(dmKey(me, other.id), other.id),
     pinned: pinnedPreview('dm', dmScope(me, other.id), (id) => pairMessage(id, me, other.id)),
+    autoDelete: dmAutoDelete(me, other.id),
   });
+});
+
+/**
+ * Таймер автоудаления пары — общий: включить, сменить и выключить его может
+ * любой из двоих, как в Телеграме. Касается только новых сообщений.
+ */
+router.put('/:username/auto-delete', (req, res, next) => {
+  try {
+    const other = otherOr404(req, res);
+    if (!other) return;
+    if (isBlockedPair(req.user.id, other.id)) return res.status(403).json({ error: BLOCKED_CHAT_MESSAGE });
+    const seconds = readAutoDelete(req.body?.seconds);
+    if (seconds === undefined) return res.status(400).json({ error: 'Нужен таймер: seconds' });
+    setDmAutoDelete(req.user.id, other.id, seconds);
+    res.json({ autoDelete: seconds });
+  } catch (err) {
+    next(err);
+  }
 });
 
 /**
@@ -229,9 +251,9 @@ router.post('/:username', attachmentUpload.single('file'), async (req, res, next
     }
 
     const info = db.prepare(`
-      INSERT INTO messages (from_id, to_id, body, created_at, read_at, reply_to_id, fwd_user_id, fwd_channel_id, sticker, album_id, ${ATTACH_INSERT_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(me, other.id, body, nowIso(), saved ? nowIso() : null, replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, sticker ?? forward?.sticker ?? null, album, ...attachmentValues(attachment));
+      INSERT INTO messages (from_id, to_id, body, created_at, read_at, reply_to_id, fwd_user_id, fwd_channel_id, sticker, album_id, expires_at, ${ATTACH_INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(me, other.id, body, nowIso(), saved ? nowIso() : null, replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, sticker ?? forward?.sticker ?? null, album, expiryFor('dm', other.id, me), ...attachmentValues(attachment));
 
     clearTyping(dmKey(me, other.id), me);
     // Отправленный текст — больше не черновик. Стикер и пересылка его не трогают.

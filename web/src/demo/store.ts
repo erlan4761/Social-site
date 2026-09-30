@@ -45,6 +45,8 @@ export type DbComment = { id: number; postId: number; authorId: number; body: st
 /** Поля действий с сообщениями — как колонки reply_to_id, edited_at, fwd_user_id на сервере. */
 /** Вложение витрины — ссылка blob: или data: прямо в памяти вкладки. */
 export type DbExtras = {
+  /** Срок по таймеру автоудаления — как expires_at. */
+  expiresAt?: string | null;
   replyToId: number | null;
   editedAt: string | null;
   fwdUserId: number | null;
@@ -57,13 +59,14 @@ export type DbExtras = {
   albumId?: string | null;
 };
 
-export type DbChannel = { id: number; handle: string; title: string; description: string; ownerId: number; createdAt: string };
+export type DbChannel = { id: number; handle: string; title: string; description: string; ownerId: number; createdAt: string; autoDelete?: number };
 
 export type DbChannelSub = { channelId: number; userId: number; joinedAt: string; lastReadId: number };
 
 export type DbChannelPost = {
   id: number; channelId: number; authorId: number; body: string; createdAt: string; editedAt: string | null;
   attachment: Attachment | null;
+  expiresAt?: string | null;
 };
 
 export type DbChannelComment = { id: number; postId: number; authorId: number; body: string; createdAt: string };
@@ -118,6 +121,8 @@ export type DbChat = {
   id: number; title: string; ownerId: number; createdAt: string; invite?: string | null;
   /** Медленный режим в секундах и «пишут только администраторы» — как chats.slow_mode, admins_only. */
   slowMode?: number; adminsOnly?: boolean;
+  /** Таймер автоудаления, секунды. */
+  autoDelete?: number;
 };
 
 /** `lastReadId` — ватерлиния прочитанного, как в схеме сервера: в группе
@@ -197,6 +202,8 @@ export const db = {
   currentSession: null as number | null,
   /** Коды «из SMS» и билеты незаконченного входа — как phone_codes и phone_tickets. */
   phoneCodes: [] as { phone: string; purpose: 'login' | 'link' | 'delete'; userId: number | null; code: string; attempts: number; expiresAt: number; createdAt: number; used: boolean }[],
+  /** Таймеры автоудаления личных переписок — как dm_settings. */
+  dmSettings: [] as { low: number; high: number; autoDelete: number }[],
   /** Закреплённые старые логины — как username_holds. */
   usernameHolds: [] as { username: string; userId: number; until: number }[],
   phoneTickets: [] as { token: string; kind: 'signup' | 'password'; phone: string; userId: number | null; attempts: number; expiresAt: number }[],

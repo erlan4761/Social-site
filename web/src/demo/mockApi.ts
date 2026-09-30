@@ -9,6 +9,7 @@
  * В обычную сборку этот файл не попадает: см. переключение в api.ts.
  */
 import { deliverDueScheduled } from './model/scheduled';
+import { sweepExpired } from './model/autoDelete';
 import { seed } from './seed';
 import { authApi } from './api/auth';
 import { peopleApi } from './api/people';
@@ -65,5 +66,9 @@ export const mockApi = rejectInsteadOfThrow({
 if (import.meta.env.VITE_DEMO === '1') {
   seed();
   // Планировщик витрины — раз в секунду, как SCHEDULE_TICK_MS на сервере.
-  setInterval(() => deliverDueScheduled(), 1000);
+  // Тот же такт убирает сообщения с истёкшим автоудалением, как на сервере.
+  setInterval(() => {
+    deliverDueScheduled();
+    sweepExpired();
+  }, 1000);
 }

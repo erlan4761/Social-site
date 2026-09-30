@@ -5,6 +5,7 @@ import { EDIT_WINDOW_MS, attachmentFrom, setReaction, findHits } from '../model/
 import { pinnedOf, setPin, pinPreview } from '../model/folders';
 import { prefFields, dropPrefs } from '../model/notifications';
 import { clearDraft, draftOf } from '../model/drafts';
+import { expiryFor } from '../model/autoDelete';
 import { pollOf, readPoll, addPoll } from '../model/polls';
 import { CHANNEL_HANDLE_RE, channelBy, requireChannel, requireOwner, subOf, channelUnread, toChannel, toChannelPost, postsOf, requirePost, toChannelComment } from '../model/channels';
 
@@ -63,8 +64,12 @@ export const channelsApi = {
 
   channel: (handle: string) => tick({ channel: toChannel(requireChannel(handle).c) }),
 
-  updateChannel: (handle: string, input: { title?: string; description?: string }) => {
+  updateChannel: (handle: string, input: { title?: string; description?: string; autoDelete?: number }) => {
     const { c } = requireOwner(handle);
+    if (input.autoDelete !== undefined) {
+      if (![0, 86_400, 604_800, 2_592_000].includes(input.autoDelete)) fail(400, 'Автоудаление — выключено, сутки, неделя или месяц');
+      c.autoDelete = input.autoDelete;
+    }
     if (input.title !== undefined) {
       if (!input.title.trim()) fail(400, '«название канала»: минимум 1 символов');
       c.title = input.title.trim().slice(0, 60);
@@ -133,6 +138,7 @@ export const channelsApi = {
     if (body.length > 4000) fail(400, '«публикация»: максимум 4000 символов');
     const post: DbChannelPost = {
       id: id(), channelId: c.id, authorId: u.id, body, createdAt: new Date().toISOString(), editedAt: null, attachment,
+      expiresAt: expiryFor('channel', c.id),
     };
     db.channelPosts.push(post);
     clearDraft(u.id, 'channel', c.id);

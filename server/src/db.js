@@ -527,6 +527,27 @@ ensureColumn('messages', 'call', 'TEXT');
 // Архив чатов (см. prefs.js): когда чат убрали в архив; NULL — не в архиве.
 ensureColumn('chat_prefs', 'archived_at', 'TEXT');
 
+// Автоудаление (см. autoDelete.js): таймер в секундах у переписки, группы и
+// канала и срок у каждого сообщения, отправленного при включённом таймере.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS dm_settings (
+    low_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    high_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    auto_delete INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (low_id, high_id)
+  );
+`);
+ensureColumn('chats', 'auto_delete', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('channels', 'auto_delete', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('messages', 'expires_at', 'TEXT');
+ensureColumn('chat_messages', 'expires_at', 'TEXT');
+ensureColumn('channel_posts', 'expires_at', 'TEXT');
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages(expires_at) WHERE expires_at IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_chat_messages_expires ON chat_messages(expires_at) WHERE expires_at IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_channel_posts_expires ON channel_posts(expires_at) WHERE expires_at IS NOT NULL;
+`);
+
 // Черновики (см. drafts.js): по одному на человека и чат.
 db.exec(`
   CREATE TABLE IF NOT EXISTS drafts (

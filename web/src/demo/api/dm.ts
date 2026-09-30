@@ -5,6 +5,7 @@ import { attachmentFrom, toMessage, assertEditable, setReaction, pairThread, req
 import { pinScope, pinnedOf, setPin, pinPreview } from '../model/folders';
 import { prefFields, dmUnreadTotal, notify, markNotificationsRead } from '../model/notifications';
 import { clearDraft, draftOf } from '../model/drafts';
+import { dmAutoDelete, expiryFor, setDmAutoDelete } from '../model/autoDelete';
 import { chatsApi } from './chats';
 
 /** Методы витрины: личная переписка. */
@@ -58,6 +59,7 @@ export const dmApi = {
       blocked: blockedPair(u.id, other!.id),
       typing: !blockedPair(u.id, other!.id) && isTyping(dmKey(u.id, other!.id), other!.id),
       pinned: pinPreview('dm', pinScope(u.id, other!.id), pairThread(u.id, other!.id)),
+      autoDelete: dmAutoDelete(u.id, other!.id),
     });
   },
 
@@ -84,7 +86,7 @@ export const dmApi = {
     const albumId = checkAlbum(file?.album, attachment,
       db.messages.filter((x) => x.albumId && x.albumId === file?.album).map((x) => ({ mine: x.fromId === u.id && x.toId === other!.id })));
     const m: DbMessage = {
-      id: id(), fromId: u.id, toId: other!.id, body, albumId,
+      id: id(), fromId: u.id, toId: other!.id, body, albumId, expiresAt: expiryFor('dm', other!.id, u.id),
       createdAt: new Date().toISOString(), readAt: saved ? new Date().toISOString() : null,
       replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, fwdChannelId: src?.fwdChannelId ?? null, attachment,
       sticker: stick,
@@ -96,6 +98,16 @@ export const dmApi = {
     if (!saved) notify({ userId: other!.id, actorId: u.id, kind: 'message' });
     if (other!.username === 'marina') marinaAnswers(u);
     return tick({ message: toMessage(m) });
+  },
+
+  setDmAutoDelete: (username: string, seconds: number) => {
+    const u = requireMe()!;
+    const other = byName(username);
+    if (!other) fail(404, 'Пользователь не найден');
+    if (blockedPair(u.id, other!.id)) fail(403, 'Переписка с этим пользователем недоступна');
+    if (![0, 86_400, 604_800, 2_592_000].includes(seconds)) fail(400, 'Автоудаление — выключено, сутки, неделя или месяц');
+    setDmAutoDelete(u.id, other!.id, seconds);
+    return tick({ autoDelete: seconds });
   },
 
   sendAttachment: (username: string, input: AttachmentInput) =>

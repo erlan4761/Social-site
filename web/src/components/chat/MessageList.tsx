@@ -45,6 +45,8 @@ export type BubbleItem = {
   albumId?: string | null;
   /** Запись о звонке — вместо текста строка с трубкой. */
   call?: CallRecord | null;
+  /** Исчезнет по таймеру автоудаления — часики у времени. */
+  expiresAt?: string | null;
   /** Собранный альбом: все его снимки по порядку (заполняет сама лента). */
   album?: BubbleItem[];
 };
@@ -302,6 +304,12 @@ export function MessageList({
                     </span>
                   )}
                   {m.editedAt && <span className="bubble-edited" title={fullDate(m.editedAt)}>изменено</span>}
+                  {m.expiresAt && (
+                    <span className="bubble-expires" title={`Исчезнет ${fullDate(m.expiresAt)}`}>
+                      <Icon name="clock" size={12} />
+                      <span className="sr-only">исчезнет {fullDate(m.expiresAt)}</span>
+                    </span>
+                  )}
                   <time dateTime={m.createdAt} title={fullDate(m.createdAt)}>
                     {clockTime(m.createdAt)}
                   </time>

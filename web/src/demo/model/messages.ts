@@ -119,6 +119,7 @@ export const toMessage = (m: DbMessage): Message => ({
   sticker: m.sticker ?? null,
   albumId: m.albumId ?? null,
   call: m.call ?? null,
+  expiresAt: m.expiresAt ?? null,
 });
 
 /** Альбом — как checkAlbum() на сервере: только фото и видео, до десяти, и не в чужой. */

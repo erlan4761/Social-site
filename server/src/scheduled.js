@@ -4,6 +4,7 @@ import { saveMentions } from './mentions.js';
 import { notify } from './notifications.js';
 import { touchChannel, touchChat, touchDm } from './live.js';
 import { postBlock } from './chatRoles.js';
+import { expiryFor, sweepExpired } from './autoDelete.js';
 
 /**
  * Отложенные сообщения — «отправить позже», как в Телеграме: в личную
@@ -24,8 +25,8 @@ function deliverDm(row, at) {
   const other = db.prepare('SELECT id FROM users WHERE id = ?').get(row.target_id);
   if (!other || isBlockedPair(row.user_id, other.id)) return null;
   const saved = other.id === row.user_id;
-  const info = db.prepare('INSERT INTO messages (from_id, to_id, body, created_at, read_at) VALUES (?, ?, ?, ?, ?)')
-    .run(row.user_id, other.id, row.body, at, saved ? at : null);
+  const info = db.prepare('INSERT INTO messages (from_id, to_id, body, created_at, read_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(row.user_id, other.id, row.body, at, saved ? at : null, expiryFor('dm', other.id, row.user_id));
   if (!saved) notify({ userId: other.id, actorId: row.user_id, kind: 'message' });
   return Number(info.lastInsertRowid);
 }
@@ -36,8 +37,8 @@ function deliverChat(row, at) {
   // За время ожидания группу могли закрыть для участников или включить медленный режим.
   const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(row.target_id);
   if (postBlock(chat, row.user_id)) return null;
-  const info = db.prepare('INSERT INTO chat_messages (chat_id, author_id, body, created_at) VALUES (?, ?, ?, ?)')
-    .run(row.target_id, row.user_id, row.body, at);
+  const info = db.prepare('INSERT INTO chat_messages (chat_id, author_id, body, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
+    .run(row.target_id, row.user_id, row.body, at, expiryFor('chat', row.target_id));
   const id = Number(info.lastInsertRowid);
   for (const m of db.prepare('SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id <> ?').all(row.target_id, row.user_id)) {
     notify({ userId: m.user_id, actorId: row.user_id, kind: 'chat_message', chatId: row.target_id });
@@ -49,8 +50,8 @@ function deliverChat(row, at) {
 function deliverChannel(row, at) {
   const own = db.prepare('SELECT 1 FROM channels WHERE id = ? AND owner_id = ?').get(row.target_id, row.user_id);
   if (!own) return null;
-  const info = db.prepare('INSERT INTO channel_posts (channel_id, author_id, body, created_at) VALUES (?, ?, ?, ?)')
-    .run(row.target_id, row.user_id, row.body, at);
+  const info = db.prepare('INSERT INTO channel_posts (channel_id, author_id, body, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
+    .run(row.target_id, row.user_id, row.body, at, expiryFor('channel', row.target_id));
   const id = Number(info.lastInsertRowid);
   db.prepare('UPDATE channel_subscribers SET last_read_id = ? WHERE channel_id = ? AND user_id = ?')
     .run(id, row.target_id, row.user_id);
@@ -101,7 +102,12 @@ export function deliverDue(now = new Date()) {
 
 export function startScheduler() {
   const every = Number(process.env.SCHEDULE_TICK_MS) || 15_000;
-  const timer = setInterval(() => deliverDue(), every);
+  // Тот же такт убирает сообщения с истёкшим автоудалением (autoDelete.js).
+  const tick = () => {
+    deliverDue();
+    sweepExpired();
+  };
+  const timer = setInterval(tick, every);
   timer.unref();
-  deliverDue();
+  tick();
 }

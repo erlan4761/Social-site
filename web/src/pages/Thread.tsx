@@ -11,6 +11,7 @@ import { Icon } from '../components/Icon';
 import { SavedAvatar } from '../components/Monogram';
 import { useSession } from '../session';
 import { useCalls } from '../calls';
+import { AutoDeleteNote, AutoDeleteSelect } from '../components/chat/AutoDelete';
 import { pollEvery, useLive, useLiveConnected } from '../live';
 import { isOnline, lastSeenLabel } from '../time';
 import { SAVED_TITLE } from '../components/messenger/rows';
@@ -44,6 +45,8 @@ function ThreadView({ username }: { username: string }) {
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<Message | null>(null);
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
+  const [autoDelete, setAutoDelete] = useState(0);
+  const [timerOpen, setTimerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [jump, setJump] = useState<{ id: number; seq: number } | null>(null);
 
@@ -79,6 +82,7 @@ function ThreadView({ username }: { username: string }) {
         setBlocked(Boolean(res.blocked));
         setTyping(res.typing);
         setPinned(res.pinned);
+        setAutoDelete(res.autoDelete ?? 0);
         // Всегда, а не только при непрочитанных: вместе с перепиской гаснет и
         // событие о ней в «Событиях».
         markRead();
@@ -293,6 +297,7 @@ function ThreadView({ username }: { username: string }) {
       attachment: m.attachment,
       sticker: m.sticker,
       albumId: m.albumId,
+      expiresAt: m.expiresAt ?? null,
       canEdit: mine && !m.forwardedFrom && !m.sticker && !m.call && editable(m.createdAt),
       call: m.call ?? null,
       canDelete: mine,
@@ -368,6 +373,18 @@ function ThreadView({ username }: { username: string }) {
                   </button>
                 </>
               )}
+              {!blocked && (
+                <button
+                  className={timerOpen || autoDelete ? 'icon-btn on' : 'icon-btn'}
+                  type="button"
+                  aria-expanded={timerOpen}
+                  aria-label="Автоудаление"
+                  title="Автоудаление"
+                  onClick={() => setTimerOpen((v) => !v)}
+                >
+                  <Icon name="clock" />
+                </button>
+              )}
               <button
                 className={searchOpen ? 'icon-btn on' : 'icon-btn'}
                 type="button"
@@ -442,6 +459,19 @@ function ThreadView({ username }: { username: string }) {
         </div>
       ) : (
         <>
+          {timerOpen && (
+            <div className="pane-panel">
+              <AutoDeleteSelect
+                value={autoDelete}
+                onChange={(s) => {
+                  setAutoDelete(s);
+                  void api.setDmAutoDelete(username, s).catch((err) => setError(err instanceof ApiError ? err.message : 'Не получилось'));
+                }}
+              />
+              <p className="settings-note">Таймер общий: собеседник видит его и может сменить. Отправленное раньше не трогается.</p>
+            </div>
+          )}
+          <AutoDeleteNote seconds={autoDelete} />
           <ScheduledBar kind="dm" target={username} version={scheduledVersion} onSent={refreshList} />
           <Composer
             key={`dm:${username}`}

@@ -5,6 +5,7 @@ import { attachmentFrom, assertEditable, setReaction, findHits, setTyping, clear
 import { pinnedOf, setPin, pinPreview } from '../model/folders';
 import { prefFields, dropPrefs, notify, saveMentions, unreadMentions, markNotificationsRead } from '../model/notifications';
 import { clearDraft, draftOf } from '../model/drafts';
+import { expiryFor } from '../model/autoDelete';
 import { membersOf, memberRow, visibleChatMessages, toChatMessage, requireChatMessage, toChat, othersReadUpTo, chatUnread, requireChat, MEMBERS_MAX, checkTitle, newInvite, isAdmin, outranks, postBlock, roleOf } from '../model/chats';
 import { SLOW_MODE_OPTIONS } from '../../api';
 import { person as personOf } from '../model/people';
@@ -91,10 +92,14 @@ export const chatsApi = {
     return tick({ chat: toChat(chat) });
   },
 
-  updateChat: (chatId: number, patch: { slowMode?: number; adminsOnly?: boolean }) => {
+  updateChat: (chatId: number, patch: { slowMode?: number; adminsOnly?: boolean; autoDelete?: number }) => {
     const { u, chat } = requireChat(chatId);
     if (!isAdmin(chat, u.id)) fail(403, 'Менять группу могут владелец и администраторы');
-    if (patch.slowMode === undefined && patch.adminsOnly === undefined) fail(400, 'Нечего менять');
+    if (patch.slowMode === undefined && patch.adminsOnly === undefined && patch.autoDelete === undefined) fail(400, 'Нечего менять');
+    if (patch.autoDelete !== undefined) {
+      if (![0, 86_400, 604_800, 2_592_000].includes(patch.autoDelete)) fail(400, 'Автоудаление — выключено, сутки, неделя или месяц');
+      chat.autoDelete = patch.autoDelete;
+    }
     if (patch.slowMode !== undefined) {
       if (!(SLOW_MODE_OPTIONS as readonly number[]).includes(patch.slowMode)) fail(400, `Медленный режим — одно из: ${SLOW_MODE_OPTIONS.join(', ')} секунд`);
       chat.slowMode = patch.slowMode;
@@ -163,7 +168,7 @@ export const chatsApi = {
     const albumId = checkAlbum(file?.album, attachment,
       db.chatMessages.filter((x) => x.albumId && x.albumId === file?.album).map((x) => ({ mine: x.authorId === u.id && x.chatId === chat.id })));
     const m: DbChatMessage = {
-      id: id(), chatId: chat.id, authorId: u.id, body, createdAt: new Date().toISOString(), albumId,
+      id: id(), chatId: chat.id, authorId: u.id, body, createdAt: new Date().toISOString(), albumId, expiresAt: expiryFor('chat', chat.id),
       replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, fwdChannelId: src?.fwdChannelId ?? null, attachment,
       sticker: stick,
     };

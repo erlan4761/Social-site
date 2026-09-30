@@ -18,6 +18,7 @@ import { createPoll, hasPoll, readPoll, withPolls } from '../polls.js';
 import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import { clearDraft, draftsOf, dropDrafts } from '../drafts.js';
 import { SLOW_MODE_OPTIONS, heirOf, isAdmin, nextPostAt, outranks, postBlock, roleOf } from '../chatRoles.js';
+import { expiryFor, readAutoDelete } from '../autoDelete.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -64,7 +65,7 @@ const member = (row, viewerId) => ({
 });
 
 const MESSAGE_SELECT = `
-  SELECT m.id, m.chat_id, m.body, m.created_at, m.reply_to_id, m.edited_at, m.fwd_user_id, m.fwd_channel_id, m.sticker, m.album_id, ${ATTACH_COLUMNS},
+  SELECT m.id, m.chat_id, m.body, m.created_at, m.reply_to_id, m.edited_at, m.fwd_user_id, m.fwd_channel_id, m.sticker, m.album_id, m.expires_at, ${ATTACH_COLUMNS},
          u.id AS author_id, u.username AS author_username,
          u.display_name AS author_display_name, u.avatar_path AS author_avatar_path,
          ${FWD_COLUMNS}
@@ -87,6 +88,7 @@ const serializeMessage = (row) => ({
   },
   attachment: attachmentOf('chat', row),
   ...extraFields(row),
+  expiresAt: row.expires_at ?? null,
 });
 
 /** «Тот же чат и не от заблокированного» — граница, внутри которой ищутся
@@ -158,6 +160,7 @@ const serializeChat = (chat, viewerId) => {
     myRole: roleOf(chat, viewerId),
     slowMode: chat.slow_mode ?? 0,
     adminsOnly: Boolean(chat.admins_only),
+    autoDelete: chat.auto_delete ?? 0,
     // Когда смотрящему снова можно написать в медленном режиме; null — уже можно.
     nextPostAt: nextPostAt(chat, viewerId),
     // Ссылку видит каждый участник: звать людей может любой (см. POST /:id/members).
@@ -194,6 +197,7 @@ const summarizeChat = (row, viewerId) => ({
   myRole: row.owner_id === viewerId ? 'owner' : row.my_role === 'admin' ? 'admin' : 'member',
   slowMode: row.slow_mode ?? 0,
   adminsOnly: Boolean(row.admins_only),
+  autoDelete: row.auto_delete ?? 0,
   nextPostAt: nextPostAt(row, viewerId),
   invite: row.invite_token ?? null,
 });
@@ -416,6 +420,8 @@ router.patch('/:id', (req, res, next) => {
       }
       changes.slow_mode = req.body.slowMode;
     }
+    const autoDelete = readAutoDelete(req.body?.autoDelete);
+    if (autoDelete !== undefined) changes.auto_delete = autoDelete;
     if (req.body?.adminsOnly !== undefined) {
       if (typeof req.body.adminsOnly !== 'boolean') return res.status(400).json({ error: 'adminsOnly — да или нет' });
       changes.admins_only = req.body.adminsOnly ? 1 : 0;
@@ -561,9 +567,9 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
     checkAlbum(album, attachment, albumRows, (r) => r.author_id === me && r.chat_id === chat.id);
 
     const info = db.prepare(`
-      INSERT INTO chat_messages (chat_id, author_id, body, created_at, reply_to_id, fwd_user_id, fwd_channel_id, sticker, album_id, ${ATTACH_INSERT_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(chat.id, me, body, nowIso(), replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, sticker ?? forward?.sticker ?? null, album, ...attachmentValues(attachment));
+      INSERT INTO chat_messages (chat_id, author_id, body, created_at, reply_to_id, fwd_user_id, fwd_channel_id, sticker, album_id, expires_at, ${ATTACH_INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(chat.id, me, body, nowIso(), replyTo, forward?.fwdUserId ?? null, forward?.fwdChannelId ?? null, sticker ?? forward?.sticker ?? null, album, expiryFor('chat', chat.id), ...attachmentValues(attachment));
 
     if (poll) createPoll('chat', Number(info.lastInsertRowid), poll);
     clearTyping(chatKey(chat.id), me);

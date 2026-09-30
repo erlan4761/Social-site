@@ -12,6 +12,7 @@ import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
 import { MemberSearch } from '../components/MemberSearch';
 import { ReadersDialog } from '../components/chat/ReadersDialog';
+import { AutoDeleteNote, AutoDeleteSelect } from '../components/chat/AutoDelete';
 import { ShareLink } from '../components/ShareLink';
 import { Monogram } from '../components/Monogram';
 import { useSession } from '../session';
@@ -437,6 +438,7 @@ function ChatView({ idParam }: { idParam: string }) {
       poll: m.poll,
       sticker: m.sticker,
       albumId: m.albumId,
+      expiresAt: m.expiresAt ?? null,
       // Опрос и стикер не правятся.
       canEdit: mine && !m.forwardedFrom && !m.poll && !m.sticker && editable(m.createdAt),
       // Владелец удаляет любое сообщение, администратор — сообщения участников.
@@ -649,6 +651,7 @@ function ChatView({ idParam }: { idParam: string }) {
         </div>
       ) : (
         <>
+      {chat && <AutoDeleteNote seconds={chat.autoDelete} />}
       {chat && chat.slowMode > 0 && chat.myRole === 'member' && (
         <SlowModeNote slowMode={chat.slowMode} nextPostAt={chat.nextPostAt} />
       )}
@@ -779,7 +782,7 @@ function GroupRules({ chat, onChange }: { chat: Chat; onChange: (c: Chat) => voi
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function save(patch: { slowMode?: number; adminsOnly?: boolean }) {
+  async function save(patch: { slowMode?: number; adminsOnly?: boolean; autoDelete?: number }) {
     setBusy(true);
     setError(null);
     try {
@@ -804,6 +807,7 @@ function GroupRules({ chat, onChange }: { chat: Chat; onChange: (c: Chat) => voi
           ))}
         </select>
       </label>
+      <AutoDeleteSelect value={chat.autoDelete} disabled={busy} onChange={(s) => void save({ autoDelete: s })} />
       <label className="choice">
         <input
           type="checkbox"

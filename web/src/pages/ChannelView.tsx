@@ -11,6 +11,7 @@ import { ScheduledBar } from '../components/Scheduled';
 import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
 import { ShareLink } from '../components/ShareLink';
+import { AutoDeleteNote, AutoDeleteSelect } from '../components/chat/AutoDelete';
 import { plural } from '../time';
 import { ChannelAvatar } from '../components/messenger/ListRows';
 import { pollEvery, useLive, useLiveConnected } from '../live';
@@ -278,6 +279,7 @@ function ChannelPane({ handle }: { handle: string }) {
     replyTo: null,
     reactions: p.reactions,
     attachment: p.attachment,
+    expiresAt: p.expiresAt ?? null,
     poll: p.poll,
     canEdit: owner && !p.poll && editable(p.createdAt),
     canDelete: owner,
@@ -385,6 +387,7 @@ function ChannelPane({ handle }: { handle: string }) {
 
       {owner ? (
         <>
+          {channel && <AutoDeleteNote seconds={channel.autoDelete} />}
           <ScheduledBar kind="channel" target={handle} version={scheduledVersion} onSent={refreshList} />
           <Composer
             key={`channel:${handle}`}
@@ -529,6 +532,20 @@ function ChannelInfo({ channel, busy, onSubscribe, onUpdated, onDeleted }: InfoP
           {/* Каналы открыты всем, кто вошёл: ссылка — просто адрес канала. */}
           <ShareLink path={`messages/ch/${channel.handle}`} label="Ссылка на канал" />
           <div className="members-actions">
+            {channel.iAmOwner && (
+              <AutoDeleteSelect
+                value={channel.autoDelete}
+                disabled={saving}
+                onChange={(s) => {
+                  setSaving(true);
+                  api
+                    .updateChannel(channel.handle, { autoDelete: s })
+                    .then((res) => onUpdated(res.channel))
+                    .catch((err) => setError(err instanceof ApiError ? err.message : 'Не удалось сохранить'))
+                    .finally(() => setSaving(false));
+                }}
+              />
+            )}
             {channel.iAmOwner ? (
               <>
                 <button className="act" type="button" onClick={() => setEditing(true)}>

@@ -399,3 +399,19 @@ describe('витрина: вход по QR-коду', () => {
     await expect(api.qrLoginPoll(qr.token, qr.secret)).rejects.toMatchObject({ status: 410 });
   });
 });
+
+describe('витрина: автоудаление', () => {
+  it('таймер общий, новые сообщения получают срок, истёкшие убираются', async () => {
+    const { sweepExpired } = await import('./model/autoDelete');
+    const { db } = await import('./store');
+    await expect(api.setDmAutoDelete('marina', 5)).rejects.toMatchObject({ status: 400 });
+    await api.setDmAutoDelete('marina', 86_400);
+    await loginAs('marina');
+    expect((await api.thread('demo')).autoDelete).toBe(86_400);
+    const { message } = await api.sendMessage('demo', 'Исчезну');
+    expect(Date.parse(message.expiresAt!) - Date.now()).toBeGreaterThan(86_300_000);
+    db.messages.find((m) => m.id === message.id)!.expiresAt = new Date(Date.now() - 1000).toISOString();
+    sweepExpired();
+    expect((await api.thread('demo')).messages.some((m) => m.id === message.id)).toBe(false);
+  });
+});

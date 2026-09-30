@@ -43,6 +43,7 @@ export const toChannel = (c: DbChannel): Channel => {
     iAmOwner: c.ownerId === db.meId,
     subscribed: db.meId != null && Boolean(subOf(c.id, db.meId)),
     subscriberCount: db.channelSubs.filter((s) => s.channelId === c.id).length,
+    autoDelete: c.autoDelete ?? 0,
   };
 };
 
@@ -51,6 +52,7 @@ export const toChannelPost = (p: DbChannelPost): ChannelPost => ({
   views: db.channelViews.filter((v) => v.postId === p.id).length,
   commentCount: db.channelComments.filter((c) => c.postId === p.id && !hidden(c.authorId)).length,
   attachment: p.attachment,
+  expiresAt: p.expiresAt ?? null,
   reactions: reactionsOf(db.postReactions, p.id),
   poll: (() => {
     const poll = pollOf('channel', p.id);
