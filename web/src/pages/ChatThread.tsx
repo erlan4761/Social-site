@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, SLOW_MODE_OPTIONS, type AttachmentInput, type Chat, type ChatMessage, type PinnedPreview } from '../api';
 import {
-  Composer, ConversationSearch, MessageList, plainText, SelectionBar, messagesCount, useSelection, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText, typingLabel,
+  Composer, ConversationSearch, MessageList, PaneNotice, useNotice, plainText, SelectionBar, messagesCount, useSelection, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText, typingLabel,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
@@ -14,7 +14,7 @@ import { MemberSearch } from '../components/MemberSearch';
 import { ReadersDialog } from '../components/chat/ReadersDialog';
 import { ReactionsDialog } from '../components/chat/ReactionsDialog';
 import { AutoDeleteNote, AutoDeleteSelect } from '../components/chat/AutoDelete';
-import { ShareLink } from '../components/ShareLink';
+import { ShareLink, siteUrl } from '../components/ShareLink';
 import { Monogram } from '../components/Monogram';
 import { useSession } from '../session';
 import { pollEvery, useLive, useLiveConnected } from '../live';
@@ -65,6 +65,7 @@ function ChatView({ idParam }: { idParam: string }) {
   const [typing, setTyping] = useState<string[]>([]);
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<Forwarding | null>(null);
+  const [notice, notify] = useNotice();
   const selection = useSelection(messages.map((m) => m.id));
   const [pollOpen, setPollOpen] = useState(false);
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
@@ -169,6 +170,7 @@ function ChatView({ idParam }: { idParam: string }) {
       setMessages(res.list);
       setCursor(res.cursor);
       if (res.found) setJump({ id, seq: Date.now() });
+      else setError('Сообщение не найдено — возможно, его удалили');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось найти сообщение');
     }
@@ -288,6 +290,10 @@ function ChatView({ idParam }: { idParam: string }) {
           break;
         case 'copy':
           await navigator.clipboard.writeText(plainText(msg.body, 'show'));
+          break;
+        case 'link':
+          await navigator.clipboard.writeText(siteUrl(`messages/c/${chatId}?m=${msg.id}`));
+          notify('Ссылка скопирована — открыть её смогут участники чата');
           break;
         case 'forward':
           setForwarding(forwardingOf('chat', item, previewText(msg.body, msg.attachment, msg.sticker)));
@@ -659,7 +665,7 @@ function ChatView({ idParam }: { idParam: string }) {
         onAction={(action, item) => void act(action, item)}
         selection={selection}
         // Закреплять в группе — владельцу и администраторам.
-        actions={{ pin: amAdmin, readers: true, reactors: true }}
+        actions={{ pin: amAdmin, readers: true, reactors: true, link: true }}
         pinnedId={pinned?.id ?? null}
         jump={jump}
         empty={
@@ -671,6 +677,7 @@ function ChatView({ idParam }: { idParam: string }) {
       />
 
       {error && <p className="error pane-error">{error}</p>}
+      <PaneNotice text={notice} />
 
       {selection.active ? (
         <SelectionBar

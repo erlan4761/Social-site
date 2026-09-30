@@ -877,3 +877,13 @@ a.pane-who:hover { background: var(--surface-2); }
 @media (prefers-reduced-motion: reduce) {
   .select-circle { transition: none; }
 }
+
+/* Короткое уведомление над полем ввода: «Ссылка скопирована». */
+.pane-notice {
+  margin: 0;
+  padding: var(--s-2) var(--s-4);
+  background: var(--accent-tint);
+  color: var(--ink);
+  font-size: var(--t-meta);
+}
+.pane-notice.empty { display: none; }

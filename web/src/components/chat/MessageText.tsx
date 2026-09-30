@@ -29,6 +29,22 @@ function withMentions(text: string, me: string | undefined, out: ReactNode[], ke
 }
 
 /**
+ * Путь внутри сайта, если адрес ведёт на него же (с учётом базового пути
+ * витрины), иначе null. Такая ссылка — переход в этой же вкладке: ссылка на
+ * сообщение открывает переписку на нём, а не второй экземпляр приложения.
+ */
+export function internalPath(url: string): string | null {
+  try {
+    const base = new URL(import.meta.env.BASE_URL, window.location.origin);
+    const u = new URL(url);
+    if (u.origin !== base.origin || !u.pathname.startsWith(base.pathname)) return null;
+    return `/${u.pathname.slice(base.pathname.length)}${u.search}${u.hash}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Спойлер: закрыт узором, пока не нажмут, — как в Телеграме. Закрытый не
  * выделяется и не нажимается изнутри (ссылка под ним не откроется случайно),
  * а скринридер слышит «скрытый текст», а не сам текст.
@@ -83,13 +99,21 @@ export function MessageText({ text, me }: { text: string; me?: string }) {
           withMentions(s, me, out, key);
           break;
         }
-        case 'url':
+        case 'url': {
+          const inside = internalPath(node.url);
           out.push(
-            <a key={key()} className="text-link" href={node.url} target="_blank" rel="noopener noreferrer nofollow">
-              {node.url}
-            </a>,
+            inside ? (
+              <Link key={key()} className="text-link" to={inside}>
+                {node.url}
+              </Link>
+            ) : (
+              <a key={key()} className="text-link" href={node.url} target="_blank" rel="noopener noreferrer nofollow">
+                {node.url}
+              </a>
+            ),
           );
           break;
+        }
         case 'code':
           out.push(<code key={key()} className="md-code">{node.s}</code>);
           break;
