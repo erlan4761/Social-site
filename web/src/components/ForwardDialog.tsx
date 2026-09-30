@@ -13,9 +13,12 @@ type Target = {
   saved?: boolean;
 };
 
-/** Что пересылается: одно сообщение или все снимки альбома по порядку. */
+/**
+ * Что пересылается — группами по порядку: одиночное сообщение — группа из
+ * одного, альбом — все его снимки (у получателя они снова станут сеткой).
+ */
 export type Forwarding = {
-  sources: ForwardRef[];
+  groups: ForwardRef[][];
   /** Начало пересылаемого текста — чтобы было видно, что именно уходит. */
   preview: string;
 };
@@ -28,10 +31,10 @@ type Props = Forwarding & { onClose: () => void };
  */
 export function forwardingOf(from: ForwardRef['from'], item: BubbleItem, preview: string): Forwarding {
   const parts = item.album ?? [item];
-  if (parts.length < 2) return { sources: [{ from, id: item.id }], preview };
+  if (parts.length < 2) return { groups: [[{ from, id: item.id }]], preview };
   const n = parts.length;
   const what = `Альбом: ${n} ${plural(n, 'снимок', 'снимка', 'снимков')}`;
-  return { sources: parts.map((x) => ({ from, id: x.id })), preview: item.body ? `${what} — ${preview}` : what };
+  return { groups: [parts.map((x) => ({ from, id: x.id }))], preview: item.body ? `${what} — ${preview}` : what };
 }
 
 const fold = (s: string) => s.toLocaleLowerCase('ru').replace(/ё/g, 'е');
@@ -42,7 +45,7 @@ const fold = (s: string) => s.toLocaleLowerCase('ru').replace(/ё/g, 'е');
  * человеку сначала пишут, потом пересылают. Окно — нативный `<dialog>`, как
  * «Новый чат»: фокус и Esc достаются от платформы.
  */
-export function ForwardDialog({ sources, preview, onClose }: Props) {
+export function ForwardDialog({ groups, preview, onClose }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const navigate = useNavigate();
@@ -129,20 +132,23 @@ export function ForwardDialog({ sources, preview, onClose }: Props) {
     if (busy) return;
     setBusy(true);
     setError(null);
-    // Альбом — по снимку за запрос, с новым общим кодом: у получателя он
+    // По сообщению за запрос. Альбом — с новым общим кодом: у получателя он
     // снова складывается в сетку, а подпись остаётся у того снимка, где была.
-    const album = sources.length > 1 ? newAlbumId() : undefined;
+    const total = groups.reduce((n, g) => n + g.length, 0);
     let sent = 0;
     try {
-      for (const source of sources) {
-        await api.forward(t.to, source, album);
-        sent += 1;
+      for (const group of groups) {
+        const album = group.length > 1 ? newAlbumId() : undefined;
+        for (const source of group) {
+          await api.forward(t.to, source, album);
+          sent += 1;
+        }
       }
       dialog.current?.close();
       navigate(t.path);
     } catch (err) {
       const why = err instanceof ApiError ? err.message : 'Не удалось переслать';
-      setError(sent > 0 ? `Переслано ${sent} из ${sources.length}: ${why}` : why);
+      setError(sent > 0 ? `Переслано ${sent} из ${total}: ${why}` : why);
       setBusy(false);
     }
   }

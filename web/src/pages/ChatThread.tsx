@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, SLOW_MODE_OPTIONS, type AttachmentInput, type Chat, type ChatMessage, type PinnedPreview } from '../api';
 import {
-  Composer, ConversationSearch, MessageList, plainText, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText, typingLabel,
+  Composer, ConversationSearch, MessageList, plainText, SelectionBar, messagesCount, useSelection, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText, typingLabel,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
@@ -63,6 +63,7 @@ function ChatView({ idParam }: { idParam: string }) {
   const [typing, setTyping] = useState<string[]>([]);
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<Forwarding | null>(null);
+  const selection = useSelection(messages.map((m) => m.id));
   const [pollOpen, setPollOpen] = useState(false);
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -248,6 +249,26 @@ function ChatView({ idParam }: { idParam: string }) {
       setError(err instanceof ApiError ? err.message : 'Не удалось отправить файл');
       return false;
     }
+  }
+
+  /** Удалить выбранные — по одному запросу на сообщение; не удалилось — остаётся. */
+  async function deleteMany(ids: number[]) {
+    if (!window.confirm(`Удалить ${messagesCount(ids.length)}? Исчезнет у всех участников.`)) return false;
+    setError(null);
+    const done: number[] = [];
+    try {
+      for (const id of ids) {
+        await api.deleteChatMessage(chatId, id);
+        done.push(id);
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось удалить');
+    }
+    edits.current += 1;
+    setMessages((prev) => prev.filter((m) => !done.includes(m.id)));
+    if (mode && done.includes(mode.id)) setMode(null);
+    refreshList();
+    return done.length === ids.length;
   }
 
   async function act(action: MessageAction, item: BubbleItem) {
@@ -631,6 +652,7 @@ function ChatView({ idParam }: { idParam: string }) {
         loadingMore={loadingMore}
         onLoadOlder={() => void loadOlder()}
         onAction={(action, item) => void act(action, item)}
+        selection={selection}
         // Закреплять в группе — владельцу и администраторам.
         actions={{ pin: amAdmin, readers: true }}
         pinnedId={pinned?.id ?? null}
@@ -645,7 +667,16 @@ function ChatView({ idParam }: { idParam: string }) {
 
       {error && <p className="error pane-error">{error}</p>}
 
-      {muted ? (
+      {selection.active ? (
+        <SelectionBar
+          selection={selection}
+          items={items}
+          from="chat"
+          who={(m) => m.author?.displayName ?? user?.displayName ?? ''}
+          onForward={setForwarding}
+          onDelete={deleteMany}
+        />
+      ) : muted ? (
         <div className="pane-blocked">
           <strong>Пишут только администраторы.</strong> Отвечать реакциями можно.
         </div>
@@ -710,7 +741,7 @@ function ChatView({ idParam }: { idParam: string }) {
 
       {forwarding && (
         <ForwardDialog
-          sources={forwarding.sources}
+          groups={forwarding.groups}
           preview={forwarding.preview}
           onClose={() => setForwarding(null)}
         />
