@@ -125,6 +125,7 @@ export function Settings() {
         {account && <Password account={account} onChange={reload} />}
         <Device />
         <Sessions />
+        <MyData />
         {account && <DeleteAccount account={account} />}
       </div>
     </>
@@ -657,6 +658,55 @@ function LinkDevice({ onLinked }: { onLinked: () => void }) {
         </button>
       )}
     </div>
+  );
+}
+
+/* ─ Мои данные ────────────────────────────────────────────────────────── */
+
+/**
+ * Выгрузка своих данных одним JSON-файлом. Файлы вложений в него не вшиваются:
+ * у каждого есть имя и ссылка, по которой их скачивает вошедший владелец.
+ */
+function MyData() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function download() {
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await api.exportData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `hronika-${data.profile.username}-${data.exportedAt.slice(0, 10)}.json`;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      setError(errorText(err, 'Не удалось собрать выгрузку'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-block" aria-labelledby="settings-data">
+      <h2 className="settings-title" id="settings-data">
+        Мои данные
+      </h2>
+      <p className="settings-note">
+        Всё, что вы здесь писали и настроили, одним файлом: профиль, записи и комментарии, отметки и закладки,
+        подписки, личные переписки целиком, свои сообщения в группах, свои каналы, папки, черновики и отложенные.
+        Паролей и ключей входа в файле нет; чужих сообщений в группах — тоже.
+      </p>
+      {error && <p className="error">{error}</p>}
+      <button className="btn ghost" type="button" disabled={busy} onClick={() => void download()}>
+        {busy ? 'Собираю…' : 'Скачать мои данные (JSON)'}
+      </button>
+    </section>
   );
 }
 

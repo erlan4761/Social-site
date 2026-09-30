@@ -415,3 +415,15 @@ describe('витрина: автоудаление', () => {
     expect((await api.thread('demo')).messages.some((m) => m.id === message.id)).toBe(false);
   });
 });
+
+describe('витрина: выгрузка данных', () => {
+  it('свой профиль, свои записи, переписки обеих сторон — без пароля', async () => {
+    const data = await api.exportData();
+    expect(data.profile.username).toBe('demo');
+    expect((data.posts as unknown[]).length).toBeGreaterThan(0);
+    const convs = data.conversations as { with: string; messages: { from: string }[] }[];
+    const oleg = convs.find((c) => c.with === 'oleg_k')!;
+    expect(oleg.messages.some((m) => m.from === 'me') && oleg.messages.some((m) => m.from === 'oleg_k')).toBe(true);
+    expect(JSON.stringify(data)).not.toContain('parol12345');
+  });
+});

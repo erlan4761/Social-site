@@ -271,6 +271,13 @@ export type FolderInput = Partial<Omit<ChatFolder, 'id'>>;
 /** Кому видно время захода: всем, тем, на кого я подписан, никому. */
 export type LastSeenPrivacy = 'all' | 'follows' | 'nobody';
 
+/** Выгрузка своих данных: профиль и разделы — записи, переписки, группы, каналы… */
+export type DataExport = {
+  format: string;
+  exportedAt: string;
+  profile: { username: string; displayName: string } & Record<string, unknown>;
+} & Record<string, unknown>;
+
 /** Кто найдёт по номеру и кому номер виден — те же три ответа. По умолчанию «никто». */
 export type PhonePrivacy = LastSeenPrivacy;
 
@@ -932,6 +939,9 @@ const realApi = {
   // ─ Аккаунт ─────────────────────────────────────────────────────────────
 
   account: () => request<AccountSettings>('/account'),
+
+  /** Все свои данные одним объектом — для файла «Мои данные» (см. exportData.js). */
+  exportData: () => request<DataExport>('/account/export'),
 
   /** Сменить логин; старый ещё `holdDays` дней закреплён за вами. */
   changeUsername: (username: string) =>

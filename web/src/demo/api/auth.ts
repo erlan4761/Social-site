@@ -248,6 +248,33 @@ export const authApi = {
     return tick(sendCode(u.phone!, 'delete', u.id));
   },
 
+  /** Выгрузка в витрине — из памяти вкладки, в том же формате, что на сервере. */
+  exportData: () => {
+    const u = requireMe()!;
+    const nameOf = (uid: number) => byId(uid)?.username ?? null;
+    const convs = new Map<number, { with: string | null; messages: unknown[] }>();
+    for (const m of db.messages.filter((x) => x.fromId === u.id || x.toId === u.id)) {
+      const other = m.fromId === u.id ? m.toId : m.fromId;
+      if (!convs.has(other)) convs.set(other, { with: nameOf(other), messages: [] });
+      convs.get(other)!.messages.push({ id: m.id, from: m.fromId === u.id ? 'me' : nameOf(m.fromId), body: m.body, createdAt: m.createdAt });
+    }
+    return tick({
+      format: 'hronika-export/1',
+      exportedAt: new Date().toISOString(),
+      profile: { username: u.username, displayName: u.displayName, bio: u.bio, email: u.email, phone: u.phone ?? null, createdAt: u.createdAt },
+      posts: db.posts.filter((x) => x.authorId === u.id).map((x) => ({ id: x.id, body: x.body, createdAt: x.createdAt })),
+      comments: db.comments.filter((x) => x.authorId === u.id).map((x) => ({ id: x.id, postId: x.postId, body: x.body, createdAt: x.createdAt })),
+      following: db.follows.filter((f) => f.followerId === u.id).map((f) => ({ username: nameOf(f.followeeId) })),
+      followers: db.follows.filter((f) => f.followeeId === u.id).map((f) => ({ username: nameOf(f.followerId) })),
+      conversations: [...convs.values()],
+      groups: db.chatMembers.filter((m) => m.userId === u.id).map((m) => ({
+        id: m.chatId,
+        title: db.chats.find((c) => c.id === m.chatId)?.title ?? '',
+        myMessages: db.chatMessages.filter((x) => x.chatId === m.chatId && x.authorId === u.id).map((x) => ({ id: x.id, body: x.body, createdAt: x.createdAt })),
+      })),
+    });
+  },
+
   changeUsername: (raw: string) => {
     const u = requireMe()!;
     const username = raw.trim().toLowerCase();
