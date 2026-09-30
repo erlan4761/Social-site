@@ -5,6 +5,7 @@ import { notify, saveMentions } from './notifications';
 import { membersOf, memberRow } from './chats';
 import { channelBy, subOf } from './channels';
 import { dispatchLive } from '../../live';
+import { expiryFor } from './autoDelete';
 
 /** Отложенные сообщения и планировщик витрины — как scheduled.js. */
 
@@ -40,14 +41,14 @@ function deliverNow(s: DbScheduled): number | null {
     const other = byId(s.targetId);
     if (!other || blockedPair(s.userId, other.id)) return null;
     const self = other.id === s.userId;
-    const m: DbMessage = { id: id(), fromId: s.userId, toId: other.id, body: s.body, createdAt: at, readAt: self ? at : null, ...NO_EXTRAS };
+    const m: DbMessage = { id: id(), fromId: s.userId, toId: other.id, body: s.body, createdAt: at, readAt: self ? at : null, ...NO_EXTRAS, expiresAt: expiryFor('dm', other.id, s.userId) };
     db.messages.push(m);
     if (!self) notify({ userId: other.id, actorId: s.userId, kind: 'message' });
     return m.id;
   }
   if (s.kind === 'chat') {
     if (!memberRow(s.targetId, s.userId)) return null;
-    const m: DbChatMessage = { id: id(), chatId: s.targetId, authorId: s.userId, body: s.body, createdAt: at, ...NO_EXTRAS };
+    const m: DbChatMessage = { id: id(), chatId: s.targetId, authorId: s.userId, body: s.body, createdAt: at, ...NO_EXTRAS, expiresAt: expiryFor('chat', s.targetId) };
     db.chatMessages.push(m);
     for (const member of membersOf(s.targetId)) notify({ userId: member.userId, actorId: s.userId, kind: 'chat_message', chatId: s.targetId });
     saveMentions(s.targetId, m.id, s.userId, s.body);
@@ -55,7 +56,7 @@ function deliverNow(s: DbScheduled): number | null {
   }
   const c = db.channels.find((x) => x.id === s.targetId && x.ownerId === s.userId);
   if (!c) return null;
-  const post: DbChannelPost = { id: id(), channelId: c.id, authorId: s.userId, body: s.body, createdAt: at, editedAt: null, attachment: null };
+  const post: DbChannelPost = { id: id(), channelId: c.id, authorId: s.userId, body: s.body, createdAt: at, editedAt: null, attachment: null, expiresAt: expiryFor('channel', c.id) };
   db.channelPosts.push(post);
   const sub = subOf(c.id, s.userId);
   if (sub) sub.lastReadId = post.id;

@@ -288,6 +288,19 @@ a.pane-who:hover { background: var(--surface-2); }
   overflow-wrap: anywhere;
 }
 
+/* Автоудаление: плашка над полем ввода и часики у исчезающих сообщений. */
+.auto-delete-note {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin: 0;
+  padding: var(--s-1) var(--s-4);
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+}
+.bubble-expires { display: inline-flex; opacity: 0.7; }
+.auto-delete-field { max-width: 18rem; margin-bottom: var(--s-2); }
+
 /* Запись о звонке: трубка и слова; пропущенный входящий — красным. */
 .bubble-call {
   display: flex;

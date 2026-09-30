@@ -36,6 +36,7 @@ export const toChatMessage = (m: DbChatMessage): ChatMessage => ({
   attachment: m.attachment,
   sticker: m.sticker ?? null,
   albumId: m.albumId ?? null,
+  expiresAt: m.expiresAt ?? null,
 });
 
 /** Сообщение чата, видимое смотрящему, или 404. */
@@ -98,6 +99,7 @@ export const toChat = (c: DbChat): Chat => {
     myRole: (db.meId != null ? roleOf(c, db.meId) : null) ?? 'member',
     slowMode: c.slowMode ?? 0,
     adminsOnly: Boolean(c.adminsOnly),
+    autoDelete: c.autoDelete ?? 0,
     nextPostAt: db.meId != null ? nextPostAt(c, db.meId) : null,
     invite: c.invite ?? null,
   };
