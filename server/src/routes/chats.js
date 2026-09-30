@@ -13,7 +13,7 @@ import {
 import { markNotificationsRead, notify } from '../notifications.js';
 import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
 import { presenceFor } from '../presence.js';
-import { saveMentions, unreadMentions } from '../mentions.js';
+import { saveMentions } from '../mentions.js';
 import { createPoll, hasPoll, readPoll, withPolls } from '../polls.js';
 import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import { clearDraft, draftsOf, dropDrafts } from '../drafts.js';
@@ -166,21 +166,6 @@ const serializeChat = (chat, viewerId) => {
 };
 
 /**
- * Непрочитанное по ватерлинии last_read_id. Свои сообщения не считаются, и
- * сообщения тех, с кем смотрящий в блокировке, — тоже: их не видно в чате, и
- * счётчик, который на них ссылается, невозможно обнулить чтением.
- * Та же формула, что в GET /api/badges.
- */
-function unreadIn(chatId, viewerId, lastReadId) {
-  return db.prepare(`
-    SELECT COUNT(*) AS c FROM chat_messages m
-    WHERE m.chat_id = :chatId AND m.id > :lastReadId
-      AND m.author_id <> :viewerId
-      AND ${blockPairSql('m.author_id')}
-  `).get({ chatId, lastReadId, viewerId }).c;
-}
-
-/**
  * Самая дальняя ватерлиния среди остальных участников: своё сообщение с id не
  * больше неё кто-то уже прочитал — две галочки, как в группах Телеграма. Кто
  * именно прочитал, не раскрывается: ватерлиния на это и не отвечает.
@@ -192,49 +177,80 @@ function othersReadUpTo(chatId, viewerId) {
   `).get(chatId, viewerId).top;
 }
 
-/** Последнее сообщение, видимое смотрящему, — для превью в списке чатов. */
-function lastVisibleMessage(chatId, viewerId) {
-  const row = db.prepare(`
-    ${MESSAGE_SELECT}
-    WHERE m.chat_id = :chatId AND ${blockPairSql('m.author_id')}
-    ORDER BY m.id DESC LIMIT 1
-  `).get({ chatId, viewerId });
-  if (!row) return null;
-
-  // Превью в списке: цитата и реакции там не показываются, запросы за ними не нужны.
-  const { replyToId, ...last } = serializeMessage(row);
-  // Опрос нужен и превью: по нему список пишет «Опрос: вопрос».
-  return withPolls('chat', [{ ...last, replyTo: null, reactions: [] }], viewerId, (m) => m.author.id)[0];
-}
-
 /* ─ Список и создание ──────────────────────────────────────────────────── */
 
 /**
- * Мои чаты, свежие сверху. Счётчик и превью считаются по каждому чату
- * отдельным запросом: чатов у человека десятки, а не тысячи, и три коротких
- * запроса на чат читаются куда лучше одного оконного, который пришлось бы
- * разбирать при каждой правке.
+ * Строка списка — без состава участников: список его не показывает, а у
+ * группы в 20 человек это 20 проверок «в сети» и блокировок на каждую строку.
+ * Состав приходит вместе с открытым чатом (GET /:id и /:id/messages).
  */
+const summarizeChat = (row, viewerId) => ({
+  id: row.id,
+  title: row.title,
+  ownerId: row.owner_id,
+  createdAt: row.created_at,
+  memberCount: row.member_count,
+  iAmOwner: row.owner_id === viewerId,
+  myRole: row.owner_id === viewerId ? 'owner' : row.my_role === 'admin' ? 'admin' : 'member',
+  slowMode: row.slow_mode ?? 0,
+  adminsOnly: Boolean(row.admins_only),
+  nextPostAt: nextPostAt(row, viewerId),
+  invite: row.invite_token ?? null,
+});
+
 router.get('/', (req, res) => {
   const me = req.user.id;
 
+  // Мои чаты, свежие сверху — одним запросом. Раньше счётчики и превью
+  // считались отдельными запросами на каждый чат ради читаемости; замер
+  // (scripts/bench-lists.mjs: 40 групп — почти тысяча запросов) это решение
+  // отменил. Подзапросы идут по индексам (chat_messages по chat_id и id).
+  //
+  // Непрочитанное — по ватерлинии last_read_id, без своих сообщений и без
+  // сообщений тех, с кем смотрящий в блокировке: их не видно в чате, и
+  // счётчик, который на них ссылается, невозможно обнулить чтением (та же
+  // формула, что в GET /api/badges). read_up_to — как othersReadUpTo выше.
   const rows = db.prepare(`
-    SELECT c.*, cm.last_read_id
+    SELECT c.*, cm.last_read_id, cm.role AS my_role,
+      (SELECT COUNT(*) FROM chat_members x WHERE x.chat_id = c.id) AS member_count,
+      (SELECT COALESCE(MAX(x.last_read_id), 0) FROM chat_members x
+        WHERE x.chat_id = c.id AND x.user_id <> :viewerId) AS read_up_to,
+      (SELECT MAX(m.id) FROM chat_messages m
+        WHERE m.chat_id = c.id AND ${blockPairSql('m.author_id')}) AS last_id,
+      (SELECT COUNT(*) FROM chat_messages m
+        WHERE m.chat_id = c.id AND m.id > cm.last_read_id AND m.author_id <> :viewerId
+          AND ${blockPairSql('m.author_id')}) AS unread,
+      (SELECT COUNT(*) FROM chat_mentions x JOIN chat_messages m ON m.id = x.message_id
+        WHERE m.chat_id = c.id AND x.user_id = :viewerId AND m.id > cm.last_read_id) AS mentions
     FROM chats c
-    JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = ?
-  `).all(me);
+    JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = :viewerId
+  `).all({ viewerId: me });
+
+  // Последние сообщения всех чатов — одним запросом; список id — JSON, чтобы
+  // текст запроса не зависел от их числа и подготовленный запрос не менялся.
+  const lastIds = rows.map((r) => r.last_id).filter((id) => id != null);
+  const lastRows = lastIds.length
+    ? db.prepare(`${MESSAGE_SELECT} WHERE m.id IN (SELECT value FROM json_each(?))`).all(JSON.stringify(lastIds))
+    : [];
+  // Превью в списке: цитата и реакции там не показываются, запросы за ними не
+  // нужны. Опрос нужен — по нему список пишет «Опрос: вопрос».
+  const previews = withPolls('chat', lastRows.map((r) => {
+    const { replyToId, ...last } = serializeMessage(r);
+    return { ...last, replyTo: null, reactions: [] };
+  }), me, (m) => m.author.id);
+  const lastById = new Map(previews.map((m) => [m.id, m]));
 
   const prefs = prefsOf(me, 'chat');
   const drafts = draftsOf(me, 'chat');
   const chats = rows.map((row) => {
-    const lastMessage = lastVisibleMessage(row.id, me);
+    const lastMessage = lastById.get(row.last_id) ?? null;
     const pref = prefFor(prefs, row.id);
     return {
-      ...serializeChat(row, me),
-      unread: unreadIn(row.id, me, row.last_read_id),
-      mentions: unreadMentions(row.id, me, row.last_read_id),
+      ...summarizeChat(row, me),
+      unread: row.unread,
+      mentions: row.mentions,
       lastMessage,
-      readUpTo: othersReadUpTo(row.id, me),
+      readUpTo: row.read_up_to,
       pinnedAt: pref.pinnedAt,
       muted: pref.muted,
       draft: drafts.get(row.id) ?? null,

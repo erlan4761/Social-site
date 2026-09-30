@@ -14,7 +14,7 @@ export const LAST_SEEN_OPTIONS = ['all', 'follows', 'nobody'];
 
 const RECENT_MS = 3 * 864e5;
 
-const privacyOf = (id) =>
+export const privacyOf = (id) =>
   db.prepare('SELECT last_seen_privacy AS p FROM users WHERE id = ?').get(id)?.p ?? 'all';
 
 const follows = (from, to) =>
@@ -29,15 +29,18 @@ function shares(ownerId, privacy, otherId) {
 
 /**
  * `row` — строка users с `id`, `last_seen_at` и, если выбрана,
- * `last_seen_privacy`. `blocked` можно передать, если он уже посчитан.
+ * `last_seen_privacy`. `blocked` и свою настройку `viewerPrivacy` можно
+ * передать, если они уже посчитаны.
  */
-export function presenceFor(viewerId, row, { blocked } = {}) {
+export function presenceFor(viewerId, row, { blocked, viewerPrivacy } = {}) {
   const seen = row.last_seen_at ?? null;
   if (row.id === viewerId) return { lastSeenAt: seen, seenRecently: false };
   if (blocked ?? isBlockedPair(viewerId, row.id)) return { lastSeenAt: null, seenRecently: false };
 
   const theirs = row.last_seen_privacy ?? privacyOf(row.id);
-  if (shares(row.id, theirs, viewerId) && shares(viewerId, privacyOf(viewerId), row.id)) {
+  // viewerPrivacy — своя настройка, если уже прочитана: список собеседников
+  // иначе спрашивал бы её у базы на каждой строке.
+  if (shares(row.id, theirs, viewerId) && shares(viewerId, viewerPrivacy ?? privacyOf(viewerId), row.id)) {
     return { lastSeenAt: seen, seenRecently: false };
   }
   return { lastSeenAt: null, seenRecently: seen != null && Date.now() - Date.parse(seen) < RECENT_MS };

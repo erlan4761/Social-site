@@ -56,11 +56,3 @@ export function saveMentions({ chatId, messageId, authorId, body }) {
     }
   }
 }
-
-/** Непрочитанные упоминания смотрящего в чате — для значка «@» в списке. */
-export function unreadMentions(chatId, viewerId, lastReadId) {
-  return db.prepare(`
-    SELECT COUNT(*) AS c FROM chat_mentions x JOIN chat_messages m ON m.id = x.message_id
-    WHERE m.chat_id = ? AND x.user_id = ? AND m.id > ?
-  `).get(chatId, viewerId, lastReadId).c;
-}
