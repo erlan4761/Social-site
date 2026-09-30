@@ -763,6 +763,27 @@ router.get('/:id/messages/:mid/readers', (req, res) => {
   });
 });
 
+/**
+ * Кто поставил реакции — как в группах Телеграма: любому участнику, свежие
+ * сверху. Те, с кем смотрящий в блокировке, не показываются — как и в
+ * счётчиках реакций. В канале такого списка нет: там реакции анонимны.
+ */
+router.get('/:id/messages/:mid/reactions', (req, res) => {
+  const me = req.user.id;
+  const chat = memberChat(req.params.id, me);
+  if (!chat) return res.status(404).json({ error: NOT_FOUND });
+  const msg = chatMessage(chat.id, req.params.mid, me);
+  if (!msg) return res.status(404).json({ error: MESSAGE_NOT_FOUND });
+
+  const rows = db.prepare(`
+    SELECT r.emoji, r.created_at, u.id, u.username, u.display_name, u.avatar_path, u.last_seen_at, u.last_seen_privacy
+    FROM chat_message_reactions r JOIN users u ON u.id = r.user_id
+    WHERE r.message_id = :messageId AND ${blockPairSql('r.user_id')}
+    ORDER BY r.created_at DESC, r.user_id
+  `).all({ messageId: msg.id, viewerId: me });
+  res.json({ reactions: rows.map((r) => ({ emoji: r.emoji, at: r.created_at, user: member(r, me) })) });
+});
+
 router.put('/:id/read', (req, res) => {
   const me = req.user.id;
   const chat = memberChat(req.params.id, me);
