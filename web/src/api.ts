@@ -455,6 +455,22 @@ const body = (payload: unknown) => JSON.stringify(payload);
 const realApi = {
   me: () => request<{ user: User | null }>('/auth/me'),
 
+  // ─ Вход по QR-коду: компьютер показывает код, телефон подтверждает ────────
+  qrLoginStart: () =>
+    request<{ token: string; code: string; secret: string; expiresIn: number }>('/auth/qr', { method: 'POST' }),
+
+  qrLoginPoll: (token: string, secret: string) =>
+    request<{ status: 'pending' } | { status: 'approved'; user: User }>('/auth/qr/poll', {
+      method: 'POST',
+      body: body({ token, secret }),
+    }),
+
+  /** Какое устройство просит войти — по token из QR или по коду. */
+  qrInfo: (key: string) => request<{ device: string; expiresIn: number }>(`/auth/qr/${encodeURIComponent(key)}`),
+
+  qrApprove: (by: { token: string } | { code: string }) =>
+    request<{ ok: true; device: string }>('/auth/qr/approve', { method: 'POST', body: body(by) }),
+
   // ─ Вход по номеру: номер → код → (пароль | логин и имя) ────────────
 
   phoneStart: (phone: string) => request<CodeSent>('/auth/phone/start', { method: 'POST', body: body({ phone }) }),

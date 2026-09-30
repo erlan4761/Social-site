@@ -1,4 +1,5 @@
-import { type LastSeenPrivacy, type Privacy } from '../../api';
+import { type LastSeenPrivacy, type Privacy, type User } from '../../api';
+import { deviceName } from '../../device';
 import { type DbUser, db, id, tick, fail } from '../store';
 import { openSession, endOtherSessions, dropUser } from '../model/account';
 import { byId, byName, byEmail, me, requireMe } from '../model/people';
@@ -15,6 +16,14 @@ const usernameTaken = (name: string, forUserId: number | null = null) =>
   db.users.some((x) => x.username === name && x.id !== forUserId)
   || db.usernameHolds.some((h) => h.username === name && h.until > Date.now() && h.userId !== forUserId);
 
+/** Запросы входа по QR — в памяти вкладки, как в памяти процесса на сервере. */
+const qrRequests = new Map<string, { token: string; code: string; secret: string; until: number; approvedBy: number | null }>();
+const findQr = (key: string) => {
+  const norm = key.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const r = qrRequests.get(key) ?? [...qrRequests.values()].find((x) => x.code === norm);
+  return r && r.until > Date.now() ? r : null;
+};
+
 const PRIVACY_KEYS = ['lastSeen', 'phoneFind', 'phoneShow'] as const;
 const OPTIONS: LastSeenPrivacy[] = ['all', 'follows', 'nobody'];
 
@@ -24,6 +33,41 @@ export const authApi = {
   savePushSubscription: (_subscription: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
     fail(400, 'В витрине пуш-уведомлений нет — они приходят от сервера'),
   deletePushSubscription: (_endpoint: string) => tick({ ok: true as const }),
+
+  // ─ Вход по QR: в одной вкладке компьютер и телефон — это одно и то же, но
+  // сами правила (одноразовость, код, подтверждение) — как на сервере.
+  qrLoginStart: () => {
+    if (me()) fail(400, 'Вы уже вошли');
+    const code = Array.from({ length: 8 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('');
+    const r = { token: crypto.randomUUID().replace(/-/g, '').slice(0, 22), code, secret: crypto.randomUUID(), until: Date.now() + 120_000, approvedBy: null as number | null };
+    qrRequests.set(r.token, r);
+    return tick({ token: r.token, code: r.code, secret: r.secret, expiresIn: 120 });
+  },
+
+  qrLoginPoll: (token: string, secret: string): Promise<{ status: 'pending' } | { status: 'approved'; user: User }> => {
+    const r = qrRequests.get(token);
+    if (!r || r.secret !== secret || r.until < Date.now()) fail(410, 'Код устарел');
+    if (!r!.approvedBy) return tick({ status: 'pending' as const });
+    qrRequests.delete(token);
+    db.meId = r!.approvedBy;
+    openSession(r!.approvedBy);
+    return tick({ status: 'approved' as const, user: publicUser(byId(r!.approvedBy)!) });
+  },
+
+  qrInfo: (key: string) => {
+    requireMe();
+    const r = findQr(key);
+    if (!r || r.approvedBy) fail(404, 'Код устарел или уже использован — обновите его на компьютере');
+    return tick({ device: deviceName(typeof navigator === 'undefined' ? null : navigator.userAgent), expiresIn: Math.round((r!.until - Date.now()) / 1000) });
+  },
+
+  qrApprove: (by: { token: string } | { code: string }) => {
+    const u = requireMe()!;
+    const r = findQr('token' in by ? by.token : by.code);
+    if (!r || r.approvedBy) fail(404, 'Код устарел или уже использован — обновите его на компьютере');
+    r!.approvedBy = u.id;
+    return tick({ ok: true as const, device: deviceName(typeof navigator === 'undefined' ? null : navigator.userAgent) });
+  },
 
   // Своё «я» — с флагом модератора, как /auth/me на сервере.
   me: () => tick({ user: me() ? { ...publicUser(me()!), ...(me()!.moderator ? { moderator: true } : {}) } : null }),

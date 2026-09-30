@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { api, ApiError, type User } from '../api';
+import { QrCode } from '../components/QrCode';
 import { EMPTY_PHONE, PhoneField } from '../components/PhoneField';
 import { formatPhone, toE164 } from '../phone';
 import { useSession } from '../session';
@@ -20,7 +21,8 @@ type Step =
   | { kind: 'code'; phone: string; resendAt: number; demoCode?: string }
   | { kind: 'signup'; phone: string; ticket: string }
   | { kind: 'password'; phone: string; ticket: string }
-  | { kind: 'legacy' };
+  | { kind: 'legacy' }
+  | { kind: 'qr' };
 
 /** Куда вернуть после входа: только путь этого же сайта, не чужой адрес. */
 function backTo(state: unknown) {
@@ -72,14 +74,20 @@ export function Auth({ mode }: { mode: 'login' | 'register' }) {
         {step.kind === 'signup' && <SignupStep step={step} onDone={done} />}
         {step.kind === 'password' && <PasswordStep step={step} onDone={done} onRestart={() => setStep({ kind: 'phone' })} />}
         {step.kind === 'legacy' && <LegacyLogin onDone={done} />}
+        {step.kind === 'qr' && <QrStep onDone={done} />}
 
         <p className="auth-switch">
-          {step.kind === 'legacy' ? (
+          {step.kind === 'legacy' || step.kind === 'qr' ? (
             <button className="btn link" type="button" onClick={() => setStep({ kind: 'phone' })}>
               Войти по номеру телефона
             </button>
           ) : step.kind === 'phone' ? (
             <>
+              Уже вошли на телефоне?{' '}
+              <button className="btn link" type="button" onClick={() => setStep({ kind: 'qr' })}>
+                Войти по QR-коду
+              </button>
+              <br />
               Аккаунт создан до входа по номеру?{' '}
               <button className="btn link" type="button" onClick={() => setStep({ kind: 'legacy' })}>
                 Войти по логину и паролю
@@ -307,6 +315,83 @@ function SignupStep({ step, onDone }: { step: Extract<Step, { kind: 'signup' }>;
         {busy ? 'Минуту…' : 'Создать аккаунт'}
       </button>
     </form>
+  );
+}
+
+/* ─ Вход по QR-коду ──────────────────────────────────────────────────── */
+
+const QR_POLL_MS = 2000;
+
+/**
+ * Компьютер показывает QR-код и короткий код, телефон подтверждает. Здесь —
+ * ожидание: раз в две секунды спросить, не подтвердили ли. Код живёт две
+ * минуты; устарел — новый по кнопке.
+ */
+function QrStep({ onDone }: { onDone: (u: User) => void }) {
+  const [req, setReq] = useState<{ token: string; code: string; secret: string; until: number } | null>(null);
+  const [expired, setExpired] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [round, setRound] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setReq(null);
+    setExpired(false);
+    setError(null);
+    api
+      .qrLoginStart()
+      .then((r) => !cancelled && setReq({ ...r, until: Date.now() + r.expiresIn * 1000 }))
+      .catch((err) => !cancelled && setError(errorText(err)));
+    return () => {
+      cancelled = true;
+    };
+  }, [round]);
+
+  useEffect(() => {
+    if (!req || expired) return;
+    const timer = window.setInterval(() => {
+      if (Date.now() > req.until) {
+        setExpired(true);
+        return;
+      }
+      api
+        .qrLoginPoll(req.token, req.secret)
+        .then((r) => {
+          if (r.status === 'approved') onDone(r.user);
+        })
+        .catch((err) => {
+          if (err instanceof ApiError && err.status === 410) setExpired(true);
+        });
+    }, QR_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [req, expired, onDone]);
+
+  const url = req ? new URL(`${import.meta.env.BASE_URL}qr/${req.token}`, window.location.origin).href : '';
+
+  return (
+    <div className="qr-login">
+      <p className="auth-lede">
+        Откройте камеру на телефоне, где вы уже вошли в Хронику, и наведите на код. Камеры нет — в настройках на
+        телефоне: «Где выполнен вход» → «Подключить устройство по коду».
+      </p>
+      {error && <p className="error">{error}</p>}
+      {req && !expired && (
+        <>
+          <QrCode text={url} label="QR-код для входа" />
+          <p className="qr-code-text" aria-label="Код для входа">
+            {req.code.slice(0, 4)}-{req.code.slice(4)}
+          </p>
+        </>
+      )}
+      {expired && (
+        <>
+          <p className="hint">Код устарел — он живёт две минуты.</p>
+          <button className="btn block" type="button" onClick={() => setRound((n) => n + 1)}>
+            Показать новый код
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 
