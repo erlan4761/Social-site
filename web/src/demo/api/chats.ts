@@ -26,8 +26,10 @@ export const chatsApi = {
         // Последнее сообщение — последнее **видимое**: реплика заблокированного
         // не показывается даже в превью.
         const last = visibleChatMessages(c.id).at(-1) ?? null;
+        // Состава в строке списка нет — как на сервере: он приходит с чатом.
+        const { members: _members, ...chat } = toChat(c);
         return {
-          ...toChat(c),
+          ...chat,
           unread: chatUnread(c.id, u.id),
           mentions: unreadMentions(c.id, u.id),
           lastMessage: last ? toChatMessage(last) : null,

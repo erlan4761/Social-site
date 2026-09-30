@@ -402,7 +402,8 @@ export type ChatMessage = MessageExtras & {
   poll?: Poll | null;
 };
 
-export type ChatSummary = Chat & ChatPrefs & WithDraft & {
+/** Строка списка групп — без состава участников: он приходит с открытым чатом. */
+export type ChatSummary = Omit<Chat, 'members'> & ChatPrefs & WithDraft & {
   unread: number;
   /** Непрочитанные сообщения, где упомянут смотрящий, — значок «@» в списке. */
   mentions: number;
