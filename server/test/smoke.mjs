@@ -3985,5 +3985,77 @@ check('на телефоне — событие о входе с компьют�
 r = await phone('/account/sessions');
 check('новый сеанс — с устройством компьютера', r.body.sessions?.some((s) => !s.current && /Chrome/.test(s.userAgent ?? '')), JSON.stringify(r.body.sessions));
 
+console.log('\n— автоудаление —');
+// Ждать сутки тест не может: срок сообщения сдвигается в прошлое прямо в базе,
+// а убирает его обычный такт планировщика (SCHEDULE_TICK_MS=500).
+const ad = makeClient();
+const ae = makeClient();
+const userAd = `autod_${stamp}`;
+const userAe = `autoe_${stamp}`;
+await legacySignUp(ad, userAd, 'Исчезающий');
+await legacySignUp(ae, userAe, 'Собеседница');
+const DAY = 86400;
+const expireNow = (table, id) => legacyDb.prepare(`UPDATE ${table} SET expires_at = ? WHERE id = ?`).run(new Date(Date.now() - 1000).toISOString(), id);
+const setTimer = (client, to, seconds) => client(`/messages/${to}/auto-delete`, { method: 'PUT', body: JSON.stringify({ seconds }) });
+
+r = await dmSend(ad, userAe, { body: 'До таймера' });
+const preTimer = r.body.message;
+check('до таймера срока нет', preTimer.expiresAt === null, JSON.stringify(preTimer.expiresAt));
+r = await setTimer(ad, userAe, 5);
+check('таймер не из списка — 400', r.status === 400, `${r.status}`);
+r = await setTimer(ad, userAe, DAY);
+check('таймер включён', r.status === 200 && r.body.autoDelete === DAY, JSON.stringify(r.body));
+r = await ae(`/messages/${userAd}`);
+check('таймер общий — собеседник его видит', r.body.autoDelete === DAY, `${r.body.autoDelete}`);
+r = await dmSend(ae, userAd, { body: 'Исчезну через сутки' });
+const fading = r.body.message;
+const fadeLeft = Date.parse(fading.expiresAt) - Date.now();
+check('новое сообщение — со сроком через сутки', fadeLeft > DAY * 1000 - 60_000 && fadeLeft <= DAY * 1000, fading.expiresAt);
+r = await ad(`/messages/${userAe}`, { method: 'POST', body: withFile(PNG, 'kadr.png', 'image/png', { body: 'С файлом' }) });
+const withPhoto = r.body.message;
+await ad(`/messages/${userAe}/${fading.id}/pin`, { method: 'PUT' });
+expireNow('messages', fading.id);
+expireNow('messages', withPhoto.id);
+await sleep(1200);
+r = await ad(`/messages/${userAe}`);
+check('истёкшие исчезли, старое на месте', !r.body.messages?.some((m) => m.id === fading.id || m.id === withPhoto.id)
+  && r.body.messages?.some((m) => m.id === preTimer.id), JSON.stringify(r.body.messages?.map((m) => m.id)));
+check('закреплённое снято вместе с ним', r.body.pinned === null, JSON.stringify(r.body.pinned));
+raw = await ad.raw(withPhoto.attachment.url);
+check('файл вложения удалён', raw.status === 404, `${raw.status}`);
+await setTimer(ae, userAd, 0);
+r = await dmSend(ad, userAe, { body: 'Таймер выключили' });
+check('любой из двоих выключает — новые без срока', r.body.message.expiresAt === null && (await ad(`/messages/${userAe}`)).body.autoDelete === 0, '');
+
+r = await ad('/chats', { method: 'POST', body: JSON.stringify({ title: 'Временная', members: [userAe] }) });
+const tchat = r.body.chat.id;
+r = await ae(`/chats/${tchat}`, { method: 'PATCH', body: JSON.stringify({ autoDelete: DAY }) });
+check('в группе таймер — не участнику', r.status === 403, `${r.status}`);
+r = await ad(`/chats/${tchat}`, { method: 'PATCH', body: JSON.stringify({ autoDelete: 7 * DAY }) });
+check('владелец включил автоудаление в группе', r.status === 200 && r.body.chat?.autoDelete === 7 * DAY, `${r.status}`);
+r = await ae(`/chats/${tchat}/messages`, { method: 'POST', body: JSON.stringify({ body: 'На неделю' }) });
+const weekMsg = r.body.message;
+check('сообщение в группе — со сроком через неделю', Date.parse(weekMsg.expiresAt) - Date.now() > 7 * DAY * 1000 - 60_000, weekMsg.expiresAt);
+expireNow('chat_messages', weekMsg.id);
+await sleep(1200);
+r = await ad(`/chats/${tchat}/messages`);
+check('истёкшее в группе исчезло', !r.body.messages?.some((m) => m.id === weekMsg.id), '');
+
+const tHandle = `timed_${stamp}`;
+await ad('/channels', { method: 'POST', body: JSON.stringify({ title: 'Временный канал', handle: tHandle }) });
+r = await ad(`/channels/${tHandle}`, { method: 'PATCH', body: JSON.stringify({ autoDelete: 30 * DAY }) });
+check('в канале таймер ставит владелец', r.status === 200 && r.body.channel?.autoDelete === 30 * DAY, `${r.status}`);
+r = await ad(`/channels/${tHandle}/posts`, { method: 'POST', body: JSON.stringify({ body: 'На месяц' }) });
+const monthPost = r.body.post;
+check('публикация — со сроком через месяц', Boolean(monthPost?.expiresAt), JSON.stringify(monthPost?.expiresAt));
+expireNow('channel_posts', monthPost.id);
+await sleep(1200);
+r = await ad(`/channels/${tHandle}/posts`);
+check('истёкшая публикация исчезла', !r.body.posts?.some((x) => x.id === monthPost.id), '');
+
+await ae(`/users/${userAd}/block`, { method: 'PUT' });
+r = await setTimer(ad, userAe, DAY);
+check('в блокировке таймер не поставить', r.status === 403, `${r.status}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

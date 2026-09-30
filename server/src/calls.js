@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { db, nowIso } from './db.js';
 import { emit, hasStream, onStreamsGone, touchDm } from './live.js';
 import { notify } from './notifications.js';
+import { expiryFor } from './autoDelete.js';
 
 /**
  * Звонки один на один — голос и видео, как в Телеграме, но без своего медиа-
@@ -54,8 +55,9 @@ function recordCall(call, reason) {
   const outcome = call.state === 'active' ? 'ended' : reason === 'declined' ? 'declined' : 'missed';
   const duration = outcome === 'ended' ? Math.max(0, Math.round((Date.now() - call.answeredAt) / 1000)) : null;
   const at = nowIso();
-  db.prepare('INSERT INTO messages (from_id, to_id, body, created_at, read_at, call) VALUES (?, ?, \'\', ?, ?, ?)')
-    .run(call.callerId, call.calleeId, at, outcome === 'missed' ? null : at, JSON.stringify({ video: call.video, outcome, duration }));
+  db.prepare('INSERT INTO messages (from_id, to_id, body, created_at, read_at, call, expires_at) VALUES (?, ?, \'\', ?, ?, ?, ?)')
+    .run(call.callerId, call.calleeId, at, outcome === 'missed' ? null : at, JSON.stringify({ video: call.video, outcome, duration }),
+      expiryFor('dm', call.calleeId, call.callerId));
   if (outcome === 'missed') notify({ userId: call.calleeId, actorId: call.callerId, kind: 'message' });
   touchDm(call.callerId, call.calleeId);
 }

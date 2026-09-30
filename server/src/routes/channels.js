@@ -10,6 +10,7 @@ import {
 import { dropPrefs, inArchive, prefFor, prefsOf } from '../prefs.js';
 import { clearDraft, draftsOf, dropDrafts } from '../drafts.js';
 import { createPoll, hasPoll, readPoll, withPolls } from '../polls.js';
+import { expiryFor, readAutoDelete } from '../autoDelete.js';
 import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import * as v from '../validate.js';
 
@@ -90,11 +91,12 @@ function serializeChannel(c, viewerId) {
     iAmOwner: c.owner_id === viewerId,
     subscribed: Boolean(subscription(c.id, viewerId)),
     subscriberCount: subscriberCount(c.id),
+    autoDelete: c.auto_delete ?? 0,
   };
 }
 
 const POST_SELECT = `
-  SELECT m.id, m.channel_id, m.body, m.created_at, m.edited_at, ${ATTACH_COLUMNS},
+  SELECT m.id, m.channel_id, m.body, m.created_at, m.edited_at, m.expires_at, ${ATTACH_COLUMNS},
          (SELECT COUNT(*) FROM channel_post_views pv WHERE pv.post_id = m.id) AS views,
          (SELECT COUNT(*) FROM channel_comments cc
           WHERE cc.post_id = m.id AND ${blockPairSql('cc.author_id')}) AS comment_count
@@ -120,6 +122,7 @@ function serializePosts(rows, viewerId) {
     commentCount: row.comment_count,
     attachment: attachmentOf('channel', row),
     reactions: reactions.get(row.id) ?? [],
+    expiresAt: row.expires_at ?? null,
   })), viewerId, (post) => ownerOf(post.channelId));
 }
 
@@ -178,6 +181,7 @@ router.get('/', (req, res) => {
       iAmOwner: c.owner_id === me,
       subscribed: true,
       subscriberCount: c.subscriber_count,
+      autoDelete: c.auto_delete ?? 0,
       // Своё — не «непрочитанное»: владелец свои публикации и так видел.
       unread: c.owner_id === me ? 0 : c.unread_count,
       lastPost: lastById.get(c.last_id) ?? null,
@@ -255,7 +259,8 @@ router.patch('/:handle', (req, res, next) => {
       ? channel.description
       : v.str(req.body.description, 'описание', { max: MAX_DESCRIPTION });
 
-    db.prepare('UPDATE channels SET title = ?, description = ? WHERE id = ?').run(title, description, channel.id);
+    const autoDelete = readAutoDelete(req.body?.autoDelete) ?? channel.auto_delete ?? 0;
+    db.prepare('UPDATE channels SET title = ?, description = ?, auto_delete = ? WHERE id = ?').run(title, description, autoDelete, channel.id);
     res.json({ channel: serializeChannel(findChannel(channel.handle), req.user.id) });
   } catch (err) {
     next(err);
@@ -391,9 +396,9 @@ router.post('/:handle/posts', attachmentUpload.single('file'), async (req, res, 
     attachment = await readAttachment(req.file, req.body);
 
     const info = db.prepare(`
-      INSERT INTO channel_posts (channel_id, author_id, body, created_at, ${ATTACH_INSERT_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(channel.id, req.user.id, body, nowIso(), ...attachmentValues(attachment));
+      INSERT INTO channel_posts (channel_id, author_id, body, created_at, expires_at, ${ATTACH_INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(channel.id, req.user.id, body, nowIso(), expiryFor('channel', channel.id), ...attachmentValues(attachment));
 
     const id = Number(info.lastInsertRowid);
     if (poll) createPoll('channel', id, poll);
