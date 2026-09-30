@@ -9,7 +9,7 @@ import {
   isTyping, readAttachment, replyIdOf, searchQuery, searchResult, searchRows, setTyping,
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
-import { dmUnreadTotal, prefFor, prefsOf } from '../prefs.js';
+import { dmUnreadTotal, inArchive, prefFor, prefsOf } from '../prefs.js';
 import { dmScope, pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import { clearDraft, draftsOf } from '../drafts.js';
 import { presenceFor, privacyOf } from '../presence.js';
@@ -140,6 +140,7 @@ router.get('/', (req, res) => {
         lastMessage: { ...last, replyTo: null, reactions: [] },
         pinnedAt: pref.pinnedAt,
         muted: pref.muted,
+        archived: inArchive(pref, row.created_at),
         draft: drafts.get(row.id) ?? null,
       };
     }),

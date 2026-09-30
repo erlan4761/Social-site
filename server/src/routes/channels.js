@@ -7,7 +7,7 @@ import {
   ATTACH_COLUMNS, ATTACH_INSERT_COLUMNS, assertEditable, attachmentOf, attachmentUpload, attachmentValues,
   dropAttachment, emojiOf, reactionsFor, readAttachment, searchQuery, searchResult, searchRows,
 } from '../messageExtras.js';
-import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
+import { dropPrefs, inArchive, prefFor, prefsOf } from '../prefs.js';
 import { clearDraft, draftsOf, dropDrafts } from '../drafts.js';
 import { createPoll, hasPoll, readPoll, withPolls } from '../polls.js';
 import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
@@ -183,6 +183,7 @@ router.get('/', (req, res) => {
       lastPost: lastById.get(c.last_id) ?? null,
       pinnedAt: pref.pinnedAt,
       muted: pref.muted,
+      archived: inArchive(pref, lastById.get(c.last_id)?.createdAt),
       draft: drafts.get(c.id) ?? null,
     };
   });

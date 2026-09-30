@@ -6,7 +6,7 @@ import { PIN_LIMIT, PREF_KINDS, pinnedCount, prefsOf, prefFor, setPrefs } from '
 export const router = Router();
 
 /**
- * Закрепить чат наверху списка и выключить у него уведомления. Адрес — вид и
+ * Закрепить чат наверху списка, выключить у него уведомления, убрать в архив. Адрес — вид и
  * то, по чему чат открывается в интерфейсе: логин собеседника, номер чата,
  * адрес канала. Настраивать можно только то, что есть в твоём списке: чужой
  * чат, канал без подписки и несуществующий собеседник неразличимы — 404.
@@ -49,7 +49,7 @@ router.get('/:kind/:target', (req, res) => {
   const target = resolveTarget(kind, req.params.target, req.user.id);
   if (!target) return res.status(404).json({ error: NOT_FOUND });
   const pref = prefFor(prefsOf(req.user.id, kind), target);
-  res.json({ pinned: Boolean(pref.pinnedAt), muted: pref.muted });
+  res.json({ pinned: Boolean(pref.pinnedAt), muted: pref.muted, archived: pref.archivedAt != null });
 });
 
 router.put('/:kind/:target', (req, res, next) => {
@@ -62,6 +62,7 @@ router.put('/:kind/:target', (req, res, next) => {
 
     const pinned = flag(req.body?.pinned, 'pinned');
     const muted = flag(req.body?.muted, 'muted');
+    const archived = flag(req.body?.archived, 'archived');
 
     if (pinned) {
       const already = Boolean(prefFor(prefsOf(me, kind), target).pinnedAt);
@@ -70,8 +71,8 @@ router.put('/:kind/:target', (req, res, next) => {
       }
     }
 
-    const pref = setPrefs(me, kind, target, { pinned, muted });
-    res.json({ pinned: Boolean(pref.pinnedAt), muted: pref.muted });
+    const pref = setPrefs(me, kind, target, { pinned, muted, archived });
+    res.json({ pinned: Boolean(pref.pinnedAt), muted: pref.muted, archived: pref.archivedAt != null });
   } catch (err) {
     next(err);
   }

@@ -11,7 +11,7 @@ import {
   setTyping,
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
-import { dropPrefs, prefFor, prefsOf } from '../prefs.js';
+import { dropPrefs, inArchive, prefFor, prefsOf } from '../prefs.js';
 import { presenceFor } from '../presence.js';
 import { saveMentions } from '../mentions.js';
 import { createPoll, hasPoll, readPoll, withPolls } from '../polls.js';
@@ -253,6 +253,7 @@ router.get('/', (req, res) => {
       readUpTo: row.read_up_to,
       pinnedAt: pref.pinnedAt,
       muted: pref.muted,
+      archived: inArchive(pref, lastMessage?.createdAt),
       draft: drafts.get(row.id) ?? null,
       // Только для сортировки, наружу не уходит: пустой чат должен стоять по
       // времени создания, иначе новый чат оказался бы в самом низу списка.
