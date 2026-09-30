@@ -6,6 +6,10 @@ import {
   setSessionCookie, selfUser, SESSION_COOKIE, assertNotBanned,
 } from '../auth.js';
 import { notifyLogin } from '../notifications.js';
+import {
+  backupCodesLeft, dropTwoFactorTicket, failTwoFactorTicket, issueTwoFactorTicket, readTwoFactorTicket, twoFactorOn,
+  useSecondFactor,
+} from '../twoFactor.js';
 import { PUBLIC_URL, sendMail } from '../email.js';
 import * as v from '../validate.js';
 
@@ -36,10 +40,37 @@ router.post('/login', async (req, res, next) => {
     }
     // После пароля: подбирающий пароль не узнает, заблокирован ли аккаунт.
     assertNotBanned(user);
+    // Включён вход с кодом — сеанса ещё нет, только билет на второй шаг.
+    if (twoFactorOn(user)) return res.json({ status: 'two-factor', ticket: issueTwoFactorTicket(user.id) });
 
     setSessionCookie(res, createSession(user.id, req.get('user-agent')));
     notifyLogin(user.id, req.get('user-agent'));
     res.json({ user: selfUser(user) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Второй шаг входа: код из приложения или резервный. Один путь для входа по
+ * логину и по номеру — билет выдают оба. Неверный код тратит попытку билета.
+ */
+router.post('/2fa', (req, res, next) => {
+  try {
+    const ticket = readTwoFactorTicket(req.body?.ticket);
+    if (!ticket) return res.status(410).json({ error: 'Время на ввод кода вышло — войдите заново' });
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(ticket.user_id);
+    const how = user && twoFactorOn(user) ? useSecondFactor(user, req.body?.code) : null;
+    if (!how) {
+      failTwoFactorTicket(ticket);
+      return res.status(403).json({ error: 'Код не подходит' });
+    }
+    dropTwoFactorTicket(ticket.token);
+    assertNotBanned(user);
+    setSessionCookie(res, createSession(user.id, req.get('user-agent')));
+    notifyLogin(user.id, req.get('user-agent'));
+    // Вошли резервным — пусть человек видит, сколько их осталось.
+    res.json({ user: selfUser(user), ...(how === 'backup' ? { backupCodesLeft: backupCodesLeft(user.id) } : {}) });
   } catch (err) {
     next(err);
   }

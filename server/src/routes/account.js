@@ -12,6 +12,9 @@ import { unpin } from '../pins.js';
 import { LAST_SEEN_OPTIONS } from '../presence.js';
 import { checkCode, hasPassword, normalizePhone, sendCode } from '../phone.js';
 import { PHONE_PRIVACY_OPTIONS } from '../phoneBook.js';
+import {
+  backupCodesLeft, issueBackupCodes, matchTotp, newSecret, otpauthUri, twoFactorOn, useSecondFactor,
+} from '../twoFactor.js';
 import * as v from '../validate.js';
 
 /**
@@ -40,6 +43,7 @@ router.get('/', (req, res) => {
     phoneFind: row.phone_find,
     phoneShow: row.phone_show,
     createdAt: row.created_at,
+    twoFactor: twoFactorOn(row) ? { enabled: true, backupCodesLeft: backupCodesLeft(row.id) } : { enabled: false },
   });
 });
 
@@ -179,6 +183,71 @@ router.delete('/password', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+/* ─ Код из приложения (twoFactor.js) ───────────────────────────────────────
+ * Подключение в два шага, как везде: сервер выдаёт секрет (и адрес для QR),
+ * человек добавляет его в приложение и присылает первый код — только тогда
+ * проверка включается. Иначе опечатка в секрете закрыла бы вход навсегда.
+ */
+
+const WRONG_CODE = 'Код не подходит — проверьте, что время на телефоне точное';
+
+router.post('/2fa/setup', async (req, res, next) => {
+  try {
+    const row = me(req);
+    if (twoFactorOn(row)) return res.status(400).json({ error: 'Вход с кодом уже включён' });
+    // Пароль есть — подтвердить им: открытая чужая вкладка не должна включать
+    // проверку, которая закроет владельцу вход.
+    if (hasOwnPassword(row.id) && !(await passwordMatches(row.id, req.body?.password))) {
+      return res.status(403).json({ error: WRONG_PASSWORD });
+    }
+    const secret = newSecret();
+    db.prepare('UPDATE users SET totp_pending = ? WHERE id = ?').run(secret, row.id);
+    res.json({ secret, uri: otpauthUri(row.username, secret) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/2fa/enable', (req, res) => {
+  const row = me(req);
+  if (twoFactorOn(row)) return res.status(400).json({ error: 'Вход с кодом уже включён' });
+  if (!row.totp_pending) return res.status(400).json({ error: 'Сначала получите новый секрет' });
+  const step = matchTotp(row.totp_pending, req.body?.code);
+  if (step == null) return res.status(403).json({ error: WRONG_CODE });
+  db.prepare(`
+    UPDATE users SET totp_secret = totp_pending, totp_pending = NULL, totp_enabled_at = ?, totp_last_step = ? WHERE id = ?
+  `).run(nowIso(), step, row.id);
+  res.json({ backupCodes: issueBackupCodes(row.id) });
+});
+
+/** Выключить — паролем (если он есть) и кодом: одной открытой вкладки мало. */
+router.post('/2fa/disable', async (req, res, next) => {
+  try {
+    const row = me(req);
+    if (!twoFactorOn(row)) return res.status(400).json({ error: 'Вход с кодом и так выключен' });
+    if (hasOwnPassword(row.id) && !(await passwordMatches(row.id, req.body?.password))) {
+      return res.status(403).json({ error: WRONG_PASSWORD });
+    }
+    if (!useSecondFactor(row, req.body?.code)) return res.status(403).json({ error: WRONG_CODE });
+    db.prepare(`
+      UPDATE users SET totp_secret = NULL, totp_pending = NULL, totp_enabled_at = NULL, totp_last_step = NULL WHERE id = ?
+    `).run(row.id);
+    db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').run(row.id);
+    db.prepare('DELETE FROM totp_tickets WHERE user_id = ?').run(row.id);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Новые резервные коды — по коду из приложения; прежние перестают работать. */
+router.post('/2fa/backup-codes', (req, res) => {
+  const row = me(req);
+  if (!twoFactorOn(row)) return res.status(400).json({ error: 'Вход с кодом выключен' });
+  if (!useSecondFactor(row, req.body?.code)) return res.status(403).json({ error: WRONG_CODE });
+  res.json({ backupCodes: issueBackupCodes(row.id) });
 });
 
 /* ─ Сеансы ────────────────────────────────────────────────────────────────
