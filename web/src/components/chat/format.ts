@@ -1,3 +1,4 @@
+import { plainText } from './markup';
 import { type Attachment, type CallRecord } from '../../api';
 
 /** Чистые помощники мессенджера: подписи, размеры, окно правки, слияние страниц. */
@@ -29,8 +30,10 @@ export function callText(call: CallRecord, mine: boolean) {
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
 /** Превью сообщения в одну строку: текст, а без него — стикер или что приложено. */
+/** Превью сообщения в одну строку: текст без разметки (спойлер — заглушкой),
+ *  а без текста — стикер или что приложено. */
 export const previewText = (body: string, a: Attachment | null, sticker?: string | null) =>
-  body ? oneLine(body) : sticker ? 'Стикер' : attachmentLabel(a);
+  body ? oneLine(plainText(body)) : sticker ? 'Стикер' : attachmentLabel(a);
 
 /** `1536` → `1,5 КБ`. */
 export function fileSize(bytes: number | null) {

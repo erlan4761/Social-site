@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { api, ApiError, type AttachmentInput, type Channel, type ChannelPost, type PinnedPreview } from '../api';
 import {
-  Composer, ConversationSearch, MessageList, PaneHead, PinnedBar, editable, mergeLatest, previewText, revealOlder,
+  Composer, ConversationSearch, MessageList, plainText, PaneHead, PinnedBar, editable, mergeLatest, previewText, revealOlder,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
@@ -205,7 +205,7 @@ function ChannelPane({ handle }: { handle: string }) {
           setMode({ kind: 'edit', id: post.id, body: post.body });
           break;
         case 'copy':
-          await navigator.clipboard.writeText(post.body);
+          await navigator.clipboard.writeText(plainText(post.body, 'show'));
           break;
         case 'forward':
           setForwarding(forwardingOf('channel', item, previewText(post.body, post.attachment)));

@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { blockPairSql } from './blocks.js';
 import { copyUpload, deleteUpload, fileName, storeUpload } from './media.js';
 import { HttpError, bad, str } from './validate.js';
+import { plainText } from './markup.js';
 
 /**
  * Действия с сообщениями, общие для личной переписки и групповых чатов:
@@ -211,9 +212,10 @@ export function readSticker(raw) {
   return raw;
 }
 
-/** Что показать вместо сообщения там, где его самого не видно: цитата, поиск, закреплённое. */
+/** Что показать вместо сообщения там, где его самого не видно: цитата, поиск,
+ *  закреплённое, пуш. Текст — без знаков разметки, спойлер — заглушкой. */
 export const contentLabel = (row) =>
-  row.body || (row.call ? callLabel(row.call) : row.sticker ? 'Стикер' : attachmentLabel(row.attach_kind, row.attach_name));
+  (row.body ? plainText(row.body) : '') || (row.call ? callLabel(row.call) : row.sticker ? 'Стикер' : attachmentLabel(row.attach_kind, row.attach_name));
 
 /** Запись о звонке словами — без стороны: для пуша и превью, где она и так ясна. */
 export function callLabel(raw) {

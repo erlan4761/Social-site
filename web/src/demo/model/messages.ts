@@ -7,6 +7,7 @@ import { notify } from './notifications';
 import { memberRow } from './chats';
 import { pollOf } from './polls';
 import { dispatchLive } from '../../live';
+import { plainText } from '../../components/chat/markup';
 
 /** Общее для ЛС и групп: цитаты, реакции, вложения, пересылка, «печатает…», стикеры, живая Марина. */
 
@@ -44,7 +45,7 @@ export function quoteOf(
   const m = visible.find((x) => x.id === replyToId);
   if (!m) return { id: replyToId, deleted: true };
   const a = byId(m.authorId)!;
-  const text = m.body || (m.sticker ? 'Стикер' : attachmentLabelOf(m.attachment));
+  const text = m.body ? plainText(m.body) : m.sticker ? 'Стикер' : attachmentLabelOf(m.attachment);
   return {
     id: m.id,
     author: { id: a.id, displayName: a.displayName },
@@ -185,7 +186,7 @@ export function findHits<T extends { id: number; body: string; createdAt: string
       const a = who != null ? byId(who) : undefined;
       return {
         id: m.id,
-        body: m.body || attachmentLabelOf(m.attachment),
+        body: m.body ? plainText(m.body) : attachmentLabelOf(m.attachment),
         createdAt: m.createdAt,
         author: a ? { id: a.id, displayName: a.displayName } : null,
       };

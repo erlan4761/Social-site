@@ -1,5 +1,9 @@
-import type { ReactNode } from 'react';
+import { useState } from 'react';
+import type { ReactNode, SyntheticEvent } from 'react';
 import { Link } from 'react-router-dom';
+import { parseMarkup, type MarkupNode } from './markup';
+
+export { firstUrl } from './markup';
 
 /* ─ Упоминания ───────────────────────────────────────────────────────── */
 
@@ -7,44 +11,15 @@ import { Link } from 'react-router-dom';
 // цифра, так что адрес почты упоминанием не становится.
 const MENTION_RE = /(^|[^\p{L}\p{N}_@])@([a-z0-9_]{3,20})(?![a-z0-9_])/giu;
 
-/* ─ Ссылки ──────────────────────────────────────────────────────────── */
-
-// Адрес — до пробела или кавычки; знаки препинания в конце — это уже фраза:
-// «зайди на https://example.com.» ссылается без точки.
-const URL_RE = /\bhttps?:\/\/[^\s<>"«»]+/giu;
-const TRAILING = /[.,;:!?…)\]}'»]+$/u;
-
-/** Ссылки в тексте: [начало, адрес]. Скобка в конце остаётся, если она парная. */
-function urlsIn(text: string) {
-  const found: { start: number; url: string }[] = [];
-  for (const match of text.matchAll(URL_RE)) {
-    let url = match[0].replace(TRAILING, '');
-    const opened = (url.match(/\(/g) ?? []).length;
-    const closed = (url.match(/\)/g) ?? []).length;
-    if (opened > closed && match[0].slice(url.length).startsWith(')')) url += ')';
-    if (url.length > 'https://'.length) found.push({ start: match.index, url });
-  }
-  return found;
-}
-
-/** Первая ссылка сообщения — для карточки предпросмотра, как в Телеграме. */
-export function firstUrl(text: string) {
-  return urlsIn(text)[0]?.url ?? null;
-}
-
-/** Упоминания в куске текста без ссылок. */
-function withMentions(text: string, offset: number, me: string | undefined, out: ReactNode[]) {
+/** Упоминания в куске обычного текста. */
+function withMentions(text: string, me: string | undefined, out: ReactNode[], key: () => number) {
   let last = 0;
   for (const match of text.matchAll(MENTION_RE)) {
     const start = match.index + match[1].length;
     const name = match[2];
     if (start > last) out.push(text.slice(last, start));
     out.push(
-      <Link
-        key={offset + start}
-        className={name.toLowerCase() === me ? 'mention me' : 'mention'}
-        to={`/u/${name.toLowerCase()}`}
-      >
+      <Link key={key()} className={name.toLowerCase() === me ? 'mention me' : 'mention'} to={`/u/${name.toLowerCase()}`}>
         @{name}
       </Link>,
     );
@@ -54,24 +29,94 @@ function withMentions(text: string, offset: number, me: string | undefined, out:
 }
 
 /**
- * Текст сообщения: `@логин` — ссылка на профиль (своё имя — с подсветкой),
- * адреса http(s) — ссылки в новой вкладке. Чужой сайт не узнаёт, откуда
- * пришли (noreferrer), и не получает доступа к нашей вкладке (noopener).
+ * Спойлер: закрыт узором, пока не нажмут, — как в Телеграме. Закрытый не
+ * выделяется и не нажимается изнутри (ссылка под ним не откроется случайно),
+ * а скринридер слышит «скрытый текст», а не сам текст.
+ */
+function Spoiler({ children }: { children: ReactNode }) {
+  const [shown, setShown] = useState(false);
+  if (shown) return <span className="spoiler shown">{children}</span>;
+  const show = (e: SyntheticEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setShown(true);
+  };
+  return (
+    <span
+      className="spoiler"
+      role="button"
+      tabIndex={0}
+      title="Показать"
+      onClick={show}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') show(e);
+      }}
+    >
+      <span className="sr-only">Скрытый текст — нажмите, чтобы показать</span>
+      <span className="spoiler-text" aria-hidden="true">
+        {children}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * Текст сообщения: разметка (**жирный**, __курсив__, ~~зачёркнутый~~,
+ * ||спойлер||, `код`, ```блок``` — см. markup.ts), `@логин` — ссылка на
+ * профиль (своё имя — с подсветкой), адреса http(s) — ссылки в новой вкладке.
+ * Чужой сайт не узнаёт, откуда пришли (noreferrer), и не получает доступа к
+ * нашей вкладке (noopener).
  */
 export function MessageText({ text, me }: { text: string; me?: string }) {
-  const out: ReactNode[] = [];
-  let last = 0;
-  for (const { start, url } of urlsIn(text)) {
-    if (start > last) withMentions(text.slice(last, start), last, me, out);
-    out.push(
-      <a key={`u${start}`} className="text-link" href={url} target="_blank" rel="noopener noreferrer nofollow">
-        {url}
-      </a>,
-    );
-    last = start + url.length;
-  }
-  if (last < text.length) withMentions(text.slice(last), last, me, out);
-  return <>{out}</>;
+  let n = 0;
+  const key = () => n++;
+  const render = (nodes: MarkupNode[]): ReactNode[] => {
+    const out: ReactNode[] = [];
+    nodes.forEach((node, i) => {
+      switch (node.t) {
+        case 'text': {
+          // Блок кода и так стоит отдельной строкой: перевод строки вплотную
+          // к нему дал бы лишнюю пустую.
+          let s = node.s;
+          if (nodes[i + 1]?.t === 'pre') s = s.replace(/\n$/, '');
+          if (nodes[i - 1]?.t === 'pre') s = s.replace(/^\n/, '');
+          withMentions(s, me, out, key);
+          break;
+        }
+        case 'url':
+          out.push(
+            <a key={key()} className="text-link" href={node.url} target="_blank" rel="noopener noreferrer nofollow">
+              {node.url}
+            </a>,
+          );
+          break;
+        case 'code':
+          out.push(<code key={key()} className="md-code">{node.s}</code>);
+          break;
+        case 'pre':
+          out.push(
+            <pre key={key()} className="md-pre">
+              <code>{node.s}</code>
+            </pre>,
+          );
+          break;
+        case 'bold':
+          out.push(<strong key={key()}>{render(node.children)}</strong>);
+          break;
+        case 'italic':
+          out.push(<em key={key()}>{render(node.children)}</em>);
+          break;
+        case 'strike':
+          out.push(<s key={key()}>{render(node.children)}</s>);
+          break;
+        case 'spoiler':
+          out.push(<Spoiler key={key()}>{render(node.children)}</Spoiler>);
+          break;
+      }
+    });
+    return out;
+  };
+  return <>{render(parseMarkup(text))}</>;
 }
 
 export const fold = (s: string) => s.toLocaleLowerCase('ru').replace(/ё/g, 'е');

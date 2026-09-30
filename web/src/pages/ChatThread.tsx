@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, SLOW_MODE_OPTIONS, type AttachmentInput, type Chat, type ChatMessage, type PinnedPreview } from '../api';
 import {
-  Composer, ConversationSearch, MessageList, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText, typingLabel,
+  Composer, ConversationSearch, MessageList, plainText, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText, typingLabel,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
@@ -264,7 +264,7 @@ function ChatView({ idParam }: { idParam: string }) {
           setMode({ kind: 'edit', id: msg.id, body: msg.body });
           break;
         case 'copy':
-          await navigator.clipboard.writeText(msg.body);
+          await navigator.clipboard.writeText(plainText(msg.body, 'show'));
           break;
         case 'forward':
           setForwarding(forwardingOf('chat', item, previewText(msg.body, msg.attachment, msg.sticker)));

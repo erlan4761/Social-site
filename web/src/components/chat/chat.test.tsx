@@ -156,3 +156,54 @@ describe('ссылки в тексте', () => {
     expect(screen.queryByRole('link')).toBeNull();
   });
 });
+
+describe('разметка в пузыре', () => {
+  it('жирный, курсив, код и ссылка внутри жирного', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <div>
+          <MessageText text="**Важно:** __завтра__ в `10:00`, **https://example.com**" />
+        </div>
+      </MemoryRouter>,
+    );
+    expect(container.querySelector('strong')?.textContent).toBe('Важно:');
+    expect(container.querySelector('em')?.textContent).toBe('завтра');
+    expect(container.querySelector('code.md-code')?.textContent).toBe('10:00');
+    expect(screen.getByRole('link', { name: 'https://example.com' }).closest('strong')).not.toBeNull();
+  });
+
+  it('спойлер скрыт от глаз и скринридера, пока его не нажмут', () => {
+    render(
+      <MemoryRouter>
+        <div>
+          <MessageText text="Концовка: ||всё было сном||" />
+        </div>
+      </MemoryRouter>,
+    );
+    const spoiler = screen.getByRole('button', { name: /Скрытый текст/ });
+    expect(spoiler.querySelector('[aria-hidden="true"]')?.textContent).toBe('всё было сном');
+    fireEvent.click(spoiler);
+    expect(screen.queryByRole('button', { name: /Скрытый текст/ })).toBeNull();
+    expect(screen.getByText('всё было сном')).toBeVisible();
+  });
+});
+
+describe('оформление в поле ввода', () => {
+  it('Ctrl+B оборачивает выделение, полоса над полем — тоже', () => {
+    render(<Composer placeholder="Сообщение" onSend={async () => true} />);
+    const field = screen.getByPlaceholderText('Сообщение') as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: 'скажи привет всем' } });
+    field.setSelectionRange(6, 12);
+    fireEvent.select(field);
+    // Выделено — появилась полоса оформления.
+    expect(screen.getByRole('toolbar', { name: /Оформление/ })).toBeInTheDocument();
+
+    fireEvent.keyDown(field, { key: 'и', code: 'KeyB', ctrlKey: true });
+    expect(field.value).toBe('скажи **привет** всем');
+
+    // Выделение осталось на слове — уже внутри знаков.
+    expect([field.selectionStart, field.selectionEnd]).toEqual([8, 14]);
+    fireEvent.click(screen.getByRole('button', { name: 'Спойлер' }));
+    expect(field.value).toBe('скажи **||привет||** всем');
+  });
+});

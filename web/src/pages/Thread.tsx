@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import { api, ApiError, type AttachmentInput, type Message, type Person, type PinnedPreview } from '../api';
 import {
-  Composer, ConversationSearch, MessageList, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText,
+  Composer, ConversationSearch, MessageList, plainText, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
@@ -238,7 +238,7 @@ function ThreadView({ username }: { username: string }) {
           setMode({ kind: 'edit', id: msg.id, body: msg.body });
           break;
         case 'copy':
-          await navigator.clipboard.writeText(msg.body);
+          await navigator.clipboard.writeText(plainText(msg.body, 'show'));
           break;
         case 'forward':
           setForwarding(forwardingOf('dm', item, previewText(msg.body, msg.attachment, msg.sticker)));

@@ -1,6 +1,7 @@
 import { type Attachment, type ChatFolder, type FolderInput, type PinnedPreview, type PrefKind } from '../../api';
 import { type DbFolder, db, fail } from '../store';
 import { attachmentLabelOf } from './messages';
+import { plainText } from '../../components/chat/markup';
 
 /** Папки чатов и закреплённые сообщения. */
 
@@ -43,5 +44,5 @@ export const setPin = (kind: PrefKind, scope: string | number, messageId: number
 export function pinPreview(kind: PrefKind, scope: string | number, visible: { id: number; body: string; attachment: Attachment | null }[]): PinnedPreview | null {
   const pin = pinnedOf(kind, scope);
   const m = pin ? visible.find((x) => x.id === pin.messageId) : undefined;
-  return m ? { id: m.id, body: m.body || attachmentLabelOf(m.attachment), attachmentKind: m.attachment?.kind ?? null } : null;
+  return m ? { id: m.id, body: m.body ? plainText(m.body) : attachmentLabelOf(m.attachment), attachmentKind: m.attachment?.kind ?? null } : null;
 }
