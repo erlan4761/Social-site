@@ -9,6 +9,7 @@ export * from './chat/status';
 export * from './chat/MessageList';
 export * from './chat/MessageText';
 export { plainText } from './chat/markup';
+export * from './chat/selection';
 export * from './chat/Composer';
 export * from './chat/ConversationSearch';
 export * from './chat/PaneParts';

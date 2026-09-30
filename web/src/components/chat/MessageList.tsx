@@ -12,6 +12,7 @@ import { PollCard } from './PollCard';
 import { MessageText, firstUrl } from './MessageText';
 import { LinkPreview } from './LinkPreview';
 import { callText } from './format';
+import type { Selection } from './selection';
 
 /* ─ Лента сообщений ─────────────────────────────────────────────────────
    Пузыри, серии, дни, прокрутка, меню действий и долгое нажатие. */
@@ -97,6 +98,7 @@ export type MessageAction =
   /** `ids` — у альбома: удаляются все его снимки разом. */
   | { type: 'delete'; ids?: number[] }
   | { type: 'forward' }
+  | { type: 'select' }
   | { type: 'copy' }
   | { type: 'pin' }
   | { type: 'readers' }
@@ -143,6 +145,8 @@ type ListProps = {
   pinnedId?: number | null;
   /** Команда страницы «покажи это сообщение»: новое seq — новый переход. */
   jump?: { id: number; seq: number } | null;
+  /** Выбор нескольких (selection.tsx): есть — в меню появляется «Выбрать». */
+  selection?: Selection;
 };
 
 type MenuState = { item: BubbleItem; x: number; y: number } | null;
@@ -165,7 +169,9 @@ export function MessageList({
   variant = 'chat',
   pinnedId = null,
   jump = null,
+  selection,
 }: ListProps) {
+  const selecting = Boolean(selection?.active);
   const raw = items;
   items = groupAlbums(raw);
   const can = { ...ALL_ACTIONS, ...actions };
@@ -243,7 +249,7 @@ export function MessageList({
   }
 
   function startPress(e: ReactPointerEvent, item: BubbleItem) {
-    if (e.pointerType !== 'touch') return;
+    if (e.pointerType !== 'touch' || selecting) return;
     const { clientX: x, clientY: y } = e;
     press.current = { x, y, timer: window.setTimeout(() => openAt(item, x, y), LONG_PRESS_MS) };
   }
@@ -289,6 +295,12 @@ export function MessageList({
               if (ends) cls.push('run-end');
               if (flash === m.id) cls.push('flash');
               if (menu?.item.id === m.id) cls.push('menu-open');
+              // Альбом отмечается целиком: его id — все снимки.
+              const ids = m.album ? m.album.map((x) => x.id) : [m.id];
+              const picked = selecting && ids.every((id) => selection!.ids.has(id));
+              const rowCls = ['bubble-row'];
+              if (selecting) rowCls.push('selecting');
+              if (picked) rowCls.push('selected');
               // «Кружок» без подписи — без пузыря, как в Телеграме: только круг и время.
               if (m.attachment?.kind === 'videonote' && !m.body) cls.push('has-note');
               // Стикер — тоже без пузыря: картинка и время поверх неё.
@@ -318,7 +330,24 @@ export function MessageList({
               );
 
               return (
-                <div key={m.id} className="bubble-row" data-mid={m.id}>
+                <div
+                  key={m.id}
+                  className={rowCls.join(' ')}
+                  data-mid={m.id}
+                  // В режиме выбора нажатие на сообщение отмечает его, а не
+                  // открывает ссылку, фото или меню. Сам кружок — обычный
+                  // флажок: его нажатие проходит к нему.
+                  onClickCapture={
+                    selecting
+                      ? (e) => {
+                          if ((e.target as HTMLElement).closest('.select-mark')) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          selection!.toggle(ids);
+                        }
+                      : undefined
+                  }
+                >
                   {/* Переход к любому снимку альбома находит его пузырь. */}
                   {m.album?.filter((x) => x.id !== m.id).map((x) => <span key={x.id} data-mid={x.id} hidden />)}
                   {newDay && (
@@ -326,12 +355,25 @@ export function MessageList({
                       <span>{dayLabel(m.createdAt)}</span>
                     </div>
                   )}
+                  {selecting && (
+                    <label className="select-mark">
+                      <input
+                        type="checkbox"
+                        checked={picked}
+                        onChange={() => selection!.toggle(ids)}
+                        aria-label={`Выбрать: ${m.body ? m.body.slice(0, 40) : m.album ? 'альбом' : 'сообщение'}`}
+                      />
+                      <span className="select-circle" aria-hidden="true">
+                        <Icon name="check" size={14} />
+                      </span>
+                    </label>
+                  )}
                   <div
                     className={cls.join(' ')}
                     onContextMenu={(e) => {
                       // Выделенный текст — значит, человек хочет копировать
                       // сам: системное меню ему нужнее нашего.
-                      if (window.getSelection()?.toString()) return;
+                      if (selecting || window.getSelection()?.toString()) return;
                       e.preventDefault();
                       openAt(m, e.clientX, e.clientY);
                     }}
@@ -483,6 +525,7 @@ export function MessageList({
 
                     {/* Меню с клавиатуры и мышью без правой кнопки. На сенсорных
                         экранах кнопки нет — там долгое нажатие. */}
+                    {!selecting && (
                     <button
                       className="bubble-more"
                       type="button"
@@ -495,6 +538,7 @@ export function MessageList({
                     >
                       <Icon name="chevron-down" size={16} />
                     </button>
+                    )}
                   </div>
                 </div>
               );
@@ -511,10 +555,15 @@ export function MessageList({
           readOnly={readOnly}
           can={can}
           pinned={menu.item.id === pinnedId}
+          selectable={Boolean(selection)}
           onClose={() => setMenu(null)}
           onAction={(action) => {
             const item = menu.item;
             setMenu(null);
+            if (action.type === 'select') {
+              selection?.toggle(item.album ? item.album.map((x) => x.id) : [item.id]);
+              return;
+            }
             // Удалить альбом — значит все его снимки.
             onAction(action.type === 'delete' && item.album ? { type: 'delete', ids: item.album.map((x) => x.id) } : action, item);
           }}
@@ -532,6 +581,8 @@ type MenuProps = {
   can: Required<ListActions>;
   /** Это сообщение закреплено — пункт меню «Открепить». */
   pinned: boolean;
+  /** Есть выбор нескольких — пункт «Выбрать». */
+  selectable: boolean;
   onClose: () => void;
   onAction: (action: MessageAction) => void;
 };
@@ -541,7 +592,7 @@ type MenuProps = {
  * там, где щёлкнули, и отодвигается от краёв окна. Esc и щелчок мимо —
  * закрыть; стрелки ходят по пунктам.
  */
-function MessageMenu({ state, readOnly, can, pinned, onClose, onAction }: MenuProps) {
+function MessageMenu({ state, readOnly, can, pinned, selectable, onClose, onAction }: MenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: state.x, top: state.y });
   const { item } = state;
@@ -638,6 +689,11 @@ function MessageMenu({ state, readOnly, can, pinned, onClose, onAction }: MenuPr
             Кто прочитал
           </MenuItem>
         )}
+        {selectable && (
+          <MenuItem icon="check" onClick={() => onAction({ type: 'select' })}>
+            Выбрать
+          </MenuItem>
+        )}
         {item.canEdit && !readOnly && (
           <MenuItem icon="edit" onClick={() => onAction({ type: 'edit' })}>
             Изменить
@@ -659,7 +715,7 @@ function MenuItem({
   onClick,
   children,
 }: {
-  icon: 'reply' | 'copy' | 'forward' | 'edit' | 'trash' | 'pin' | 'eye';
+  icon: 'reply' | 'copy' | 'forward' | 'edit' | 'trash' | 'pin' | 'eye' | 'check';
   danger?: boolean;
   onClick: () => void;
   children: ReactNode;

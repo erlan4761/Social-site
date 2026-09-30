@@ -189,9 +189,9 @@ describe('альбомы в ленте', () => {
   it('пересылается альбом целиком, по порядку; одиночное — одно', () => {
     const [album] = groupAlbums([item(1, { albumId: 'x' }), item(2, { albumId: 'x', body: 'Подпись' }), item(3, { albumId: 'x' })]);
     const f = forwardingOf('channel', album, 'Подпись');
-    expect(f.sources).toEqual([1, 2, 3].map((id) => ({ from: 'channel', id })));
+    expect(f.groups).toEqual([[1, 2, 3].map((id) => ({ from: 'channel', id }))]);
     expect(f.preview).toBe('Альбом: 3 снимка — Подпись');
-    expect(forwardingOf('dm', item(7), 'Фото')).toEqual({ sources: [{ from: 'dm', id: 7 }], preview: 'Фото' });
+    expect(forwardingOf('dm', item(7), 'Фото')).toEqual({ groups: [[{ from: 'dm', id: 7 }]], preview: 'Фото' });
   });
 });
 

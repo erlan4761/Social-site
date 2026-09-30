@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { api, ApiError, type AttachmentInput, type Channel, type ChannelPost, type PinnedPreview } from '../api';
 import {
-  Composer, ConversationSearch, MessageList, plainText, PaneHead, PinnedBar, editable, mergeLatest, previewText, revealOlder,
+  Composer, ConversationSearch, MessageList, SelectionBar, messagesCount, plainText, useSelection, PaneHead, PinnedBar, editable, mergeLatest, previewText, revealOlder,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
@@ -44,6 +44,7 @@ function ChannelPane({ handle }: { handle: string }) {
   const [gone, setGone] = useState<string | null>(null);
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<Forwarding | null>(null);
+  const selection = useSelection(posts.map((p) => p.id));
   const [pollOpen, setPollOpen] = useState(false);
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -193,6 +194,26 @@ function ChannelPane({ handle }: { handle: string }) {
       setError(err instanceof ApiError ? err.message : 'Не удалось опубликовать файл');
       return false;
     }
+  }
+
+  /** Удалить выбранные публикации — по одному запросу; не удалилось — остаётся. */
+  async function deleteMany(ids: number[]) {
+    if (!window.confirm(`Удалить ${messagesCount(ids.length)}? Исчезнет у всех подписчиков вместе с комментариями.`)) return false;
+    setError(null);
+    const done: number[] = [];
+    try {
+      for (const id of ids) {
+        await api.deleteChannelPost(handle, id);
+        done.push(id);
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось удалить');
+    }
+    edits.current += 1;
+    setPosts((prev) => prev.filter((p) => !done.includes(p.id)));
+    if (mode && done.includes(mode.id)) setMode(null);
+    refreshList();
+    return done.length === ids.length;
   }
 
   async function act(action: MessageAction, item: BubbleItem) {
@@ -369,6 +390,7 @@ function ChannelPane({ handle }: { handle: string }) {
         loadingMore={loadingMore}
         onLoadOlder={() => void loadOlder()}
         onAction={(action, item) => void act(action, item)}
+        selection={selection}
         actions={{ reply: false, pin: owner }}
         pinnedId={pinned?.id ?? null}
         jump={jump}
@@ -390,7 +412,16 @@ function ChannelPane({ handle }: { handle: string }) {
 
       {error && <p className="error pane-error">{error}</p>}
 
-      {owner ? (
+      {selection.active ? (
+        <SelectionBar
+          selection={selection}
+          items={items}
+          from="channel"
+          who={() => channel?.title ?? ''}
+          onForward={setForwarding}
+          onDelete={owner ? deleteMany : undefined}
+        />
+      ) : owner ? (
         <>
           {channel && <AutoDeleteNote seconds={channel.autoDelete} />}
           <ScheduledBar kind="channel" target={handle} version={scheduledVersion} onSent={refreshList} />
@@ -437,7 +468,7 @@ function ChannelPane({ handle }: { handle: string }) {
 
       {forwarding && (
         <ForwardDialog
-          sources={forwarding.sources}
+          groups={forwarding.groups}
           preview={forwarding.preview}
           onClose={() => setForwarding(null)}
         />

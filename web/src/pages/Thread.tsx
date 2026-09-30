@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import { api, ApiError, type AttachmentInput, type Message, type Person, type PinnedPreview } from '../api';
 import {
-  Composer, ConversationSearch, MessageList, plainText, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText,
+  Composer, ConversationSearch, MessageList, SelectionBar, messagesCount, plainText, useSelection, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
@@ -44,6 +44,7 @@ function ThreadView({ username }: { username: string }) {
   const [typing, setTyping] = useState(false);
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<Forwarding | null>(null);
+  const selection = useSelection(messages.map((m) => m.id));
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
   const [autoDelete, setAutoDelete] = useState(0);
   const [timerOpen, setTimerOpen] = useState(false);
@@ -266,6 +267,27 @@ function ThreadView({ username }: { username: string }) {
     }
   }
 
+  /** Удалить выбранные — по одному запросу на сообщение; не удалилось — остаётся. */
+  async function deleteMany(ids: number[]) {
+    const what = messagesCount(ids.length);
+    if (!window.confirm(saved ? `Удалить ${what}?` : `Удалить ${what}? Исчезнет и у собеседника.`)) return false;
+    setError(null);
+    const done: number[] = [];
+    try {
+      for (const id of ids) {
+        await api.deleteMessage(username, id);
+        done.push(id);
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось удалить');
+    }
+    edits.current += 1;
+    setMessages((prev) => prev.filter((m) => !done.includes(m.id)));
+    if (mode && done.includes(mode.id)) setMode(null);
+    refreshList();
+    return done.length === ids.length;
+  }
+
   /** Стрелка вверх в пустом поле — правка последнего своего, которое ещё можно править. */
   function editLast() {
     const last = [...messages].reverse().find((m) => m.fromId === user?.id && !m.forwardedFrom && editable(m.createdAt));
@@ -428,6 +450,7 @@ function ThreadView({ username }: { username: string }) {
         loadingMore={loadingMore}
         onLoadOlder={() => void loadOlder()}
         onAction={(action, item) => void act(action, item)}
+        selection={selection}
         actions={{ pin: !blocked }}
         pinnedId={pinned?.id ?? null}
         jump={jump}
@@ -452,7 +475,16 @@ function ThreadView({ username }: { username: string }) {
 
       {/* Текст одинаков в обе стороны: по нему нельзя понять, кто кого
           заблокировал — ровно как и в ответе сервера. */}
-      {blocked ? (
+      {selection.active ? (
+        <SelectionBar
+          selection={selection}
+          items={items}
+          from="dm"
+          who={(m) => (m.mine ? (user?.displayName ?? '') : (other?.displayName ?? ''))}
+          onForward={setForwarding}
+          onDelete={deleteMany}
+        />
+      ) : blocked ? (
         <div className="pane-blocked">
           <strong>Переписка недоступна.</strong> Пока действует блокировка, написать сюда нельзя. История
           остаётся на месте.
@@ -508,7 +540,7 @@ function ThreadView({ username }: { username: string }) {
 
       {forwarding && (
         <ForwardDialog
-          sources={forwarding.sources}
+          groups={forwarding.groups}
           preview={forwarding.preview}
           onClose={() => setForwarding(null)}
         />
