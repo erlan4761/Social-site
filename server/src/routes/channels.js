@@ -11,7 +11,7 @@ import { dropPrefs, inArchive, prefFor, prefsOf } from '../prefs.js';
 import { clearDraft, draftsOf, dropDrafts } from '../drafts.js';
 import { createPoll, hasPoll, readPoll, withPolls } from '../polls.js';
 import { expiryFor, readAutoDelete } from '../autoDelete.js';
-import { pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
+import { pin, pinsPayload, unpin, unpinIfPinned } from '../pins.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -316,14 +316,25 @@ router.put('/:handle/posts/:id/pin', (req, res) => {
   const post = channelPost(channel.id, req.params.id, req.user.id);
   if (!post) return res.status(404).json({ error: POST_NOT_FOUND });
   pin('channel', channel.id, post.id, req.user.id);
-  res.json({ pinned: pinnedPreview('channel', channel.id, (id) => channelPost(channel.id, id, req.user.id)) });
+  res.json(pinsPayload('channel', channel.id, (id) => channelPost(channel.id, id, req.user.id)));
 });
 
+/** Открепить все публикации канала. */
 router.delete('/:handle/pin', (req, res) => {
   const channel = channelOr404(req, res);
   if (!channel || !ownerOr403(channel, req, res)) return;
   unpin('channel', channel.id);
-  res.json({ ok: true });
+  res.json({ ok: true, pinned: null, pins: [] });
+});
+
+/** Открепить одну публикацию. */
+router.delete('/:handle/posts/:id/pin', (req, res) => {
+  const channel = channelOr404(req, res);
+  if (!channel || !ownerOr403(channel, req, res)) return;
+  const id = intParam(req.params.id);
+  if (!id) return res.status(404).json({ error: POST_NOT_FOUND });
+  unpin('channel', channel.id, id);
+  res.json(pinsPayload('channel', channel.id, (x) => channelPost(channel.id, x, req.user.id)));
 });
 
 /** Поиск по публикациям канала. */
@@ -381,7 +392,7 @@ router.get('/:handle/posts', (req, res) => {
     channel: serializeChannel(channel, me),
     posts: serializePosts(page, me).reverse(),
     nextCursor: hasMore ? page.at(-1).id : null,
-    pinned: pinnedPreview('channel', channel.id, (id) => channelPost(channel.id, id, me)),
+    ...pinsPayload('channel', channel.id, (id) => channelPost(channel.id, id, me)),
   });
 });
 

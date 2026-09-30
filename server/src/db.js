@@ -337,11 +337,12 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_chat_folders_user ON chat_folders(user_id, position);
 `);
 
-/* ─ Закреплённое сообщение ──────────────────────────────────────────────
- * Одно на переписку, общее для всех её участников: полоса под шапкой, по
- * нажатию — переход к сообщению. scope_id — пара в ЛС («3-7»), номер чата или
- * канала. Внешнего ключа на message_id нет (три разные таблицы): удалили
- * сообщение — закрепление снимается в том же обработчике (см. pins.js).
+/* ─ Закреплённые сообщения ──────────────────────────────────────────────
+ * Несколько на переписку (до двадцати), общие для всех её участников: полоса
+ * под шапкой, по нажатию — переход к сообщению. scope_id — пара в ЛС («3-7»),
+ * номер чата или канала. Внешнего ключа на message_id нет (три разные
+ * таблицы): удалили сообщение — закрепление снимается в том же обработчике
+ * (см. pins.js).
  */
 db.exec(`
   CREATE TABLE IF NOT EXISTS pinned_messages (
@@ -350,9 +351,28 @@ db.exec(`
     message_id INTEGER NOT NULL,
     pinned_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
     pinned_at  TEXT NOT NULL,
-    PRIMARY KEY (kind, scope_id)
+    PRIMARY KEY (kind, scope_id, message_id)
   );
 `);
+// Раньше закреплённое было одно — ключ (kind, scope_id). Первичный ключ в
+// SQLite не меняется на месте: таблица пересобирается с тем же содержимым.
+if (!db.prepare('PRAGMA table_info(pinned_messages)').all().some((c) => c.name === 'message_id' && c.pk > 0)) {
+  db.exec(`
+    BEGIN;
+    CREATE TABLE pinned_messages_many (
+      kind       TEXT NOT NULL,
+      scope_id   TEXT NOT NULL,
+      message_id INTEGER NOT NULL,
+      pinned_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      pinned_at  TEXT NOT NULL,
+      PRIMARY KEY (kind, scope_id, message_id)
+    );
+    INSERT INTO pinned_messages_many SELECT kind, scope_id, message_id, pinned_by, pinned_at FROM pinned_messages;
+    DROP TABLE pinned_messages;
+    ALTER TABLE pinned_messages_many RENAME TO pinned_messages;
+    COMMIT;
+  `);
+}
 
 // Действия с сообщениями — одинаково для ЛС и групп (см. messageExtras.js).
 // reply_to_id без внешнего ключа намеренно: ответ переживает удаление того, на
