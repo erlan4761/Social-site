@@ -1,4 +1,4 @@
-import { type Attachment } from '../../api';
+import { type Attachment, type CallRecord } from '../../api';
 
 /** Чистые помощники мессенджера: подписи, размеры, окно правки, слияние страниц. */
 
@@ -14,6 +14,19 @@ export function attachmentLabel(a: Pick<Attachment, 'kind' | 'name'> | null | un
     case 'file': return a.name || 'Файл';
   }
 }
+
+/**
+ * Запись о звонке глазами смотрящего: «Исходящий звонок · 2:31»,
+ * «Пропущенный видеозвонок», «Звонок отклонён». `mine` — звонил сам.
+ */
+export function callText(call: CallRecord, mine: boolean) {
+  const kind = call.video ? 'видеозвонок' : 'звонок';
+  if (call.outcome === 'missed') return mine ? `${cap(kind)} — нет ответа` : `Пропущенный ${kind}`;
+  if (call.outcome === 'declined') return mine ? `${cap(kind)} отклонён` : `Отклонённый ${kind}`;
+  const s = call.duration ?? 0;
+  return `${mine ? 'Исходящий' : 'Входящий'} ${kind} · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
 /** Превью сообщения в одну строку: текст, а без него — стикер или что приложено. */
 export const previewText = (body: string, a: Attachment | null, sticker?: string | null) =>

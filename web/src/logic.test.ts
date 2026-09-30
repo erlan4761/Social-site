@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChatFolder } from './api';
 import { folderUnread, inFolder, toggleInFolder, type FolderRow } from './folders';
 import { lastSeenLabel, plural } from './time';
-import { mergeLatest, previewText, revealOlder, typingLabel } from './components/chat/format';
+import { callText, mergeLatest, previewText, revealOlder, typingLabel } from './components/chat/format';
 import { groupAlbums, type BubbleItem } from './components/chat/MessageList';
 import { mentionQuery } from './components/chat/MessageText';
 import { dialOf, formatPhone, looksLikePhone, toE164 } from './phone';
@@ -183,5 +183,17 @@ describe('альбомы в ленте', () => {
   it('удалить альбом можно, только если можно удалить каждый снимок', () => {
     const [one] = groupAlbums([item(1, { albumId: 'x' }), item(2, { albumId: 'x', canDelete: false })]);
     expect(one.canDelete).toBe(false);
+  });
+});
+
+describe('записи о звонках', () => {
+  it('каждая сторона видит звонок со своей стороны', () => {
+    const ended = { video: false, outcome: 'ended' as const, duration: 151 };
+    expect(callText(ended, true)).toBe('Исходящий звонок · 2:31');
+    expect(callText(ended, false)).toBe('Входящий звонок · 2:31');
+    const missed = { video: true, outcome: 'missed' as const, duration: null };
+    expect(callText(missed, true)).toBe('Видеозвонок — нет ответа');
+    expect(callText(missed, false)).toBe('Пропущенный видеозвонок');
+    expect(callText({ video: false, outcome: 'declined', duration: null }, false)).toBe('Отклонённый звонок');
   });
 });

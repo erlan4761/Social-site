@@ -218,6 +218,9 @@ export type ChannelComment = { id: number; body: string; createdAt: string; auth
 /** Куда: в личную переписку по имени или в групповой чат по id. */
 export type ForwardTarget = { kind: 'dm'; username: string } | { kind: 'chat'; id: number };
 
+/** Запись о звонке в личной переписке: от звонившего вызываемому. */
+export type CallRecord = { video: boolean; outcome: 'ended' | 'missed' | 'declined'; duration: number | null };
+
 export type Message = MessageExtras & {
   id: number;
   body: string;
@@ -225,6 +228,8 @@ export type Message = MessageExtras & {
   fromId: number;
   toId: number;
   readAt: string | null;
+  /** Это не сообщение, а запись о звонке. */
+  call?: CallRecord | null;
 };
 
 /** Настройки чата в списке — у каждого свои: закреплён ли и приглушён ли. */

@@ -170,6 +170,9 @@ export function seed() {
     else db.messages = db.messages.filter((m) => m.id !== note.id);
   });
   db.dmReactions.push({ messageId: weekend.id, userId: marina.id, emoji: '❤️', createdAt: ago(82) });
+  // Записи о звонках — звонков в витрине нет, но как они выглядят, видно.
+  dm(demo, oleg, '', 60).call = { video: false, outcome: 'ended', duration: 192 };
+  dm(oleg, demo, '', 45).call = { video: true, outcome: 'missed', duration: null };
   dm(oleg, demo, 'Привет! Нашёл тот станок с фотографии — расскажу при встрече.', 30, false);
   dm(oleg, demo, 'И ещё: у тебя тот аккорд из поста — это Am7?', 25, false);
 
