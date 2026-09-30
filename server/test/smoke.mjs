@@ -3877,5 +3877,27 @@ check('после снятия — входит, записи на месте', 
 r = await mod(`/moderation/banned/${userMv}`, { method: 'DELETE' });
 check('снять ещё раз — 404', r.status === 404, `${r.status}`);
 
+console.log('\n— история звонков —');
+// Звонки секции «сигнализация» между ka и kb: принятый видеозвонок, отклонённый,
+// пропущенный и прерванный закрытием вкладки после ответа.
+r = await ka(`/messages/${userKb}`);
+const callRows = (r.body.messages ?? []).filter((m) => m.call);
+check('в переписке — четыре записи о звонках', callRows.length === 4, JSON.stringify(callRows.map((m) => m.call)));
+check('исходы по порядку: завершён, отклонён, пропущен, завершён', callRows.map((m) => m.call.outcome).join() === 'ended,declined,missed,ended', JSON.stringify(callRows.map((m) => m.call.outcome)));
+check('первый — видеозвонок, с длительностью', callRows[0]?.call.video === true && Number.isInteger(callRows[0].call.duration), JSON.stringify(callRows[0]?.call));
+check('у непринятых длительности нет', callRows[1]?.call.duration === null && callRows[2]?.call.duration === null, '');
+const kaId = (await ka('/auth/me')).body.user.id;
+const kbId = (await kb('/auth/me')).body.user.id;
+check('запись — от звонившего вызываемому, без текста', callRows.every((m) => m.fromId === kaId && m.toId === kbId && m.body === ''), '');
+r = await kb('/messages');
+const kbConv = r.body.conversations?.find((c) => c.user.username === userKa);
+check('пропущенный — непрочитан у вызываемого', kbConv?.unread === 1 && kbConv.lastMessage.call?.outcome === 'ended', JSON.stringify({ unread: kbConv?.unread, last: kbConv?.lastMessage.call }));
+r = await kb('/notifications');
+check('о пропущенном — событие', r.body.notifications?.some((n) => n.kind === 'message' && n.actor.username === userKa), '');
+r = await ka(`/messages/${userKb}/${callRows[0].id}`, { method: 'PATCH', body: JSON.stringify({ body: 'правка' }) });
+check('запись о звонке не правится', r.status === 403, `${r.status}`);
+r = await ka(`/messages/${userKb}`, { method: 'POST', body: JSON.stringify({ forward: { from: 'dm', id: callRows[0].id } }) });
+check('и не пересылается', r.status === 400, `${r.status}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

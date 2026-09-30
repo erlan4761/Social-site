@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { emit, hasStream, onStreamsGone } from './live.js';
+import { db, nowIso } from './db.js';
+import { emit, hasStream, onStreamsGone, touchDm } from './live.js';
+import { notify } from './notifications.js';
 
 /**
  * Звонки один на один — голос и видео, как в Телеграме, но без своего медиа-
@@ -42,9 +44,26 @@ function finish(call) {
   if (userCall.get(call.calleeId) === call.id) userCall.delete(call.calleeId);
 }
 
+/**
+ * Запись о звонке в переписке, как в Телеграме: «Исходящий звонок · 2:31»,
+ * «Пропущенный звонок». Одна строка на двоих — клиент сам решает, чья она
+ * сторона (from_id — звонивший). Пропущенный приходит вызываемому
+ * непрочитанным и с событием, остальное — сразу прочитано: о нём и так знают оба.
+ */
+function recordCall(call, reason) {
+  const outcome = call.state === 'active' ? 'ended' : reason === 'declined' ? 'declined' : 'missed';
+  const duration = outcome === 'ended' ? Math.max(0, Math.round((Date.now() - call.answeredAt) / 1000)) : null;
+  const at = nowIso();
+  db.prepare('INSERT INTO messages (from_id, to_id, body, created_at, read_at, call) VALUES (?, ?, \'\', ?, ?, ?)')
+    .run(call.callerId, call.calleeId, at, outcome === 'missed' ? null : at, JSON.stringify({ video: call.video, outcome, duration }));
+  if (outcome === 'missed') notify({ userId: call.calleeId, actorId: call.callerId, kind: 'message' });
+  touchDm(call.callerId, call.calleeId);
+}
+
 /** Завершить звонок и сказать об этом участникам (кроме `except`). */
 export function endCall(call, reason, except = null) {
   finish(call);
+  recordCall(call, reason);
   const to = [call.callerId, call.calleeId].filter((id) => id !== except);
   emit(to, { t: 'call', kind: 'end', id: call.id, reason });
 }
@@ -65,6 +84,7 @@ export function startCall({ callerId, calleeId, video, sdp, from }) {
 
 export function answerCall(call, sdp) {
   call.state = 'active';
+  call.answeredAt = Date.now();
   clearTimeout(call.timer);
   emit([call.callerId], { t: 'call', kind: 'answer', id: call.id, sdp });
 }
