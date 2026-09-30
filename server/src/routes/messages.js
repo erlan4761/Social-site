@@ -40,6 +40,8 @@ const serialize = (row) => ({
   readAt: row.read_at,
   attachment: attachmentOf('dm', row),
   ...extraFields(row),
+  // Запись о звонке (calls.js): у обычного сообщения — null.
+  call: row.call ? JSON.parse(row.call) : null,
 });
 
 /** Одно сообщение пары целиком: с цитатой и реакциями, как в переписке. */
@@ -109,7 +111,7 @@ router.get('/', (req, res) => {
     )
     SELECT
       u.id, u.username, u.display_name, u.avatar_path, u.last_seen_at, u.last_seen_privacy,
-      m.id AS msg_id, m.body, m.created_at, m.from_id, m.to_id, m.read_at, m.edited_at,
+      m.id AS msg_id, m.body, m.created_at, m.from_id, m.to_id, m.read_at, m.edited_at, m.call,
       m.attach_path, m.attach_kind, m.attach_mime, m.attach_name, m.attach_size, m.attach_duration, m.attach_wave,
       (SELECT COUNT(*) FROM messages x
        WHERE x.to_id = :me AND x.from_id = u.id AND x.read_at IS NULL) AS unread,
@@ -331,6 +333,7 @@ router.patch('/:username/:id', (req, res, next) => {
     assertEditable(msg.from_id, msg.created_at, me);
     if (isForwarded(msg)) return res.status(403).json({ error: 'Пересланное сообщение изменить нельзя' });
     if (msg.sticker) return res.status(403).json({ error: 'Стикер изменить нельзя' });
+    if (msg.call) return res.status(403).json({ error: 'Запись о звонке изменить нельзя' });
     if (isBlockedPair(me, other.id)) return res.status(403).json({ error: BLOCKED_CHAT_MESSAGE });
 
     // У сообщения с вложением подпись можно и убрать: фото остаётся сообщением.

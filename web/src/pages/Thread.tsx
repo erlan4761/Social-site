@@ -293,7 +293,8 @@ function ThreadView({ username }: { username: string }) {
       attachment: m.attachment,
       sticker: m.sticker,
       albumId: m.albumId,
-      canEdit: mine && !m.forwardedFrom && !m.sticker && editable(m.createdAt),
+      canEdit: mine && !m.forwardedFrom && !m.sticker && !m.call && editable(m.createdAt),
+      call: m.call ?? null,
       canDelete: mine,
     };
   });

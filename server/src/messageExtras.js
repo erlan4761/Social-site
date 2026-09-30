@@ -209,7 +209,22 @@ export function readSticker(raw) {
 
 /** Что показать вместо сообщения там, где его самого не видно: цитата, поиск, закреплённое. */
 export const contentLabel = (row) =>
-  row.body || (row.sticker ? 'Стикер' : attachmentLabel(row.attach_kind, row.attach_name));
+  row.body || (row.call ? callLabel(row.call) : row.sticker ? 'Стикер' : attachmentLabel(row.attach_kind, row.attach_name));
+
+/** Запись о звонке словами — без стороны: для пуша и превью, где она и так ясна. */
+export function callLabel(raw) {
+  let call;
+  try {
+    call = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    return 'Звонок';
+  }
+  const kind = call?.video ? 'видеозвонок' : 'звонок';
+  if (call?.outcome === 'missed') return `Пропущенный ${kind}`;
+  if (call?.outcome === 'declined') return `Отклонённый ${kind}`;
+  const s = call?.duration ?? 0;
+  return `${call?.video ? 'Видеозвонок' : 'Звонок'} · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
 
 /** Подпись вложения там, где его самого не видно: цитата, превью в списке. */
 export function attachmentLabel(kind, name) {
@@ -390,7 +405,7 @@ export function forwardSource(input, viewerId) {
 
   const sql = {
     dm: `
-      SELECT m.body, m.sticker, m.from_id AS author, m.fwd_user_id, m.fwd_channel_id, ${ATTACH_COLUMNS} FROM messages m
+      SELECT m.body, m.sticker, m.call, m.from_id AS author, m.fwd_user_id, m.fwd_channel_id, ${ATTACH_COLUMNS} FROM messages m
       WHERE m.id = :id AND (m.from_id = :viewerId OR m.to_id = :viewerId)`,
     chat: `
       SELECT m.body, m.sticker, m.author_id AS author, m.fwd_user_id, m.fwd_channel_id, ${ATTACH_COLUMNS} FROM chat_messages m
@@ -406,6 +421,7 @@ export function forwardSource(input, viewerId) {
   // смотрящий не нужен: канал открыт всем, кто вошёл.
   const row = db.prepare(sql).get(input.from === 'channel' ? { id } : { id, viewerId });
   if (!row) throw new HttpError(404, 'Сообщение для пересылки не найдено');
+  if (row.call) throw bad('Запись о звонке переслать нельзя');
   if (POLL_OF[input.from] && db.prepare(POLL_OF[input.from]).get(id)) throw bad('Опрос переслать нельзя');
 
   const fromChannel = row.fwd_channel_id != null;

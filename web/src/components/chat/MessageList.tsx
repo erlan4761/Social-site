@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { REACTIONS, type Attachment, type Author, type ForwardedFrom, type Poll, type Quote, type Reaction } from '../../api';
+import { REACTIONS, type Attachment, type Author, type ForwardedFrom, type Poll, type Quote, type Reaction, type CallRecord } from '../../api';
 import { clockTime, dayKey, dayLabel, fullDate, plural } from '../../time';
 import { Icon } from '../Icon';
 import { useSession } from '../../session';
@@ -11,6 +11,7 @@ import { Ticks, type Delivery } from './status';
 import { PollCard } from './PollCard';
 import { MessageText, firstUrl } from './MessageText';
 import { LinkPreview } from './LinkPreview';
+import { callText } from './format';
 
 /* ─ Лента сообщений ─────────────────────────────────────────────────────
    Пузыри, серии, дни, прокрутка, меню действий и долгое нажатие. */
@@ -42,6 +43,8 @@ export type BubbleItem = {
   sticker?: string | null;
   /** Код альбома: подряд идущие снимки с одним кодом — одна сетка. */
   albumId?: string | null;
+  /** Запись о звонке — вместо текста строка с трубкой. */
+  call?: CallRecord | null;
   /** Собранный альбом: все его снимки по порядку (заполняет сама лента). */
   album?: BubbleItem[];
 };
@@ -397,7 +400,15 @@ export function MessageList({
                         в последней строке: время встаёт справа внизу, как в
                         Телеграме, и никогда не наезжает на слова. Без текста
                         (фото, голосовое) подпись идёт отдельной строкой. */}
-                    {m.sticker ? (
+                    {m.call ? (
+                      <p className={m.call.outcome !== 'ended' && !m.mine ? 'bubble-call missed' : 'bubble-call'}>
+                        <Icon name={m.call.video ? 'video' : 'phone'} size={18} />
+                        <span>{callText(m.call, m.mine)}</span>
+                        <span className="bubble-meta-space" aria-hidden="true">
+                          {meta}
+                        </span>
+                      </p>
+                    ) : m.sticker ? (
                       <>
                         <StickerArt id={m.sticker} />
                         {m.reactions.length === 0 && <span className="bubble-foot" aria-hidden="true" />}
@@ -603,7 +614,7 @@ function MessageMenu({ state, readOnly, can, pinned, onClose, onAction }: MenuPr
             Копировать текст
           </MenuItem>
         )}
-        {can.forward && !item.poll && (
+        {can.forward && !item.poll && !item.call && (
           <MenuItem icon="forward" onClick={() => onAction({ type: 'forward' })}>
             Переслать
           </MenuItem>

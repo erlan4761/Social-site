@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import type { ChannelSummary, ChatSummary, Conversation, Draft } from '../../api';
 import { PresenceAvatar, Ticks, previewText } from '../Chat';
+import { callText } from '../chat/format';
 import { Icon } from '../Icon';
 import { Monogram, SavedAvatar } from '../Monogram';
 import { isOnline, listTime, plural } from '../../time';
@@ -65,7 +66,9 @@ export function DmRow({ c, meId }: { c: Conversation; meId?: number }) {
               ) : (
                 <span className={c.unread > 0 ? 'dialog-last unread' : 'dialog-last'}>
                   {mine && <span className="dialog-you">Вы: </span>}
-                  {previewText(c.lastMessage.body, c.lastMessage.attachment, c.lastMessage.sticker)}
+                  {c.lastMessage.call
+                    ? callText(c.lastMessage.call, mine)
+                    : previewText(c.lastMessage.body, c.lastMessage.attachment, c.lastMessage.sticker)}
                 </span>
               )}
               <RowTail unread={c.unread} muted={c.muted} pinned={Boolean(c.pinnedAt)} />

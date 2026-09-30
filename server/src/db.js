@@ -520,6 +520,10 @@ ensureColumn('reports', 'resolved_at', 'TEXT');
 ensureColumn('reports', 'resolution', 'TEXT');
 ensureColumn('reports', 'resolved_by', 'INTEGER');
 
+// Запись о звонке в личной переписке (см. calls.js): JSON {video, outcome,
+// duration}. У обычного сообщения — NULL.
+ensureColumn('messages', 'call', 'TEXT');
+
 // Черновики (см. drafts.js): по одному на человека и чат.
 db.exec(`
   CREATE TABLE IF NOT EXISTS drafts (

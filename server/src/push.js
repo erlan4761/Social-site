@@ -72,7 +72,7 @@ function describe(n) {
   switch (n.kind) {
     case 'message': {
       const last = db.prepare(`
-        SELECT body, sticker, attach_kind, attach_name FROM messages
+        SELECT body, sticker, call, attach_kind, attach_name FROM messages
         WHERE from_id = ? AND to_id = ? ORDER BY id DESC LIMIT 1
       `).get(n.actor_id, n.user_id);
       return { title: who, body: last ? cut(contentLabel(last)) : 'Новое сообщение', url: `/messages/${n.actor_username}`, tag: `dm-${n.actor_id}` };

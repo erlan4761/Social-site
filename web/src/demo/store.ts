@@ -1,4 +1,4 @@
-import { type Attachment, type ChatFolder, type Media, type LastSeenPrivacy, type NotificationKind, type PrefKind, type Scheduled, type ReportReason, type ReportTargetType, ApiError } from '../api';
+import { type Attachment, type ChatFolder, type Media, type LastSeenPrivacy, type NotificationKind, type PrefKind, type Scheduled, type ReportReason, type ReportTargetType, ApiError, type CallRecord } from '../api';
 
 /** Состояние витрины: типы «таблиц», объект db и мелкие помощники (id, tick, fail). */
 
@@ -68,7 +68,11 @@ export type DbChannelPost = {
 
 export type DbChannelComment = { id: number; postId: number; authorId: number; body: string; createdAt: string };
 
-export type DbMessage = DbExtras & { id: number; fromId: number; toId: number; body: string; createdAt: string; readAt: string | null };
+export type DbMessage = DbExtras & {
+  id: number; fromId: number; toId: number; body: string; createdAt: string; readAt: string | null;
+  /** Запись о звонке — как messages.call. */
+  call?: CallRecord | null;
+};
 
 /** Реакция: одна на человека на сообщение, как первичный ключ на сервере. */
 export type DbReaction = { messageId: number; userId: number; emoji: string; createdAt: string };
