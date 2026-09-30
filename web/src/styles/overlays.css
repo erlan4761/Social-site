@@ -198,3 +198,21 @@
 }
 .qr-approve { max-width: 30rem; }
 .link-device { margin-top: var(--s-3); }
+
+/* «Реакции»: вкладки «Все» и по реакции, у каждого человека — его значок справа. */
+.reactors-tabs { display: flex; flex-wrap: wrap; gap: var(--s-1); margin-bottom: var(--s-3); }
+.reactors-tab {
+  padding: 0.25rem 0.625rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--t-meta);
+  font-weight: 600;
+  cursor: pointer;
+}
+.reactors-tab[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-tint); color: var(--ink); }
+.reactors-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.reactors-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reactors-emoji { font-size: 1.125rem; }

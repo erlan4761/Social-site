@@ -86,11 +86,13 @@ export function groupAlbums(items: BubbleItem[]): BubbleItem[] {
 
 /** Какие действия есть в меню. У публикации канала нет «Ответить», у
  *  комментария — ни реакций, ни пересылки. */
-export type ListActions = { reply?: boolean; react?: boolean; forward?: boolean; pin?: boolean; readers?: boolean };
+export type ListActions = { reply?: boolean; react?: boolean; forward?: boolean; pin?: boolean; readers?: boolean; reactors?: boolean };
 /** Закреплять вправе не все (в группе и канале — владелец), поэтому «pin»
  *  включается явно, а остальное есть по умолчанию. */
 // «Кто прочитал» — только в группах: в личке хватает двух галочек.
-const ALL_ACTIONS: Required<ListActions> = { reply: true, react: true, forward: true, pin: false, readers: false };
+// «Кто поставил реакции» — тоже только в группах: в личке их двое, а в канале
+// реакции анонимны.
+const ALL_ACTIONS: Required<ListActions> = { reply: true, react: true, forward: true, pin: false, readers: false, reactors: false };
 
 export type MessageAction =
   | { type: 'reply' }
@@ -102,6 +104,8 @@ export type MessageAction =
   | { type: 'copy' }
   | { type: 'pin' }
   | { type: 'readers' }
+  /** `emoji` — открыть окно сразу на этой реакции (правый клик по значку). */
+  | { type: 'reactors'; emoji?: string }
   | { type: 'react'; emoji: string | null }
   | { type: 'vote'; options: number[] }
   | { type: 'closePoll' };
@@ -500,7 +504,17 @@ export function MessageList({
                             aria-pressed={r.mine}
                             aria-label={`${r.emoji} ${r.count}${r.mine ? ', ваша реакция' : ''}`}
                             disabled={readOnly || !can.react}
+                            title={can.reactors ? 'Правый щелчок — кто поставил' : undefined}
                             onClick={() => onAction({ type: 'react', emoji: r.mine ? null : r.emoji }, m)}
+                            onContextMenu={
+                              can.reactors
+                                ? (e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onAction({ type: 'reactors', emoji: r.emoji }, m);
+                                  }
+                                : undefined
+                            }
                           >
                             <span className="reaction-emoji">{r.emoji}</span>
                             <span className="reaction-count">{r.count}</span>
@@ -684,6 +698,11 @@ function MessageMenu({ state, readOnly, can, pinned, selectable, onClose, onActi
             {pinned ? 'Открепить' : 'Закрепить'}
           </MenuItem>
         )}
+        {can.reactors && item.reactions.length > 0 && (
+          <MenuItem icon="heart" onClick={() => onAction({ type: 'reactors' })}>
+            Реакции: {item.reactions.reduce((n, r) => n + r.count, 0)}
+          </MenuItem>
+        )}
         {can.readers && item.mine && (
           <MenuItem icon="eye" onClick={() => onAction({ type: 'readers' })}>
             Кто прочитал
@@ -715,7 +734,7 @@ function MenuItem({
   onClick,
   children,
 }: {
-  icon: 'reply' | 'copy' | 'forward' | 'edit' | 'trash' | 'pin' | 'eye' | 'check';
+  icon: 'reply' | 'copy' | 'forward' | 'edit' | 'trash' | 'pin' | 'eye' | 'check' | 'heart';
   danger?: boolean;
   onClick: () => void;
   children: ReactNode;

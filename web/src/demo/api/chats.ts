@@ -365,6 +365,15 @@ export const chatsApi = {
   sendIce: (_id: string, _candidate: RTCIceCandidateInit): Promise<{ ok: true }> => fail(400, 'В витрине звонков нет'),
   endCall: (_id: string): Promise<{ ok: true; reason: string }> => fail(400, 'В витрине звонков нет'),
 
+  chatReactions: (chatId: number, messageId: number) => {
+    const { u, chat } = requireChat(chatId);
+    const m = requireChatMessage(chat.id, messageId);
+    const list = db.chatReactions
+      .filter((r) => r.messageId === m.id && !blockedPair(u.id, r.userId))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return tick({ reactions: list.map((r) => ({ emoji: r.emoji, at: r.createdAt, user: personOf(byId(r.userId)!) })) });
+  },
+
   chatReaders: (chatId: number, messageId: number) => {
     const { u, chat } = requireChat(chatId);
     const m = requireChatMessage(chat.id, messageId);

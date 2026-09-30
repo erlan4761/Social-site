@@ -144,6 +144,9 @@ export type MessageExtras = {
   reactions: Reaction[];
 };
 
+/** Чья реакция: человек, какая и когда — для окна «Реакции» в группе. */
+export type ReactionEntry = { emoji: string; at: string; user: Person };
+
 /** Откуда пересылается сообщение. */
 export type ForwardRef = { from: 'dm' | 'chat' | 'channel'; id: number };
 
@@ -844,6 +847,10 @@ const realApi = {
     request<{ pinned: PinnedPreview | null }>(`/chats/${chatId}/messages/${id}/pin`, { method: 'PUT' }),
 
   unpinChatMessage: (chatId: number) => request<{ ok: true }>(`/chats/${chatId}/pin`, { method: 'DELETE' }),
+
+  /** Кто поставил реакции на сообщение в группе — любому участнику, свежие сверху. */
+  chatReactions: (chatId: number, id: number) =>
+    request<{ reactions: ReactionEntry[] }>(`/chats/${chatId}/messages/${id}/reactions`),
 
   /** Кто прочитал своё сообщение в группе — только автору. */
   chatReaders: (chatId: number, id: number) =>
