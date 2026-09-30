@@ -25,7 +25,9 @@ self.addEventListener('push', (event) => {
       body: data.body || '',
       // Одна переписка — одно уведомление: новое заменяет прежнее и звенит снова.
       tag: data.tag,
-      renotify: Boolean(data.tag),
+      // «Без звука» — уведомление есть, но не звенит и не вибрирует, как в Телеграме.
+      renotify: Boolean(data.tag) && !data.silent,
+      silent: Boolean(data.silent),
       icon: inApp('icon-192.png'),
       badge: inApp('badge-96.png'),
       lang: 'ru',

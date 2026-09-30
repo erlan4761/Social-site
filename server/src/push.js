@@ -145,7 +145,11 @@ async function deliver(sub, payload) {
 }
 
 /** Пуш о только что созданном событии. Ошибки доставки не ломают запрос. */
-export function pushNotification(notificationId, { evenIfLive = false } = {}) {
+/**
+ * `silent` — сообщение отправили «без звука», как в Телеграме: уведомление
+ * приходит, но не звенит и не вибрирует (флаг `silent` у showNotification).
+ */
+export function pushNotification(notificationId, { evenIfLive = false, silent = false } = {}) {
   const n = db.prepare(`
     SELECT n.*, a.display_name AS actor_name, a.username AS actor_username,
            g.title AS chat_title, m.body AS message_body, c.body AS comment_body
@@ -159,8 +163,9 @@ export function pushNotification(notificationId, { evenIfLive = false } = {}) {
   if (!n || (!evenIfLive && isLive(n.user_id))) return;
   const subs = db.prepare('SELECT * FROM push_subscriptions WHERE user_id = ?').all(n.user_id);
   if (subs.length === 0) return;
-  const payload = describe(n);
-  if (!payload) return;
+  const described = describe(n);
+  if (!described) return;
+  const payload = silent ? { ...described, silent: true } : described;
   for (const sub of subs) {
     deliver(sub, payload).catch((err) => console.warn('Пуш не доставлен:', err.message));
   }

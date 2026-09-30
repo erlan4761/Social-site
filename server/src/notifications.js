@@ -52,7 +52,7 @@ const asId = (value) => (Number.isSafeInteger(value) && value > 0 ? value : null
  *
  * Возвращает id созданного уведомления или null, если создавать было нечего.
  */
-export function notify({ userId, actorId, kind, postId = null, commentId = null, chatId = null, messageId = null }) {
+export function notify({ userId, actorId, kind, postId = null, commentId = null, chatId = null, messageId = null, silent = false }) {
   if (!NOTIFICATION_KINDS.includes(kind)) {
     throw new Error(`notify: неизвестный вид уведомления «${kind}»`);
   }
@@ -103,7 +103,7 @@ export function notify({ userId, actorId, kind, postId = null, commentId = null,
 
   touchBadges(user);
   // Открытой вкладки нет — пуш на устройства (решает push.js).
-  pushNotification(Number(info.lastInsertRowid));
+  pushNotification(Number(info.lastInsertRowid), { silent });
   return Number(info.lastInsertRowid);
 }
 
