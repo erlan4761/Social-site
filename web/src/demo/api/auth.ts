@@ -25,7 +25,8 @@ export const authApi = {
     fail(400, 'В витрине пуш-уведомлений нет — они приходят от сервера'),
   deletePushSubscription: (_endpoint: string) => tick({ ok: true as const }),
 
-  me: () => tick({ user: me() ? publicUser(me()!) : null }),
+  // Своё «я» — с флагом модератора, как /auth/me на сервере.
+  me: () => tick({ user: me() ? { ...publicUser(me()!), ...(me()!.moderator ? { moderator: true } : {}) } : null }),
 
   // ─ Вход по номеру ─────────────────────────────────────────────────
 
@@ -90,6 +91,7 @@ export const authApi = {
     if (!u || u.passwordLogin === false || !u.password || u.password !== input.password) {
       fail(401, 'Неверное имя пользователя или пароль');
     }
+    if (u!.bannedAt) fail(403, 'Аккаунт заблокирован модератором');
     db.meId = u!.id;
     openSession(u!.id);
     notifyLogin(u!.id);

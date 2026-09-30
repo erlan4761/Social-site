@@ -198,6 +198,12 @@ function UserMenu({ withTheme, variant }: { withTheme: boolean; variant: 'card' 
             <Icon name="settings" />
             Настройки
           </Link>
+          {user.moderator && (
+            <Link className="usermenu-row" role="menuitem" to="/moderation" onClick={() => setOpen(false)}>
+              <Icon name="flag" />
+              Жалобы
+            </Link>
+          )}
 
           {withTheme && (
             <div className="usermenu-theme">
@@ -267,6 +273,9 @@ function ShellLayout() {
   if (user) {
     items.push({ to: `/u/${user.username}`, label: 'Мой профиль', short: 'Профиль', icon: 'user' });
   }
+  // Жалобы — только модераторам; на телефоне пункт не помещается в таб-бар
+  // и живёт в меню пользователя вместе с настройками.
+  if (user?.moderator && !phone) items.push({ to: '/moderation', label: 'Жалобы', icon: 'flag' });
 
   return (
     <>

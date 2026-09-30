@@ -21,6 +21,7 @@ import { scheduledApi } from './api/scheduled';
 import { pollsApi } from './api/polls';
 import { foldersApi } from './api/folders';
 import { draftsApi } from './api/drafts';
+import { moderationApi } from './api/moderation';
 
 /**
  * Ошибка метода витрины — отклонённый промис, как у настоящего api, а не
@@ -56,6 +57,7 @@ export const mockApi = rejectInsteadOfThrow({
   ...pollsApi,
   ...foldersApi,
   ...draftsApi,
+  ...moderationApi,
 });
 
 // Засев только в режиме витрины: в обычной сборке ветка мертва, и мок

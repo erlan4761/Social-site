@@ -16,6 +16,8 @@ export type User = {
   blocksMe?: boolean;
   /** Номер из `GET /users/:username` — если владелец показывает его смотрящему. */
   phone?: string | null;
+  /** Только в собственном «я» (/auth/me): человек — модератор жалоб. */
+  moderator?: boolean;
 };
 
 export type Author = { id: number; username: string; displayName: string; avatarUrl: string | null };
@@ -336,6 +338,31 @@ export type BlockedUser = Author;
 
 export type ReportTargetType = 'post' | 'comment' | 'user';
 export type ReportReason = 'spam' | 'abuse' | 'adult' | 'other';
+
+export type ModerationAction = 'dismiss' | 'remove' | 'ban';
+
+/** Жалобы на один предмет — как их видит модератор. `subject` null — предмета уже нет. */
+export type ModerationItem = {
+  targetType: ReportTargetType;
+  targetId: number;
+  count: number;
+  reasons: Partial<Record<ReportReason, number>>;
+  notes: { reporter: string; reason: ReportReason; note: string; createdAt: string }[];
+  lastAt: string;
+  resolution: 'dismissed' | 'removed' | 'banned' | null;
+  resolvedAt: string | null;
+  subject: {
+    authorId: number;
+    author: Author | null;
+    text: string;
+    createdAt: string;
+    media?: string | null;
+    postId?: number;
+    banned: boolean;
+  } | null;
+};
+
+export type BannedUser = Author & { bannedAt: string; reason: string };
 
 /** Роль в группе: владелец, администратор, участник. */
 export type ChatRole = 'owner' | 'admin' | 'member';
@@ -685,6 +712,22 @@ const realApi = {
       method: 'POST',
       body: body(input),
     }),
+
+  // ─ Модерация: только модераторам ──────────────────────────────────────
+
+  moderationReports: (status: 'open' | 'resolved') =>
+    request<{ reports: ModerationItem[] }>(`/moderation/reports?status=${status}`),
+
+  resolveReport: (targetType: ReportTargetType, targetId: number, action: ModerationAction) =>
+    request<{ ok: true; resolution: string; resolved: number }>('/moderation/resolve', {
+      method: 'POST',
+      body: body({ targetType, targetId, action }),
+    }),
+
+  bannedUsers: () => request<{ users: BannedUser[] }>('/moderation/banned'),
+
+  unbanUser: (username: string) =>
+    request<{ ok: true }>(`/moderation/banned/${encodeURIComponent(username)}`, { method: 'DELETE' }),
 
   // ─ Групповые чаты ─────────────────────────────────────────────────────
 
