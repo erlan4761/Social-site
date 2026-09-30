@@ -4171,5 +4171,45 @@ r = await dmSend(mkA, userMkB, { body: '2 ** 3 = 8, а a__b__c — имя' });
 r = await dmSend(mkB, userMkA, { body: 'ок', replyTo: r.body.message.id });
 check('знаки у пробела и внутри слова — как у клиента', r.body.message?.replyTo?.body === '2 ** 3 = 8, а abc — имя', r.body.message?.replyTo?.body);
 
+console.log('\n— кто поставил реакцию —');
+const rxA = makeClient();
+const rxB = makeClient();
+const rxC = makeClient();
+const rxOut = makeClient();
+const userRxA = `rxa_${stamp}`;
+const userRxB = `rxb_${stamp}`;
+const userRxC = `rxc_${stamp}`;
+const userRxOut = `rxo_${stamp}`;
+await legacySignUp(rxA, userRxA, 'Автор');
+await legacySignUp(rxB, userRxB, 'Бета');
+await legacySignUp(rxC, userRxC, 'Гамма');
+await legacySignUp(rxOut, userRxOut, 'Посторонний');
+r = await rxA('/chats', { method: 'POST', body: JSON.stringify({ title: 'Реакции', members: [userRxB, userRxC] }) });
+const rxChat = r.body.chat.id;
+r = await rxA(`/chats/${rxChat}/messages`, { method: 'POST', body: JSON.stringify({ body: 'Кто за?' }) });
+const rxMsg = r.body.message.id;
+const rxPath = `/chats/${rxChat}/messages/${rxMsg}`;
+await rxB(`${rxPath}/reaction`, { method: 'PUT', body: JSON.stringify({ emoji: '👍' }) });
+await new Promise((ok) => setTimeout(ok, 15));
+await rxC(`${rxPath}/reaction`, { method: 'PUT', body: JSON.stringify({ emoji: '🔥' }) });
+r = await rxB(`${rxPath}/reactions`);
+check('список реакций — любому участнику, свежие сверху',
+  r.status === 200 && r.body.reactions?.map((x) => `${x.user.username}:${x.emoji}`).join(',') === `${userRxC}:🔥,${userRxB}:👍`,
+  `${r.status} ${JSON.stringify(r.body)}`);
+check('у реакции — человек и время, без лишнего', typeof r.body.reactions?.[0]?.at === 'string' && r.body.reactions[0].user.displayName === 'Гамма'
+  && !('email' in r.body.reactions[0].user), JSON.stringify(r.body.reactions?.[0]));
+await rxB(`${rxPath}/reaction`, { method: 'PUT', body: JSON.stringify({ emoji: '❤️' }) });
+r = await rxA(`${rxPath}/reactions`);
+check('сменил реакцию — в списке одна, новая', r.body.reactions?.filter((x) => x.user.username === userRxB).map((x) => x.emoji).join() === '❤️', JSON.stringify(r.body));
+r = await rxOut(`${rxPath}/reactions`);
+check('не участнику — 404', r.status === 404, `${r.status}`);
+r = await rxA(`/chats/${rxChat}/messages/999999999/reactions`);
+check('чужое или несуществующее сообщение — 404', r.status === 404, `${r.status}`);
+await rxA(`/users/${userRxC}/block`, { method: 'PUT' });
+r = await rxA(`${rxPath}/reactions`);
+check('заблокированного в списке нет', r.body.reactions?.length === 1 && r.body.reactions[0].user.username === userRxB, JSON.stringify(r.body));
+r = await rxC(`${rxPath}/reactions`);
+check('заблокированный не видит и само сообщение — 404, как везде', r.status === 404, `${r.status}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

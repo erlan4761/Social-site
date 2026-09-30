@@ -305,6 +305,24 @@ describe('витрина: кто прочитал', () => {
   });
 });
 
+describe('витрина: кто поставил реакцию', () => {
+  it('любому участнику, свежие сверху; смена реакции — одна запись', async () => {
+    const chat = await room();
+    const { message } = await api.sendChatMessage(chat.id, 'Кто за?');
+    await loginAs('nina');
+    await api.reactChatMessage(chat.id, message.id, '👍');
+    await loginAs('marina');
+    await api.reactChatMessage(chat.id, message.id, '🔥');
+    let r = await api.chatReactions(chat.id, message.id);
+    expect(r.reactions.map((x) => x.user.username + x.emoji)).toEqual(['marina🔥', 'nina👍']);
+    await loginAs('nina');
+    await api.reactChatMessage(chat.id, message.id, '❤️');
+    await loginAs('demo');
+    r = await api.chatReactions(chat.id, message.id);
+    expect(r.reactions.map((x) => x.user.username + x.emoji)).toEqual(['nina❤️', 'marina🔥']);
+  });
+});
+
 describe('витрина: предпросмотр ссылок', () => {
   it('карточка только у заготовленной ссылки', async () => {
     expect((await api.linkPreview('https://github.com/erlan4761/Social-site')).preview?.siteName).toBe('GitHub');

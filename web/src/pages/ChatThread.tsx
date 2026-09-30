@@ -12,6 +12,7 @@ import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
 import { MemberSearch } from '../components/MemberSearch';
 import { ReadersDialog } from '../components/chat/ReadersDialog';
+import { ReactionsDialog } from '../components/chat/ReactionsDialog';
 import { AutoDeleteNote, AutoDeleteSelect } from '../components/chat/AutoDelete';
 import { ShareLink } from '../components/ShareLink';
 import { Monogram } from '../components/Monogram';
@@ -43,6 +44,7 @@ function ChatView({ idParam }: { idParam: string }) {
   const [chat, setChat] = useState<Chat | null>(null);
   /** Своё сообщение, для которого открыто «Кто прочитал». */
   const [readersOf, setReadersOf] = useState<number | null>(null);
+  const [reactorsOf, setReactorsOf] = useState<{ id: number; emoji: string | null } | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [readUpTo, setReadUpTo] = useState(0);
   const [cursor, setCursor] = useState<number | null>(null);
@@ -295,6 +297,9 @@ function ChatView({ idParam }: { idParam: string }) {
           break;
         case 'readers':
           setReadersOf(msg.id);
+          break;
+        case 'reactors':
+          setReactorsOf({ id: msg.id, emoji: action.emoji ?? null });
           break;
         case 'react':
           put((await api.reactChatMessage(chatId, msg.id, action.emoji)).message);
@@ -654,7 +659,7 @@ function ChatView({ idParam }: { idParam: string }) {
         onAction={(action, item) => void act(action, item)}
         selection={selection}
         // Закреплять в группе — владельцу и администраторам.
-        actions={{ pin: amAdmin, readers: true }}
+        actions={{ pin: amAdmin, readers: true, reactors: true }}
         pinnedId={pinned?.id ?? null}
         jump={jump}
         empty={
@@ -738,6 +743,9 @@ function ChatView({ idParam }: { idParam: string }) {
       )}
 
       {readersOf != null && <ReadersDialog chatId={chatId} messageId={readersOf} onClose={() => setReadersOf(null)} />}
+      {reactorsOf && (
+        <ReactionsDialog chatId={chatId} messageId={reactorsOf.id} emoji={reactorsOf.emoji} onClose={() => setReactorsOf(null)} />
+      )}
 
       {forwarding && (
         <ForwardDialog
