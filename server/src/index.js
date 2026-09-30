@@ -72,6 +72,7 @@ app.use('/api/auth/reset-password', rateLimit({ windowMs: 15 * 60_000, max: rela
 // вход, и перебирать его через открытый чужой сеанс нельзя давать быстрее.
 const passwordCheckLimit = rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 20 });
 app.put('/api/account/password', passwordCheckLimit);
+app.put('/api/account/session-ttl', rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 30 }));
 // Код из приложения — шесть цифр: без потолка их перебирали бы.
 app.post('/api/account/2fa/*splat', passwordCheckLimit);
 app.post('/api/auth/2fa', rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 20 }));

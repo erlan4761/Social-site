@@ -5,6 +5,7 @@ import { notify } from './notifications.js';
 import { touchChannel, touchChat, touchDm } from './live.js';
 import { postBlock } from './chatRoles.js';
 import { expiryFor, sweepExpired } from './autoDelete.js';
+import { sweepSessions } from './auth.js';
 
 /**
  * Отложенные сообщения — «отправить позже», как в Телеграме: в личную
@@ -106,6 +107,8 @@ export function startScheduler() {
   const tick = () => {
     deliverDue();
     sweepExpired();
+    // И сеансы, которыми не пользовались дольше срока (auth.js).
+    sweepSessions();
   };
   const timer = setInterval(tick, every);
   timer.unref();

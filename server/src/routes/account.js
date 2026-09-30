@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { db, nowIso } from '../db.js';
-import { hashPassword, publicUser, requireAuth, SESSION_COOKIE, verifyPassword } from '../auth.js';
+import {
+  SESSION_COOKIE, SESSION_TTL_OPTIONS, applySessionTtl, hashPassword, publicUser, requireAuth, setSessionCookie, ttlDaysOf, verifyPassword,
+} from '../auth.js';
 import { dropAttachment } from '../messageExtras.js';
 import { deleteUpload } from '../media.js';
 import { dropPrefs } from '../prefs.js';
@@ -44,7 +46,27 @@ router.get('/', (req, res) => {
     phoneShow: row.phone_show,
     createdAt: row.created_at,
     twoFactor: twoFactorOn(row) ? { enabled: true, backupCodesLeft: backupCodesLeft(row.id) } : { enabled: false },
+    sessionTtlDays: ttlDaysOf(row),
   });
+});
+
+/**
+ * Через сколько дней без использования сеанс закрывается сам. Новый срок
+ * касается и открытых сеансов — от их последнего использования: те, что уже
+ * дольше неактивны, закрываются сразу. Текущий в ходу — он остаётся.
+ */
+router.put('/session-ttl', (req, res) => {
+  const days = Number(req.body?.days);
+  if (!SESSION_TTL_OPTIONS.includes(days)) {
+    return res.status(400).json({ error: `Срок — один из: ${SESSION_TTL_OPTIONS.join(', ')} дней` });
+  }
+  db.prepare('UPDATE users SET session_ttl_days = ? WHERE id = ?').run(days, req.user.id);
+  // Текущим пользуются прямо сейчас — отмечаем, чтобы новый срок считался от «сейчас».
+  db.prepare('UPDATE sessions SET last_used_at = ? WHERE token = ?').run(nowIso(), req.sessionToken);
+  const ended = applySessionTtl(req.user.id, days);
+  const current = db.prepare('SELECT expires_at FROM sessions WHERE token = ?').get(req.sessionToken);
+  if (current) setSessionCookie(res, { token: req.sessionToken, expires: new Date(current.expires_at) });
+  res.json({ days, ended });
 });
 
 /* ─ Номер телефона ─────────────────────────────────────────────────────
@@ -267,12 +289,19 @@ router.get('/export', (req, res) => {
 
 router.get('/sessions', (req, res) => {
   const rows = db.prepare(`
-    SELECT rowid AS id, token, created_at, user_agent FROM sessions
+    SELECT rowid AS id, token, created_at, user_agent, last_used_at FROM sessions
     WHERE user_id = ? AND expires_at > ?
     ORDER BY created_at DESC
   `).all(req.user.id, nowIso());
   const sessions = rows
-    .map((r) => ({ id: r.id, current: r.token === req.sessionToken, createdAt: r.created_at, userAgent: r.user_agent ?? null }))
+    .map((r) => ({
+      id: r.id,
+      current: r.token === req.sessionToken,
+      createdAt: r.created_at,
+      // Точность — час: чаще отметка не обновляется (auth.js).
+      lastUsedAt: r.last_used_at ?? r.created_at,
+      userAgent: r.user_agent ?? null,
+    }))
     .sort((a, b) => Number(b.current) - Number(a.current));
   res.json({ sessions });
 });
