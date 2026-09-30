@@ -12,7 +12,8 @@
     "test:smoke": "node test/smoke.mjs",
     "test:sms": "node --test test/sms.test.mjs",
     "test:preview": "node --test test/linkPreview.test.mjs",
-    "moderator": "node scripts/moderator.mjs"
+    "moderator": "node scripts/moderator.mjs",
+    "bench:lists": "node scripts/bench-lists.mjs"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",

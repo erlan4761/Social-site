@@ -12,7 +12,7 @@ import { markNotificationsRead, notify } from '../notifications.js';
 import { dmUnreadTotal, prefFor, prefsOf } from '../prefs.js';
 import { dmScope, pin, pinnedPreview, unpin, unpinIfPinned } from '../pins.js';
 import { clearDraft, draftsOf } from '../drafts.js';
-import { presenceFor } from '../presence.js';
+import { presenceFor, privacyOf } from '../presence.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -58,12 +58,12 @@ const PAIR_SQL = '((m.from_id = :me AND m.to_id = :other) OR (m.from_id = :other
  * Время визита — глазами смотрящего (presence.js): при блокировке его нет
  * вовсе, а спрятанное настройкой заменяется на «был(а) недавно».
  */
-const person = (row, viewerId, blocked) => ({
+const person = (row, viewerId, blocked, viewerPrivacy) => ({
   id: row.id,
   username: row.username,
   displayName: row.display_name,
   avatarUrl: publicUrl('avatar', row.avatar_path),
-  ...presenceFor(viewerId, row, { blocked }),
+  ...presenceFor(viewerId, row, { blocked, viewerPrivacy }),
 });
 
 // Один и тот же текст в обе стороны. Если заблокированному ответить «вас
@@ -122,6 +122,7 @@ router.get('/', (req, res) => {
 
   const prefs = prefsOf(me, 'dm');
   const drafts = draftsOf(me, 'dm');
+  const myPrivacy = privacyOf(me);
   res.json({
     // История не удаляется и диалог не исчезает из списка: блокировка — это
     // «дальше не пишем», а не «этого разговора не было». Флаг нужен клиенту,
@@ -131,7 +132,7 @@ router.get('/', (req, res) => {
       // Превью в списке: цитата и реакции там не показываются, запросы за ними не нужны.
       const { replyToId, ...last } = serialize({ ...row, id: row.msg_id });
       return {
-        user: person(row, me, Boolean(row.blocked)),
+        user: person(row, me, Boolean(row.blocked), myPrivacy),
         unread: row.unread,
         blocked: Boolean(row.blocked),
         lastMessage: { ...last, replyTo: null, reactions: [] },

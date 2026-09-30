@@ -10,6 +10,29 @@ export const db = new DatabaseSync(dbFile);
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');
 
+/*
+ * Кэш подготовленных запросов. Код пишет `db.prepare(sql).get(...)` прямо в
+ * обработчиках — так его легко читать, но SQLite каждый раз заново разбирал и
+ * планировал бы один и тот же текст. Замер списка групп (scripts/bench-lists.mjs)
+ * показал: разбор стоил дороже самих запросов. Теперь один текст — один
+ * подготовленный запрос на всё время работы процесса. Это безопасно: запросы
+ * выполняются синхронно и до конца (iterate() в проекте не используется), а
+ * после ALTER TABLE SQLite перепланирует их сам. Потолок — на случай запросов
+ * с переменным текстом (IN (?, ?, …)): старейшие вытесняются.
+ */
+const STATEMENT_CACHE_MAX = 1000;
+const statements = new Map();
+const prepareUncached = db.prepare.bind(db);
+db.prepare = (sql) => {
+  let statement = statements.get(sql);
+  if (!statement) {
+    statement = prepareUncached(sql);
+    if (statements.size >= STATEMENT_CACHE_MAX) statements.delete(statements.keys().next().value);
+    statements.set(sql, statement);
+  }
+  return statement;
+};
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,

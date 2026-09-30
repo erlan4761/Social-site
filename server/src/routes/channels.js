@@ -132,10 +132,6 @@ function channelPost(channelId, rawId, viewerId) {
 
 const onePost = (row, viewerId) => serializePosts([row], viewerId)[0];
 
-/** Непрочитанные публикации — по ватерлинии, как в групповых чатах. */
-const unreadIn = (channelId, lastReadId) =>
-  db.prepare('SELECT COUNT(*) AS c FROM channel_posts WHERE channel_id = ? AND id > ?').get(channelId, lastReadId).c;
-
 /** Файлы вложений канала: каскад удаляет строки, а файлы на диске — нет. */
 const channelAttachments = (channelId) =>
   db.prepare('SELECT attach_path FROM channel_posts WHERE channel_id = ? AND attach_path IS NOT NULL')
@@ -146,22 +142,45 @@ const channelAttachments = (channelId) =>
 /** Мои подписки: последняя публикация, непрочитанное — для списка чатов. */
 router.get('/', (req, res) => {
   const me = req.user.id;
+  // Как у списка групп: счётчики, автор и id последней публикации — одним
+  // запросом на весь список, а не по пять на канал.
   const rows = db.prepare(`
-    SELECT c.*, s.last_read_id FROM channels c
-    JOIN channel_subscribers s ON s.channel_id = c.id AND s.user_id = ?
-  `).all(me);
+    SELECT c.*, s.last_read_id,
+      o.username AS owner_username, o.display_name AS owner_display_name, o.avatar_path AS owner_avatar_path,
+      (SELECT COUNT(*) FROM channel_subscribers x WHERE x.channel_id = c.id) AS subscriber_count,
+      (SELECT MAX(p.id) FROM channel_posts p WHERE p.channel_id = c.id) AS last_id,
+      (SELECT COUNT(*) FROM channel_posts p WHERE p.channel_id = c.id AND p.id > s.last_read_id) AS unread_count
+    FROM channels c
+    JOIN channel_subscribers s ON s.channel_id = c.id AND s.user_id = :viewerId
+    LEFT JOIN users o ON o.id = c.owner_id
+  `).all({ viewerId: me });
+
+  const lastIds = rows.map((r) => r.last_id).filter((id) => id != null);
+  const lastPosts = lastIds.length
+    ? serializePosts(db.prepare(`${POST_SELECT} WHERE m.id IN (SELECT value FROM json_each(:ids))`)
+      .all({ ids: JSON.stringify(lastIds), viewerId: me }), me)
+    : [];
+  const lastById = new Map(lastPosts.map((p) => [p.id, p]));
 
   const prefs = prefsOf(me, 'channel');
   const drafts = draftsOf(me, 'channel');
   const channels = rows.map((c) => {
     const pref = prefFor(prefs, c.id);
-    const last = db.prepare(`${POST_SELECT} WHERE m.channel_id = :channelId ORDER BY m.id DESC LIMIT 1`)
-      .get({ channelId: c.id, viewerId: me });
     return {
-      ...serializeChannel(c, me),
+      id: c.id,
+      handle: c.handle,
+      title: c.title,
+      description: c.description,
+      createdAt: c.created_at,
+      owner: c.owner_username
+        ? { id: c.owner_id, username: c.owner_username, displayName: c.owner_display_name, avatarUrl: publicUrl('avatar', c.owner_avatar_path) }
+        : null,
+      iAmOwner: c.owner_id === me,
+      subscribed: true,
+      subscriberCount: c.subscriber_count,
       // Своё — не «непрочитанное»: владелец свои публикации и так видел.
-      unread: c.owner_id === me ? 0 : unreadIn(c.id, c.last_read_id),
-      lastPost: last ? onePost(last, me) : null,
+      unread: c.owner_id === me ? 0 : c.unread_count,
+      lastPost: lastById.get(c.last_id) ?? null,
       pinnedAt: pref.pinnedAt,
       muted: pref.muted,
       draft: drafts.get(c.id) ?? null,
