@@ -209,9 +209,10 @@ router.put('/:username/auto-delete', (req, res, next) => {
 
 /**
  * Отправка. Обычное сообщение, ответ (`replyTo` — id сообщения этой же пары),
- * пересылка (`forward: {from: 'dm'|'chat', id}` — текст и вложение берутся из
- * оригинала) и сообщение с вложением: multipart, файл в поле `file`, подпись в
- * `body` необязательна. Голосовое — тот же файл с `voice=1`, `duration` и `wave`.
+ * пересылка (`forward: {from: 'dm'|'chat'|'channel', id}` — текст и вложение
+ * берутся из оригинала; с `album` — снимок пересылаемого альбома) и сообщение
+ * с вложением: multipart, файл в поле `file`, подпись в `body` необязательна.
+ * Голосовое — тот же файл с `voice=1`, `duration` и `wave`.
  */
 router.post('/:username', attachmentUpload.single('file'), async (req, res, next) => {
   let attachment = null;
@@ -243,7 +244,7 @@ router.post('/:username', attachmentUpload.single('file'), async (req, res, next
 
     // Файл — последним: всё, что может отказать без него, уже проверено, и
     // на диск не попадёт вложение к сообщению, которого не будет.
-    const album = req.file ? readAlbum(req.body?.album) : null;
+    const album = req.file || forward ? readAlbum(req.body?.album) : null;
     attachment = forward ? await copyAttachment(forward.attachment) : await readAttachment(req.file, req.body);
     if (album) {
       const rows = db.prepare('SELECT from_id, to_id FROM messages WHERE album_id = ?').all(album);

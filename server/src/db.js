@@ -495,9 +495,11 @@ db.exec(`
 // album_id, как media group в Телеграме (см. messageExtras.js).
 ensureColumn('messages', 'album_id', 'TEXT');
 ensureColumn('chat_messages', 'album_id', 'TEXT');
+ensureColumn('channel_posts', 'album_id', 'TEXT');
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_album ON messages(album_id) WHERE album_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_chat_messages_album ON chat_messages(album_id) WHERE album_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_channel_posts_album ON channel_posts(album_id) WHERE album_id IS NOT NULL;
 `);
 
 // Бронь старого логина после смены (см. usernames.js). Строка без внешнего

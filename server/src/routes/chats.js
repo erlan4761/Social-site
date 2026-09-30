@@ -525,7 +525,8 @@ router.get('/:id/messages', (req, res) => {
 
 /**
  * Написать в чат: обычное сообщение, ответ (`replyTo` — сообщение этого же
- * чата) или пересылка (`forward: {from: 'dm'|'chat', id}`).
+ * чата) или пересылка (`forward: {from: 'dm'|'chat'|'channel', id}`, с `album` —
+ * снимок пересылаемого альбома).
  */
 router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, next) => {
   let attachment = null;
@@ -535,7 +536,8 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
     if (!chat) return res.status(404).json({ error: NOT_FOUND });
     // Альбом в медленном режиме — одно сообщение, как в Телеграме: второй и
     // следующие снимки того же альбома режим не задерживает (их не больше десяти).
-    const album = req.file ? readAlbum(req.body?.album) : null;
+    // Пересылаемый альбом — такой же: `album` рядом с `forward`.
+    const album = req.file || req.body?.forward != null ? readAlbum(req.body?.album) : null;
     const albumRows = album ? db.prepare('SELECT author_id, chat_id FROM chat_messages WHERE album_id = ?').all(album) : [];
     const continuing = albumRows.length > 0 && albumRows.every((r) => r.author_id === me && r.chat_id === chat.id);
     const blocked = postBlock(chat, me, { ignoreSlowMode: continuing });
