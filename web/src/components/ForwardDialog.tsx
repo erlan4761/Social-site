@@ -3,19 +3,36 @@ import type { MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError, type ForwardRef, type ForwardTarget } from '../api';
 import { useSession } from '../session';
+import { plural } from '../time';
 import { Monogram, SavedAvatar } from './Monogram';
+import { newAlbumId } from './chat/Composer';
+import type { BubbleItem } from './chat/MessageList';
 
 type Target = {
   key: string; name: string; hint: string; username: string; avatarUrl: string | null; to: ForwardTarget; path: string;
   saved?: boolean;
 };
 
-type Props = {
-  source: ForwardRef;
+/** Что пересылается: одно сообщение или все снимки альбома по порядку. */
+export type Forwarding = {
+  sources: ForwardRef[];
   /** Начало пересылаемого текста — чтобы было видно, что именно уходит. */
   preview: string;
-  onClose: () => void;
 };
+
+type Props = Forwarding & { onClose: () => void };
+
+/**
+ * Пересылка пузыря: у альбома — весь альбом, как в Телеграме, иначе одно
+ * сообщение. `preview` — превью одиночного сообщения.
+ */
+export function forwardingOf(from: ForwardRef['from'], item: BubbleItem, preview: string): Forwarding {
+  const parts = item.album ?? [item];
+  if (parts.length < 2) return { sources: [{ from, id: item.id }], preview };
+  const n = parts.length;
+  const what = `Альбом: ${n} ${plural(n, 'снимок', 'снимка', 'снимков')}`;
+  return { sources: parts.map((x) => ({ from, id: x.id })), preview: item.body ? `${what} — ${preview}` : what };
+}
 
 const fold = (s: string) => s.toLocaleLowerCase('ru').replace(/ё/g, 'е');
 
@@ -25,7 +42,7 @@ const fold = (s: string) => s.toLocaleLowerCase('ru').replace(/ё/g, 'е');
  * человеку сначала пишут, потом пересылают. Окно — нативный `<dialog>`, как
  * «Новый чат»: фокус и Esc достаются от платформы.
  */
-export function ForwardDialog({ source, preview, onClose }: Props) {
+export function ForwardDialog({ sources, preview, onClose }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const navigate = useNavigate();
@@ -112,12 +129,20 @@ export function ForwardDialog({ source, preview, onClose }: Props) {
     if (busy) return;
     setBusy(true);
     setError(null);
+    // Альбом — по снимку за запрос, с новым общим кодом: у получателя он
+    // снова складывается в сетку, а подпись остаётся у того снимка, где была.
+    const album = sources.length > 1 ? newAlbumId() : undefined;
+    let sent = 0;
     try {
-      await api.forward(t.to, source);
+      for (const source of sources) {
+        await api.forward(t.to, source, album);
+        sent += 1;
+      }
       dialog.current?.close();
       navigate(t.path);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Не удалось переслать');
+      const why = err instanceof ApiError ? err.message : 'Не удалось переслать';
+      setError(sent > 0 ? `Переслано ${sent} из ${sources.length}: ${why}` : why);
       setBusy(false);
     }
   }

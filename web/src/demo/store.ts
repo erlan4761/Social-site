@@ -67,6 +67,7 @@ export type DbChannelPost = {
   id: number; channelId: number; authorId: number; body: string; createdAt: string; editedAt: string | null;
   attachment: Attachment | null;
   expiresAt?: string | null;
+  albumId?: string | null;
 };
 
 export type DbChannelComment = { id: number; postId: number; authorId: number; body: string; createdAt: string };

@@ -5,7 +5,7 @@ import {
   Composer, ConversationSearch, MessageList, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
-import { ForwardDialog } from '../components/ForwardDialog';
+import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
 import { ScheduledBar } from '../components/Scheduled';
 import { Icon } from '../components/Icon';
 import { SavedAvatar } from '../components/Monogram';
@@ -13,7 +13,7 @@ import { useSession } from '../session';
 import { useCalls } from '../calls';
 import { AutoDeleteNote, AutoDeleteSelect } from '../components/chat/AutoDelete';
 import { pollEvery, useLive, useLiveConnected } from '../live';
-import { isOnline, lastSeenLabel } from '../time';
+import { isOnline, lastSeenLabel, plural } from '../time';
 import { SAVED_TITLE } from '../components/messenger/rows';
 import type { MessengerContext } from './Messenger';
 
@@ -43,7 +43,7 @@ function ThreadView({ username }: { username: string }) {
   const [blocked, setBlocked] = useState(false);
   const [typing, setTyping] = useState(false);
   const [mode, setMode] = useState<ComposerMode>(null);
-  const [forwarding, setForwarding] = useState<Message | null>(null);
+  const [forwarding, setForwarding] = useState<Forwarding | null>(null);
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
   const [autoDelete, setAutoDelete] = useState(0);
   const [timerOpen, setTimerOpen] = useState(false);
@@ -241,7 +241,7 @@ function ThreadView({ username }: { username: string }) {
           await navigator.clipboard.writeText(msg.body);
           break;
         case 'forward':
-          setForwarding(msg);
+          setForwarding(forwardingOf('dm', item, previewText(msg.body, msg.attachment, msg.sticker)));
           break;
         case 'pin':
           await togglePin(msg.id);
@@ -251,7 +251,7 @@ function ThreadView({ username }: { username: string }) {
           break;
         case 'delete': {
           const ids = action.ids ?? [msg.id];
-          const what = ids.length > 1 ? `альбом — ${ids.length} снимков` : 'сообщение';
+          const what = ids.length > 1 ? `альбом — ${ids.length} ${plural(ids.length, 'снимок', 'снимка', 'снимков')}` : 'сообщение';
           if (!window.confirm(saved ? `Удалить ${what}?` : `Удалить ${what}? Исчезнет и у собеседника.`)) return;
           for (const id of ids) await api.deleteMessage(username, id);
           edits.current += 1;
@@ -508,8 +508,8 @@ function ThreadView({ username }: { username: string }) {
 
       {forwarding && (
         <ForwardDialog
-          source={{ from: 'dm', id: forwarding.id }}
-          preview={previewText(forwarding.body, forwarding.attachment, forwarding.sticker)}
+          sources={forwarding.sources}
+          preview={forwarding.preview}
           onClose={() => setForwarding(null)}
         />
       )}

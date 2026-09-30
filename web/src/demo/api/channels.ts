@@ -1,7 +1,7 @@
 import { type AttachmentInput, type Channel, type ChannelSummary, type PollInput } from '../../api';
 import { type DbChannel, type DbChannelPost, type DbChannelComment, db, id, tick, fail } from '../store';
 import { requireMe, blockedPair, hidden } from '../model/people';
-import { EDIT_WINDOW_MS, attachmentFrom, setReaction, findHits } from '../model/messages';
+import { EDIT_WINDOW_MS, attachmentFrom, setReaction, findHits, checkAlbum } from '../model/messages';
 import { pinnedOf, setPin, pinPreview } from '../model/folders';
 import { prefFields, dropPrefs } from '../model/notifications';
 import { clearDraft, draftOf } from '../model/drafts';
@@ -136,9 +136,12 @@ export const channelsApi = {
     const attachment = 'file' in input ? attachmentFrom(input) : null;
     if (!body && !attachment) fail(400, '«публикация»: минимум 1 символов');
     if (body.length > 4000) fail(400, '«публикация»: максимум 4000 символов');
+    const album = 'file' in input ? input.album : undefined;
+    const albumId = checkAlbum(album, attachment,
+      db.channelPosts.filter((x) => x.albumId && x.albumId === album).map((x) => ({ mine: x.channelId === c.id })));
     const post: DbChannelPost = {
       id: id(), channelId: c.id, authorId: u.id, body, createdAt: new Date().toISOString(), editedAt: null, attachment,
-      expiresAt: expiryFor('channel', c.id),
+      expiresAt: expiryFor('channel', c.id), albumId,
     };
     db.channelPosts.push(post);
     clearDraft(u.id, 'channel', c.id);

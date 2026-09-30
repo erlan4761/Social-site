@@ -36,7 +36,8 @@ const FILE_MAX = 40 * 1024 * 1024;
 const FILES_MAX = 10;
 
 const isMedia = (f: File) => f.type.startsWith('image/') || f.type.startsWith('video/');
-const newAlbumId = () => crypto.randomUUID().replace(/-/g, '');
+/** Код нового альбома — его придумывает клиент (см. messageExtras.js на сервере). */
+export const newAlbumId = () => crypto.randomUUID().replace(/-/g, '');
 /** Что предлагает окно выбора файла. Решает всё равно сервер — по содержимому. */
 const ACCEPT = 'image/*,video/*,audio/*,.pdf,.zip,.docx,.xlsx,.pptx';
 

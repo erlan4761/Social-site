@@ -53,6 +53,7 @@ export const toChannelPost = (p: DbChannelPost): ChannelPost => ({
   commentCount: db.channelComments.filter((c) => c.postId === p.id && !hidden(c.authorId)).length,
   attachment: p.attachment,
   expiresAt: p.expiresAt ?? null,
+  albumId: p.albumId ?? null,
   reactions: reactionsOf(db.postReactions, p.id),
   poll: (() => {
     const poll = pollOf('channel', p.id);

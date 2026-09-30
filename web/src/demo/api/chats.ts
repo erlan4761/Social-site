@@ -151,9 +151,10 @@ export const chatsApi = {
     });
   },
 
-  sendChatMessage: (chatId: number, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput, sticker?: string) => {
+  sendChatMessage: (chatId: number, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput, sticker?: string, fwdAlbum?: string) => {
     const { u, chat } = requireChat(chatId);
-    const continuing = Boolean(file?.album) && db.chatMessages.some((x) => x.albumId === file!.album && x.authorId === u.id && x.chatId === chat.id);
+    const album = file?.album ?? fwdAlbum;
+    const continuing = Boolean(album) && db.chatMessages.some((x) => x.albumId === album && x.authorId === u.id && x.chatId === chat.id);
     postBlock(chat, u.id, continuing);
     const src = forward ? forwardSource(forward, u) : null;
     const body = src ? src.body : text.trim();
@@ -165,8 +166,8 @@ export const chatsApi = {
       fail(400, 'Сообщение, на которое вы отвечаете, не найдено');
     }
 
-    const albumId = checkAlbum(file?.album, attachment,
-      db.chatMessages.filter((x) => x.albumId && x.albumId === file?.album).map((x) => ({ mine: x.authorId === u.id && x.chatId === chat.id })));
+    const albumId = checkAlbum(album, attachment,
+      db.chatMessages.filter((x) => x.albumId && x.albumId === album).map((x) => ({ mine: x.authorId === u.id && x.chatId === chat.id })));
     const m: DbChatMessage = {
       id: id(), chatId: chat.id, authorId: u.id, body, createdAt: new Date().toISOString(), albumId, expiresAt: expiryFor('chat', chat.id),
       replyToId: src ? null : replyTo ?? null, editedAt: null, fwdUserId: src?.fwdUserId ?? null, fwdChannelId: src?.fwdChannelId ?? null, attachment,
