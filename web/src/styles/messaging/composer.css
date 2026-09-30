@@ -406,3 +406,18 @@
 .format-strike { text-decoration: line-through; }
 .format-mono { font-family: var(--mono, ui-monospace, "Cascadia Mono", Consolas, monospace); }
 .format-spoiler { letter-spacing: -0.05em; color: var(--ink-2); }
+
+/* Меню кнопки отправки: «без звука» и «позже» — над кнопкой, справа. */
+.send-menu {
+  position: absolute;
+  right: var(--s-3);
+  bottom: calc(100% + var(--s-1));
+  z-index: 5;
+  display: grid;
+  min-width: 14rem;
+  padding: var(--s-1);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-3);
+}

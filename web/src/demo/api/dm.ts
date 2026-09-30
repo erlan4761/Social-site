@@ -1,4 +1,8 @@
-import { type AttachmentInput, type ChatMessage, type Conversation, type ForwardRef, type ForwardTarget, type Message } from '../../api';
+import { type AttachmentInput, type ChatMessage, type Conversation, type ForwardRef, type ForwardTarget, type Message, type SendOptions } from '../../api';
+
+/** Что ещё уходит с сообщением в витрине: пересылка, файл, стикер. Звука у
+ *  витрины нет, так что `silent` принимается и ничего не меняет. */
+export type SendExtra = SendOptions & { forward?: ForwardRef; file?: AttachmentInput; sticker?: string; fwdAlbum?: string };
 import { type DbMessage, db, id, tick, fail } from '../store';
 import { byId, byName, requireMe, person, blockedPair } from '../model/people';
 import { attachmentFrom, toMessage, assertEditable, setReaction, pairThread, requirePairMessage, findHits, dmKey, setTyping, clearTyping, isTyping, forwardSource, marinaAnswers, readSticker, CHAT_PAGE, BODY_MAX, checkAlbum } from '../model/messages';
@@ -63,7 +67,8 @@ export const dmApi = {
     });
   },
 
-  sendMessage: (username: string, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput, sticker?: string, fwdAlbum?: string) => {
+  sendMessage: (username: string, text: string, replyTo?: number | null, extra: SendExtra = {}) => {
+    const { forward, file, sticker, fwdAlbum } = extra;
     const u = requireMe()!;
     const other = byName(username);
     if (!other) fail(404, 'Пользователь не найден');
@@ -112,7 +117,7 @@ export const dmApi = {
   },
 
   sendAttachment: (username: string, input: AttachmentInput) =>
-    dmApi.sendMessage(username, input.body ?? '', input.replyTo ?? null, undefined, input),
+    dmApi.sendMessage(username, input.body ?? '', input.replyTo ?? null, { file: input }),
 
   editMessage: (username: string, messageId: number, text: string) => {
     const { u, other, m } = requirePairMessage(username, messageId);
@@ -156,8 +161,8 @@ export const dmApi = {
   /** Переслать — это та же отправка, только текст берётся из оригинала. */
   forward: (target: ForwardTarget, source: ForwardRef, album?: string): Promise<{ message: Message }> | Promise<{ message: ChatMessage }> =>
     target.kind === 'dm'
-      ? dmApi.sendMessage(target.username, '', null, source, undefined, undefined, album)
-      : chatsApi.sendChatMessage(target.id, '', null, source, undefined, undefined, album),
+      ? dmApi.sendMessage(target.username, '', null, { forward: source, fwdAlbum: album })
+      : chatsApi.sendChatMessage(target.id, '', null, { forward: source, fwdAlbum: album }),
 
   markRead: (username: string) => {
     const u = requireMe()!;
@@ -204,5 +209,5 @@ export const dmApi = {
 
   // ─ Стикеры ────────────────────────────────────────────────────────────
 
-  sendSticker: (username: string, sticker: string) => dmApi.sendMessage(username, '', null, undefined, undefined, sticker),
+  sendSticker: (username: string, sticker: string) => dmApi.sendMessage(username, '', null, { sticker }),
 };

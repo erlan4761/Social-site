@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, SLOW_MODE_OPTIONS, type AttachmentInput, type Chat, type ChatMessage, type PinnedPreview } from '../api';
+import { api, ApiError, SLOW_MODE_OPTIONS, type AttachmentInput, type Chat, type ChatMessage, type PinnedPreview, type SendOptions } from '../api';
 import {
   Composer, ConversationSearch, MessageList, PaneNotice, useNotice, plainText, SelectionBar, messagesCount, useSelection, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText, typingLabel,
   type BubbleItem, type ComposerMode, type MessageAction,
@@ -44,6 +44,8 @@ function ChatView({ idParam }: { idParam: string }) {
   const [chat, setChat] = useState<Chat | null>(null);
   /** Своё сообщение, для которого открыто «Кто прочитал». */
   const [readersOf, setReadersOf] = useState<number | null>(null);
+  /** Непрочитанные упоминания меня — кнопка «@» ведёт к ним по очереди, от старого. */
+  const [mentionQueue, setMentionQueue] = useState<number[]>([]);
   const [reactorsOf, setReactorsOf] = useState<{ id: number; emoji: string | null } | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [readUpTo, setReadUpTo] = useState(0);
@@ -99,6 +101,7 @@ function ChatView({ idParam }: { idParam: string }) {
         if (cancelled) return;
         setChat(res.chat);
         setMessages(res.messages);
+        setMentionQueue(res.unreadMentions ?? []);
         setReadUpTo(res.readUpTo);
         setCursor(res.nextCursor);
         setTyping(res.typing.map((t) => t.displayName));
@@ -219,13 +222,13 @@ function ChatView({ idParam }: { idParam: string }) {
     );
   }
 
-  async function send(text: string) {
+  async function send(text: string, opts?: SendOptions) {
     setError(null);
     try {
       if (mode?.kind === 'edit') {
         put((await api.editChatMessage(chatId, mode.id, text)).message);
       } else {
-        const res = await api.sendChatMessage(chatId, text, mode?.kind === 'reply' ? mode.id : null);
+        const res = await api.sendChatMessage(chatId, text, mode?.kind === 'reply' ? mode.id : null, opts);
         edits.current += 1;
         setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
         afterPost();
@@ -676,6 +679,24 @@ function ChatView({ idParam }: { idParam: string }) {
         }
       />
 
+      {mentionQueue.length > 0 && !selection.active && (
+        <div className="jump-wrap">
+          <button
+            className="jump-mention"
+            type="button"
+            title="К непрочитанному упоминанию"
+            aria-label={`К непрочитанному упоминанию, осталось ${mentionQueue.length}`}
+            onClick={() => {
+              const [next, ...rest] = mentionQueue;
+              setMentionQueue(rest);
+              void reveal(next);
+            }}
+          >
+            @<span className="jump-count">{mentionQueue.length}</span>
+          </button>
+        </div>
+      )}
+
       {error && <p className="error pane-error">{error}</p>}
       <PaneNotice text={notice} />
 
@@ -703,6 +724,7 @@ function ChatView({ idParam }: { idParam: string }) {
         key={`chat:${chatId}`}
         draft={{ kind: 'chat', target: chatId }}
         albums
+        silent
         placeholder="Сообщение в чат"
         onSchedule={async (text, at) => {
           await api.schedule('chat', chatId, text, at.toISOString());

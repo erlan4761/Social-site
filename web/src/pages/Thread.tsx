@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
-import { api, ApiError, type AttachmentInput, type Message, type Person, type PinnedPreview } from '../api';
+import { api, ApiError, type AttachmentInput, type Message, type Person, type PinnedPreview, type SendOptions } from '../api';
 import {
   Composer, ConversationSearch, MessageList, SelectionBar, messagesCount, plainText, useSelection, PaneHead, PinnedBar, PresenceAvatar, TypingDots, revealOlder, editable, mergeLatest, previewText,
   type BubbleItem, type ComposerMode, type MessageAction,
@@ -184,14 +184,14 @@ function ThreadView({ username }: { username: string }) {
     setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
   }
 
-  async function send(text: string) {
+  async function send(text: string, opts?: SendOptions) {
     setError(null);
     try {
       if (mode?.kind === 'edit') {
         const res = await api.editMessage(username, mode.id, text);
         put(res.message);
       } else {
-        const res = await api.sendMessage(username, text, mode?.kind === 'reply' ? mode.id : null);
+        const res = await api.sendMessage(username, text, mode?.kind === 'reply' ? mode.id : null, opts);
         edits.current += 1;
         setMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
         refreshList();
@@ -509,6 +509,7 @@ function ThreadView({ username }: { username: string }) {
             key={`dm:${username}`}
             draft={{ kind: 'dm', target: username }}
             albums
+            silent={!saved}
             placeholder={saved ? 'Заметка для себя' : 'Сообщение'}
             onSchedule={async (text, at) => {
               await api.schedule('dm', username, text, at.toISOString());

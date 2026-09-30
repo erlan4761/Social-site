@@ -207,3 +207,36 @@ describe('оформление в поле ввода', () => {
     expect(field.value).toBe('скажи **||привет||** всем');
   });
 });
+
+describe('меню кнопки отправки', () => {
+  it('правый щелчок — «без звука» и «позже»; «без звука» отправляет с silent', async () => {
+    const onSend = vi.fn(async () => true);
+    render(<Composer placeholder="Сообщение" onSend={onSend} silent onSchedule={async () => undefined} />);
+    const field = screen.getByPlaceholderText('Сообщение') as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: 'Спокойной ночи' } });
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Отправить' }));
+    expect(screen.getByRole('menuitem', { name: 'Отправить позже' })).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Отправить без звука' }));
+    });
+    expect(onSend).toHaveBeenCalledWith('Спокойной ночи', { silent: true });
+    expect(screen.queryByRole('menu', { name: 'Как отправить' })).toBeNull();
+  });
+
+  it('без «silent» и «позже» меню нет — обычная кнопка', () => {
+    render(<Composer placeholder="Сообщение" onSend={async () => true} />);
+    fireEvent.change(screen.getByPlaceholderText('Сообщение'), { target: { value: 'Привет' } });
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Отправить' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('обычная отправка — без опций', async () => {
+    const onSend = vi.fn(async () => true);
+    render(<Composer placeholder="Сообщение" onSend={onSend} silent />);
+    fireEvent.change(screen.getByPlaceholderText('Сообщение'), { target: { value: 'Громко' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Отправить' }));
+    });
+    expect(onSend).toHaveBeenCalledWith('Громко');
+  });
+});
