@@ -377,3 +377,32 @@
   font-weight: 600;
   text-align: center;
 }
+
+/* ─ Полоса оформления ──────────────────────────────────────────────────
+   Появляется, пока в поле выделен текст: те же знаки, что Ctrl+B и
+   компания, — для телефона, где клавиатурных сочетаний нет. */
+.format-bar {
+  display: flex;
+  gap: var(--s-1);
+  padding: var(--s-1) var(--s-3);
+  border-bottom: 1px solid var(--line);
+}
+.format-btn {
+  min-width: 2.25rem;
+  height: 2rem;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--t-meta);
+  cursor: pointer;
+}
+.format-btn:hover { background: var(--surface-2); }
+.format-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.format-bold { font-weight: 700; }
+.format-italic { font-style: italic; font-family: var(--read); }
+.format-strike { text-decoration: line-through; }
+.format-mono { font-family: var(--mono, ui-monospace, "Cascadia Mono", Consolas, monospace); }
+.format-spoiler { letter-spacing: -0.05em; color: var(--ink-2); }

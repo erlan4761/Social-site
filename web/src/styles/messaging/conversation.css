@@ -741,3 +741,57 @@ a.pane-who:hover { background: var(--surface-2); }
   .call { inset: 0; width: auto; border-radius: 0; align-content: center; }
   .call.video { width: auto; }
 }
+
+/* ─ Разметка текста ──────────────────────────────────────────────────────
+   Код — моноширинным на лёгкой подложке; блок кода прокручивается вбок, а не
+   ломает пузырь. Спойлер — узор из точек вместо слов, пока его не нажмут. */
+.bubble-text strong { font-weight: 700; }
+.md-code,
+.md-pre {
+  font-family: var(--mono, ui-monospace, "Cascadia Mono", Consolas, monospace);
+  font-size: 0.875em;
+  background: color-mix(in oklab, var(--ink) 7%, transparent);
+  border-radius: var(--r-xs);
+}
+.md-code { padding: 0.0625em 0.3em; overflow-wrap: anywhere; }
+.md-pre {
+  display: block;
+  margin: 0.25rem 0;
+  padding: 0.5rem 0.625rem;
+  line-height: 1.45;
+  white-space: pre;
+  overflow-x: auto;
+  overflow-wrap: normal;
+}
+.md-pre code { font: inherit; }
+
+.spoiler {
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  background-color: color-mix(in oklab, var(--ink) 14%, transparent);
+  background-image: radial-gradient(color-mix(in oklab, var(--ink) 55%, transparent) 0.55px, transparent 0.9px);
+  background-size: 4px 4px;
+  /* Точки медленно плывут — видно, что под ними что-то есть. */
+  animation: spoiler-drift 6s linear infinite;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.spoiler-text,
+.spoiler-text * {
+  color: transparent !important;
+  text-decoration-color: transparent !important;
+  background: none !important;
+  user-select: none;
+  pointer-events: none;
+}
+.spoiler:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.spoiler.shown {
+  cursor: text;
+  background-image: none;
+  background-color: color-mix(in oklab, var(--ink) 6%, transparent);
+  animation: none;
+}
+@keyframes spoiler-drift { to { background-position: 16px 8px; } }
+@media (prefers-reduced-motion: reduce) {
+  .spoiler { animation: none; }
+}

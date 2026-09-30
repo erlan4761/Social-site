@@ -434,12 +434,13 @@ export function MessageList({
                       </>
                     ) : m.body ? (
                       <>
-                        <p className="bubble-text">
+                        {/* div, а не p: в тексте бывает блок кода. */}
+                        <div className="bubble-text">
                           <MessageText text={m.body} me={me} />
                           <span className="bubble-meta-space" aria-hidden="true">
                             {meta}
                           </span>
-                        </p>
+                        </div>
                         {/* У фото и файла своя картинка — карточка ссылки там лишняя. */}
                         {!m.attachment && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} onLoad={onMediaLoad} />}
                       </>

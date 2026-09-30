@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { type AttachmentInput, type Author } from '../../api';
 import { canRecord, mmss, useRecorder } from '../../voice';
 import { Icon } from '../Icon';
@@ -9,6 +9,7 @@ import { fileSize } from './format';
 import { VideoNotePreview } from './attachments';
 import { useDraft, type DraftTarget } from './draft';
 import { mentionQuery, fold } from './MessageText';
+import { FORMATS, applyMark, markForKey } from './markup';
 
 /* ─ Поле ввода ──────────────────────────────────────────────────────────
    Текст, файлы, голосовые и «кружки», упоминания, стикеры, «отправить позже». */
@@ -90,6 +91,8 @@ export function Composer({
   const [stickersOpen, setStickersOpen] = useState(false);
   const id = useId();
   const [caret, setCaret] = useState(0);
+  /** Выделение в поле — есть ли что оформлять (полоса «Ж К З <> ▒»). */
+  const [selected, setSelected] = useState(false);
   const [pickIndex, setPickIndex] = useState(0);
   const [dismissed, setDismissed] = useState<number | null>(null);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -227,6 +230,27 @@ export function Composer({
     });
   }
 
+  /** Обернуть выделение знаком разметки (или развернуть обратно). Выделение
+   *  ставится сразу после того, как поле получило новый текст, — не через
+   *  кадр анимации: в фоновой вкладке его можно не дождаться. */
+  const nextSelection = useRef<[number, number] | null>(null);
+  function format(mark: string) {
+    const el = field.current;
+    if (!el) return;
+    const r = applyMark(text, el.selectionStart, el.selectionEnd, mark);
+    nextSelection.current = [r.start, r.end];
+    setText(r.text);
+  }
+  useLayoutEffect(() => {
+    const el = field.current;
+    const range = nextSelection.current;
+    if (!el || !range) return;
+    nextSelection.current = null;
+    el.focus();
+    el.setSelectionRange(range[0], range[1]);
+    setSelected(range[1] > range[0]);
+  }, [text]);
+
   // Перетащить файлы можно на всю переписку, а не только на поле ввода:
   // слушаем ближайшую панель чата (.pane), подсветка — там же.
   const wrap = useRef<HTMLDivElement>(null);
@@ -353,6 +377,25 @@ export function Composer({
         <p className="composer-error" role="alert">
           {fileError ?? voice.error}
         </p>
+      )}
+
+      {selected && !voice.recording && (
+        <div className="format-bar" role="toolbar" aria-label="Оформление выделенного текста">
+          {FORMATS.map((f) => (
+            <button
+              key={f.mark}
+              className={`format-btn format-${f.name}`}
+              type="button"
+              title={`${f.label} (${f.keys})`}
+              aria-label={f.label}
+              // mousedown, а не click: выделение в поле не должно пропасть.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => format(f.mark)}
+            >
+              {f.short}
+            </button>
+          ))}
+        </div>
       )}
 
       {suggestions.length > 0 && (
@@ -491,7 +534,15 @@ export function Composer({
             aria-autocomplete={mentionables ? 'list' : undefined}
             aria-controls={suggestions.length ? `${id}-mentions` : undefined}
             aria-activedescendant={suggestions.length ? `${id}-mention-${suggestions[active].id}` : undefined}
-            onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+            onSelect={(e) => {
+              setCaret(e.currentTarget.selectionStart);
+              setSelected(e.currentTarget.selectionEnd > e.currentTarget.selectionStart);
+            }}
+            onBlur={(e) => {
+              // Полоса нужна, пока человек оформляет; ушёл из поля — прячется.
+              // Нажатие на её кнопки поле не покидает (mousedown выше).
+              if (!e.relatedTarget?.closest('.format-bar')) setSelected(false);
+            }}
             onChange={(e) => {
               setText(e.target.value);
               setCaret(e.target.selectionStart);
@@ -510,6 +561,12 @@ export function Composer({
               }
             }}
             onKeyDown={(e) => {
+              const mark = markForKey(e);
+              if (mark) {
+                e.preventDefault();
+                format(mark);
+                return;
+              }
               if (suggestions.length > 0) {
                 if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                   e.preventDefault();
