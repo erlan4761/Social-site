@@ -1,9 +1,10 @@
-import { type AttachmentInput, type ChatSummary, type ForwardRef, type PollInput } from '../../api';
+import { type AttachmentInput, type ChatSummary, type PollInput } from '../../api';
+import type { SendExtra } from './dm';
 import { type DbUser, type DbChat, NO_EXTRAS, type DbChatMessage, db, id, tick, fail } from '../store';
 import { byId, byName, requireMe, blockedPair, hidden } from '../model/people';
 import { attachmentFrom, assertEditable, setReaction, findHits, setTyping, clearTyping, isTyping, forwardSource, readSticker, CHAT_PAGE, BODY_MAX, checkAlbum } from '../model/messages';
 import { pinnedOf, setPin, pinPreview } from '../model/folders';
-import { prefFields, dropPrefs, notify, saveMentions, unreadMentions, markNotificationsRead } from '../model/notifications';
+import { prefFields, dropPrefs, notify, saveMentions, unreadMentions, unreadMentionIds, markNotificationsRead } from '../model/notifications';
 import { clearDraft, draftOf } from '../model/drafts';
 import { expiryFor } from '../model/autoDelete';
 import { membersOf, memberRow, visibleChatMessages, toChatMessage, requireChatMessage, toChat, othersReadUpTo, chatUnread, requireChat, MEMBERS_MAX, checkTitle, newInvite, isAdmin, outranks, postBlock, roleOf } from '../model/chats';
@@ -148,10 +149,12 @@ export const chatsApi = {
         .filter((m) => m.userId !== u.id && !hidden(m.userId) && isTyping(`chat:${chat.id}`, m.userId))
         .map((m) => ({ id: m.userId, displayName: byId(m.userId)!.displayName })),
       pinned: pinPreview('chat', chat.id, visibleChatMessages(chat.id)),
+      ...(cursor == null ? { unreadMentions: unreadMentionIds(chat.id, u.id) } : {}),
     });
   },
 
-  sendChatMessage: (chatId: number, text: string, replyTo?: number | null, forward?: ForwardRef, file?: AttachmentInput, sticker?: string, fwdAlbum?: string) => {
+  sendChatMessage: (chatId: number, text: string, replyTo?: number | null, extra: SendExtra = {}) => {
+    const { forward, file, sticker, fwdAlbum } = extra;
     const { u, chat } = requireChat(chatId);
     const album = file?.album ?? fwdAlbum;
     const continuing = Boolean(album) && db.chatMessages.some((x) => x.albumId === album && x.authorId === u.id && x.chatId === chat.id);
@@ -186,7 +189,7 @@ export const chatsApi = {
   },
 
   sendChatAttachment: (chatId: number, input: AttachmentInput) =>
-    chatsApi.sendChatMessage(chatId, input.body ?? '', input.replyTo ?? null, undefined, input),
+    chatsApi.sendChatMessage(chatId, input.body ?? '', input.replyTo ?? null, { file: input }),
 
   editChatMessage: (chatId: number, messageId: number, text: string) => {
     const { u, chat } = requireChat(chatId);
@@ -404,7 +407,7 @@ export const chatsApi = {
   },
 
   sendChatSticker: (chatId: number, sticker: string) =>
-    chatsApi.sendChatMessage(chatId, '', null, undefined, undefined, sticker),
+    chatsApi.sendChatMessage(chatId, '', null, { sticker }),
 
   // ─ Опросы ──────────────────────────────────────────────────────────────
 

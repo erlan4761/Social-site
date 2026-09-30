@@ -27,7 +27,7 @@ export function mentionedNames(body) {
  * будить человека второй раз. Кого из текста убрали, у того непрочитанное
  * событие гаснет — упоминания больше нет.
  */
-export function saveMentions({ chatId, messageId, authorId, body }) {
+export function saveMentions({ chatId, messageId, authorId, body, silent = false }) {
   const names = [...mentionedNames(body)];
   const targets = names.length === 0 ? [] : db.prepare(`
     SELECT u.id FROM users u JOIN chat_members cm ON cm.user_id = u.id AND cm.chat_id = ?
@@ -46,7 +46,7 @@ export function saveMentions({ chatId, messageId, authorId, body }) {
   for (const id of targets) insert.run(messageId, id);
 
   for (const id of targets) {
-    if (!before.has(id)) notify({ userId: id, actorId: authorId, kind: 'mention', chatId, messageId });
+    if (!before.has(id)) notify({ userId: id, actorId: authorId, kind: 'mention', chatId, messageId, silent });
   }
   const now = new Set(targets);
   for (const id of before) {

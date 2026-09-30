@@ -364,6 +364,9 @@ export const searchResult = (row, author = null) => ({
 
 /* ─ Проверки ввода ─────────────────────────────────────────────────────── */
 
+/** «Без звука» — из JSON (`true`) или из multipart (`'1'`, `'true'`). */
+export const isSilent = (value) => value === true || value === '1' || value === 'true';
+
 /** `replyTo` из тела запроса: число или отсутствие. Есть ли такое сообщение
  *  в этой переписке, проверяет роутер — только он знает её границы. */
 export function replyIdOf(value) {

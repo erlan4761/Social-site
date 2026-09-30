@@ -6,7 +6,7 @@ import { publicUrl } from '../media.js';
 import {
   ATTACH_INSERT_COLUMNS, FWD_COLUMNS, assertEditable, checkAlbum, readAlbum, attachmentOf, attachmentUpload, attachmentValues,
   clearTyping, copyAttachment, decorate, readSticker, dmKey, dropAttachment, emojiOf, extraFields, forwardSource, isForwarded, fwdJoin,
-  isTyping, readAttachment, replyIdOf, searchQuery, searchResult, searchRows, setTyping,
+  isSilent, isTyping, readAttachment, replyIdOf, searchQuery, searchResult, searchRows, setTyping,
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
 import { dmUnreadTotal, inArchive, prefFor, prefsOf } from '../prefs.js';
@@ -263,7 +263,8 @@ router.post('/:username', attachmentUpload.single('file'), async (req, res, next
     // Одно событие на диалог: notify() убирает предыдущее непрочитанное
     // уведомление от того же собеседника, иначе лента событий стала бы
     // копией переписки.
-    if (!saved) notify({ userId: other.id, actorId: me, kind: 'message' });
+    // «Без звука» (`silent`) — событие есть, пуш не звенит.
+    if (!saved) notify({ userId: other.id, actorId: me, kind: 'message', silent: isSilent(req.body?.silent) });
 
     const row = db.prepare(`${MESSAGE_SELECT} WHERE m.id = ?`).get(Number(info.lastInsertRowid));
     res.status(201).json({ message: full(row, me, other.id) });

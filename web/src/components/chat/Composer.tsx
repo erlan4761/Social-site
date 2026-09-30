@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { type AttachmentInput, type Author } from '../../api';
+import { type AttachmentInput, type Author, type SendOptions } from '../../api';
 import { canRecord, mmss, useRecorder } from '../../voice';
 import { Icon } from '../Icon';
 import { Monogram } from '../Monogram';
@@ -46,7 +46,7 @@ type ComposerProps = {
   placeholder: string;
   /** Отправка или сохранение правки. `true` — готово, поле очищается;
    *  `false` — ошибка, текст остаётся. */
-  onSend: (text: string) => Promise<boolean>;
+  onSend: (text: string, opts?: SendOptions) => Promise<boolean>;
   /** Отправка с вложением: файл с подписью или голосовое. Без неё скрепки и
    *  микрофона нет. */
   onSendAttachment?: (input: Omit<AttachmentInput, 'replyTo'>) => Promise<boolean>;
@@ -69,6 +69,8 @@ type ComposerProps = {
   draft?: DraftTarget;
   /** Несколько фото и видео уходят альбомом (ЛС и группы); иначе — по одному. */
   albums?: boolean;
+  /** «Отправить без звука» в меню кнопки отправки — в личке и группах. */
+  silent?: boolean;
 };
 
 export function Composer({
@@ -86,7 +88,10 @@ export function Composer({
   onSendSticker,
   draft,
   albums = false,
+  silent = false,
 }: ComposerProps) {
+  /** Меню кнопки отправки: «без звука» и «позже» — правый клик или долгое нажатие. */
+  const [sendMenu, setSendMenu] = useState(false);
   const [scheduling, setScheduling] = useState<string | null>(null);
   const [stickersOpen, setStickersOpen] = useState(false);
   const id = useId();
@@ -168,11 +173,11 @@ export function Composer({
    * общий код, подпись у первого, как в Телеграме. Не ушёл какой-то — он и
    * следующие остаются в поле, отправленные уже не повторяются.
    */
-  async function sendFiles(caption: string) {
+  async function sendFiles(caption: string, quiet = false) {
     const album = albums && pending.length > 1 && pending.every(isMedia) ? newAlbumId() : undefined;
     for (let i = 0; i < pending.length; i++) {
       const f = pending[i];
-      const ok = await onSendAttachment!({ file: f, name: f.name, body: i === 0 ? caption : '', album });
+      const ok = await onSendAttachment!({ file: f, name: f.name, body: i === 0 ? caption : '', album, silent: quiet || undefined });
       if (!ok) {
         if (i > 0) {
           setPending(pending.slice(i));
@@ -185,11 +190,16 @@ export function Composer({
     return true;
   }
 
-  async function submit() {
+  async function submit(opts?: SendOptions) {
     const trimmed = text.trim();
     if ((!trimmed && pending.length === 0) || trimmed.length > LIMIT || sending) return;
     setSending(true);
-    const ok = pending.length > 0 && onSendAttachment && !editing ? await sendFiles(trimmed) : await onSend(trimmed);
+    const ok =
+      pending.length > 0 && onSendAttachment && !editing
+        ? await sendFiles(trimmed, opts?.silent)
+        : opts?.silent
+          ? await onSend(trimmed, opts)
+          : await onSend(trimmed);
     setSending(false);
     if (ok) {
       if (editing) {
@@ -250,6 +260,30 @@ export function Composer({
     el.setSelectionRange(range[0], range[1]);
     setSelected(range[1] > range[0]);
   }, [text]);
+
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!sendMenu) return;
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const onDown = (e: PointerEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setSendMenu(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSendMenu(false);
+        field.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [sendMenu]);
+  // Отложить можно обычное сообщение — без ответа, правки и файла.
+  const canSchedule = Boolean(onSchedule) && !mode && pending.length === 0;
+  const canSilent = silent && !editing;
 
   // Перетащить файлы можно на всю переписку, а не только на поле ввода:
   // слушаем ближайшую панель чата (.pane), подсветка — там же.
@@ -655,18 +689,55 @@ export function Composer({
               type="submit"
               disabled={!ready}
               aria-label={editing ? 'Сохранить' : 'Отправить'}
-              title={onSchedule && !mode ? 'Отправить. Правый клик или долгое нажатие — отправить позже' : undefined}
+              aria-haspopup={canSilent || canSchedule ? 'menu' : undefined}
+              title={
+                canSilent || canSchedule
+                  ? `Отправить. Правый клик или долгое нажатие — ${[canSilent && 'без звука', canSchedule && 'позже'].filter(Boolean).join(' или ')}`
+                  : undefined
+              }
               onContextMenu={(e) => {
-                // Отложить можно обычное сообщение — без ответа, правки и файла.
-                if (!onSchedule || mode || pending.length || !ready) return;
+                if (!ready || (!canSilent && !canSchedule)) return;
                 e.preventDefault();
-                setScheduling(text.trim());
+                setSendMenu(true);
               }}
             >
               <Icon name={editing ? 'check' : 'send'} size={20} />
             </button>
           )}
         </form>
+      )}
+
+      {sendMenu && (
+        <div className="send-menu" ref={menuRef} role="menu" aria-label="Как отправить">
+          {canSilent && (
+            <button
+              type="button"
+              role="menuitem"
+              className="msg-menu-item"
+              onClick={() => {
+                setSendMenu(false);
+                void submit({ silent: true });
+              }}
+            >
+              <Icon name="bell-off" size={18} />
+              Отправить без звука
+            </button>
+          )}
+          {canSchedule && (
+            <button
+              type="button"
+              role="menuitem"
+              className="msg-menu-item"
+              onClick={() => {
+                setSendMenu(false);
+                setScheduling(text.trim());
+              }}
+            >
+              <Icon name="clock" size={18} />
+              Отправить позже
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

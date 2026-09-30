@@ -7,7 +7,7 @@ import { publicUrl } from '../media.js';
 import {
   ATTACH_COLUMNS, ATTACH_INSERT_COLUMNS, checkAlbum, readAlbum, FWD_COLUMNS, assertEditable, attachmentOf, attachmentUpload,
   attachmentValues, chatKey, clearTyping, readSticker, copyAttachment, decorate, dropAttachment, emojiOf, extraFields,
-  forwardSource, fwdJoin, isForwarded, isTyping, readAttachment, replyIdOf, searchQuery, searchResult, searchRows,
+  forwardSource, fwdJoin, isForwarded, isSilent, isTyping, readAttachment, replyIdOf, searchQuery, searchResult, searchRows,
   setTyping,
 } from '../messageExtras.js';
 import { markNotificationsRead, notify } from '../notifications.js';
@@ -513,10 +513,21 @@ router.get('/:id/messages', (req, res) => {
     .filter((u) => u.id !== me && isTyping(chatKey(chat.id), u.id) && !isBlockedPair(me, u.id))
     .map((u) => ({ id: u.id, displayName: u.display_name }));
 
+  // Непрочитанные упоминания — для кнопки «@»: только с первой страницей и до
+  // того, как клиент отметит чат прочитанным, — иначе их уже не было бы.
+  const unreadMentions = cursor != null ? undefined : db.prepare(`
+    SELECT m.id FROM chat_mentions x
+    JOIN chat_messages m ON m.id = x.message_id
+    JOIN chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = :viewerId
+    WHERE m.chat_id = :chatId AND x.user_id = :viewerId AND m.id > cm.last_read_id AND ${blockPairSql('m.author_id')}
+    ORDER BY m.id LIMIT 100
+  `).all({ chatId: chat.id, viewerId: me }).map((r) => r.id);
+
   res.json({
     chat: serializeChat(chat, me),
     messages: decorateChat(page.map(serializeMessage).reverse(), chat.id, me),
     nextCursor: hasMore ? page.at(-1).id : null,
+    ...(unreadMentions ? { unreadMentions } : {}),
     readUpTo: othersReadUpTo(chat.id, me),
     typing,
     pinned: pinnedPreview('chat', chat.id, (id) => chatMessage(chat.id, id, me)),
@@ -582,11 +593,12 @@ router.post('/:id/messages', attachmentUpload.single('file'), async (req, res, n
     // непрочитанное событие, иначе лента стала бы копией переписки.
     const others = db.prepare('SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id <> ?')
       .all(chat.id, me);
+    const silent = isSilent(req.body?.silent);
     for (const member of others) {
-      notify({ userId: member.user_id, actorId: me, kind: 'chat_message', chatId: chat.id });
+      notify({ userId: member.user_id, actorId: me, kind: 'chat_message', chatId: chat.id, silent });
     }
     // У пересланного чужие слова: упоминания в них не зовут никого.
-    if (!forward) saveMentions({ chatId: chat.id, messageId: Number(info.lastInsertRowid), authorId: me, body });
+    if (!forward) saveMentions({ chatId: chat.id, messageId: Number(info.lastInsertRowid), authorId: me, body, silent });
 
     const row = db.prepare(`${MESSAGE_SELECT} WHERE m.id = ?`).get(Number(info.lastInsertRowid));
     res.status(201).json({ message: decorateChat([serializeMessage(row)], chat.id, me)[0] });

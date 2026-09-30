@@ -2499,7 +2499,14 @@ r = await pia(`/chats/${mChat}/messages/${m1}`, { method: 'PATCH', body: JSON.st
 check('правка: у убранного из текста упоминание погасло', (await mentionsOf(sol)) === 0 && (await mentionEvents(sol)).length === 0, `${await mentionsOf(sol)}`);
 check('правка: оставшийся не получил второго события', (await mentionEvents(ron)).length === 1 && (await mentionsOf(ron)) === 1, '');
 
+r = await ron(`/chats/${mChat}/messages`);
+check('для кнопки «@» — непрочитанные упоминания с первой страницей', JSON.stringify(r.body.unreadMentions) === JSON.stringify([m1]), JSON.stringify(r.body.unreadMentions));
+r = await ron(`/chats/${mChat}/messages?cursor=${m1 + 1000}`);
+check('на следующих страницах их нет', !('unreadMentions' in r.body), JSON.stringify(Object.keys(r.body)));
+r = await pia(`/chats/${mChat}/messages`);
+check('у автора — пусто', JSON.stringify(r.body.unreadMentions) === '[]', JSON.stringify(r.body.unreadMentions));
 await ron(`/chats/${mChat}/read`, { method: 'PUT' });
+check('прочитал — и для «@» пусто', JSON.stringify((await ron(`/chats/${mChat}/messages`)).body.unreadMentions) === '[]', '');
 check('прочитал чат — «@» пропал', (await mentionsOf(ron)) === 0, `${await mentionsOf(ron)}`);
 evs = await mentionEvents(ron);
 check('и событие упоминания прочитано', evs.length === 1 && evs[0].readAt != null, JSON.stringify(evs));
@@ -2908,6 +2915,38 @@ try {
 }
 check('в пуше о входе — устройство и путь в настройки', loginPush?.title === 'Вход в аккаунт' && loginPush.url === '/settings' && /^Неизвестное устройство\. Если это были не вы/.test(loginPush.body ?? ''), JSON.stringify(loginPush));
 pbLive.stop();
+
+// «Без звука»: событие и пуш есть, но пуш с флагом silent — не звенит.
+await sleep(300);
+await pa('/auth/login', { method: 'POST', body: JSON.stringify({ username: userPa, password: 'parol12345' }) });
+let quietFrom = inbox.length;
+await dmSend(pa, userPb, { body: 'Тихо, все спят', silent: true });
+await waitInbox(quietFrom + 1);
+let quiet = null;
+try {
+  quiet = decryptPush(inbox.at(-1).body);
+} catch (err) {
+  quiet = { error: err.message };
+}
+check('«без звука» — пуш приходит, но с silent', inbox.length === quietFrom + 1 && quiet?.silent === true && quiet.body === 'Тихо, все спят', JSON.stringify(quiet));
+quietFrom = inbox.length;
+await dmSend(pa, userPb, { body: 'А теперь громко' });
+await waitInbox(quietFrom + 1);
+try {
+  quiet = decryptPush(inbox.at(-1).body);
+} catch (err) {
+  quiet = { error: err.message };
+}
+check('обычное — без silent', quiet?.body === 'А теперь громко' && !('silent' in quiet), JSON.stringify(quiet));
+r = await pa(`/chats`, { method: 'POST', body: JSON.stringify({ title: 'Тихая группа', members: [userPb] }) });
+const silentChat = r.body.chat.id;
+quietFrom = inbox.length;
+r = await pa(`/chats/${silentChat}/messages`, { method: 'POST', body: JSON.stringify({ body: `@${userPb}, без звука`, silent: true }) });
+await waitInbox(quietFrom + 3);
+// Пуш о приглашении в чат приходит своим чередом — смотрим только на тихое сообщение.
+const quietPushes = inbox.slice(quietFrom).map((x) => { try { return decryptPush(x.body); } catch { return {}; } })
+  .filter((x) => x.body?.includes('без звука'));
+check('в группе «без звука» — и сообщение, и упоминание тихие', quietPushes.length === 2 && quietPushes.every((x) => x.silent === true), JSON.stringify(quietPushes));
 pushService.close();
 
 console.log('\n— вход и регистрация по номеру —');
@@ -4098,7 +4137,9 @@ check('таймер общий — собеседник его видит', r.bo
 r = await dmSend(ae, userAd, { body: 'Исчезну через сутки' });
 const fading = r.body.message;
 const fadeLeft = Date.parse(fading.expiresAt) - Date.now();
-check('новое сообщение — со сроком через сутки', fadeLeft > DAY * 1000 - 60_000 && fadeLeft <= DAY * 1000, fading.expiresAt);
+// Допуск в пять секунд: системные часы подстраиваются, и «сейчас» теста может
+// оказаться на миг раньше «сейчас» сервера.
+check('новое сообщение — со сроком через сутки', fadeLeft > DAY * 1000 - 60_000 && fadeLeft <= DAY * 1000 + 5_000, fading.expiresAt);
 r = await ad(`/messages/${userAe}`, { method: 'POST', body: withFile(PNG, 'kadr.png', 'image/png', { body: 'С файлом' }) });
 const withPhoto = r.body.message;
 await ad(`/messages/${userAe}/${fading.id}/pin`, { method: 'PUT' });

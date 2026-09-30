@@ -98,8 +98,12 @@ export type Attachment = {
   wave: string | null;
 };
 
+/** «Без звука» — у получателя уведомление не звенит (пуш с `silent`). */
+export type SendOptions = { silent?: boolean };
+
 /** Что уходит вместе с файлом. */
 export type AttachmentInput = {
+  silent?: boolean;
   file: Blob;
   name?: string;
   body?: string;
@@ -117,6 +121,7 @@ function attachmentForm(input: AttachmentInput) {
   if (input.body) form.append('body', input.body);
   if (input.replyTo != null) form.append('replyTo', String(input.replyTo));
   if (input.album) form.append('album', input.album);
+  if (input.silent) form.append('silent', '1');
   if (input.voice) {
     form.append('voice', '1');
     form.append('duration', String(input.voice.duration));
@@ -619,10 +624,10 @@ const realApi = {
   setDmAutoDelete: (username: string, seconds: number) =>
     request<{ autoDelete: number }>(`/messages/${encodeURIComponent(username)}/auto-delete`, { method: 'PUT', body: body({ seconds }) }),
 
-  sendMessage: (username: string, text: string, replyTo?: number | null) =>
+  sendMessage: (username: string, text: string, replyTo?: number | null, opts: SendOptions = {}) =>
     request<{ message: Message }>(`/messages/${encodeURIComponent(username)}`, {
       method: 'POST',
-      body: body({ body: text, replyTo: replyTo ?? undefined }),
+      body: body({ body: text, replyTo: replyTo ?? undefined, silent: opts.silent || undefined }),
     }),
 
   sendAttachment: (username: string, input: AttachmentInput) =>
@@ -823,6 +828,8 @@ const realApi = {
       chat: Chat;
       messages: ChatMessage[];
       nextCursor: number | null;
+      /** Непрочитанные упоминания меня — для кнопки «@»; только на первой странице. */
+      unreadMentions?: number[];
       readUpTo: number;
       /** Кто из остальных участников набирает сообщение прямо сейчас. */
       typing: { id: number; displayName: string }[];
@@ -832,10 +839,10 @@ const realApi = {
     );
   },
 
-  sendChatMessage: (id: number, text: string, replyTo?: number | null) =>
+  sendChatMessage: (id: number, text: string, replyTo?: number | null, opts: SendOptions = {}) =>
     request<{ message: ChatMessage }>(`/chats/${id}/messages`, {
       method: 'POST',
-      body: body({ body: text, replyTo: replyTo ?? undefined }),
+      body: body({ body: text, replyTo: replyTo ?? undefined, silent: opts.silent || undefined }),
     }),
 
   sendChatAttachment: (chatId: number, input: AttachmentInput) =>

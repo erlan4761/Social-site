@@ -123,11 +123,16 @@ export function saveMentions(chatId: number, messageId: number, authorId: number
   );
 }
 
-export const unreadMentions = (chatId: number, userId: number) => {
+/** Непрочитанные упоминания в чате — id сообщений по порядку, как у сервера для кнопки «@». */
+export const unreadMentionIds = (chatId: number, userId: number) => {
   const lastRead = memberRow(chatId, userId)?.lastReadId ?? 0;
-  return db.chatMentions.filter((x) => x.userId === userId && x.messageId > lastRead
-    && db.chatMessages.some((m) => m.id === x.messageId && m.chatId === chatId)).length;
+  return db.chatMentions
+    .filter((x) => x.userId === userId && x.messageId > lastRead && db.chatMessages.some((m) => m.id === x.messageId && m.chatId === chatId))
+    .map((x) => x.messageId)
+    .sort((a, b) => a - b);
 };
+
+export const unreadMentions = (chatId: number, userId: number) => unreadMentionIds(chatId, userId).length;
 
 /** Снятие лайка и отписка убирают только **непрочитанное** событие о себе. */
 export function dropNotification(input: NotifyInput) {

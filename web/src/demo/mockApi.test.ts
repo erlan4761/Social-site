@@ -352,6 +352,20 @@ describe('витрина: вход с кодом из приложения', () 
   });
 });
 
+describe('витрина: кнопка «@»', () => {
+  it('непрочитанные упоминания — с первой страницей, прочитал — пусто', async () => {
+    const chat = await room();
+    await loginAs('nina');
+    const { message } = await api.sendChatMessage(chat.id, '@demo, глянь');
+    await loginAs('demo');
+    // В засеве у этого чата уже есть упоминание — новое встаёт в очередь последним.
+    expect((await api.chatMessages(chat.id)).unreadMentions?.at(-1)).toBe(message.id);
+    expect((await api.chatMessages(chat.id, message.id)).unreadMentions).toBeUndefined();
+    await api.markChatRead(chat.id);
+    expect((await api.chatMessages(chat.id)).unreadMentions).toEqual([]);
+  });
+});
+
 describe('витрина: предпросмотр ссылок', () => {
   it('карточка только у заготовленной ссылки', async () => {
     expect((await api.linkPreview('https://github.com/erlan4761/Social-site')).preview?.siteName).toBe('GitHub');
