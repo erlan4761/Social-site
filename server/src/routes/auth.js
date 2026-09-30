@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { db, nowIso } from '../db.js';
 import {
   hashPassword, verifyPassword, createSession, destroySession,
-  setSessionCookie, publicUser, SESSION_COOKIE,
+  setSessionCookie, selfUser, SESSION_COOKIE, assertNotBanned,
 } from '../auth.js';
 import { notifyLogin } from '../notifications.js';
 import { PUBLIC_URL, sendMail } from '../email.js';
@@ -34,10 +34,12 @@ router.post('/login', async (req, res, next) => {
     if (!user || !user.password_login || !(await verifyPassword(pwd, user.password_hash))) {
       return res.status(401).json({ error: 'Неверное имя пользователя или пароль' });
     }
+    // После пароля: подбирающий пароль не узнает, заблокирован ли аккаунт.
+    assertNotBanned(user);
 
     setSessionCookie(res, createSession(user.id, req.get('user-agent')));
     notifyLogin(user.id, req.get('user-agent'));
-    res.json({ user: publicUser(user) });
+    res.json({ user: selfUser(user) });
   } catch (err) {
     next(err);
   }

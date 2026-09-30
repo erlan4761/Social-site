@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db, nowIso } from '../db.js';
-import { createSession, publicUser, setSessionCookie, verifyPassword } from '../auth.js';
+import { assertNotBanned, createSession, selfUser, setSessionCookie, verifyPassword } from '../auth.js';
 import {
   checkCode, dropTicket, failTicket, hasPassword, issueTicket, normalizePhone, readTicket, sendCode,
 } from '../phone.js';
@@ -26,9 +26,10 @@ export const router = Router();
 
 /** Открыть сеанс. `announce` — известить о входе остальные устройства (не при регистрации). */
 const signIn = (req, res, user, { announce = true } = {}) => {
+  assertNotBanned(user);
   setSessionCookie(res, createSession(user.id, req.get('user-agent')));
   if (announce) notifyLogin(user.id, req.get('user-agent'));
-  return publicUser(user);
+  return selfUser(user);
 };
 
 router.post('/start', async (req, res, next) => {

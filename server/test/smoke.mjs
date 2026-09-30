@@ -3784,5 +3784,98 @@ check('в блокировке — 403', r.status === 403, `${r.status}`);
 kaLive.stop();
 kcLive.stop();
 
+console.log('\n— модерация жалоб —');
+const mod = makeClient();
+const mb = makeClient();
+const mc = makeClient();
+const mv = makeClient();
+const userMod = `moder_${stamp}`;
+const userMb = `mrepa_${stamp}`;
+const userMc = `mrepb_${stamp}`;
+const userMv = `mviol_${stamp}`;
+await legacySignUp(mb, userMb, 'Жалобщица');
+await legacySignUp(mc, userMc, 'Жалобщик');
+await legacySignUp(mv, userMv, 'Нарушитель');
+// Модератора назначает владелец сервера (npm run moderator) — здесь прямо в базе.
+legacyDb.prepare('INSERT INTO users (username, display_name, bio, email, password_hash, created_at, moderator) VALUES (?, ?, \'\', ?, ?, ?, 1)')
+  .run(userMod, 'Модератор', `${userMod}@example.test`, LEGACY_HASH, new Date().toISOString());
+r = await mod('/auth/login', { method: 'POST', body: JSON.stringify({ username: userMod, password: 'parol12345' }) });
+check('вход модератора — сразу с флагом', r.body.user?.moderator === true, JSON.stringify(r.body.user));
+const report = (client, targetType, targetId, reason, note) =>
+  client('/reports', { method: 'POST', body: JSON.stringify({ targetType, targetId, reason, ...(note ? { note } : {}) }) });
+const resolve = (client, targetType, targetId, action) =>
+  client('/moderation/resolve', { method: 'POST', body: JSON.stringify({ targetType, targetId, action }) });
+const openReports = async () => (await mod('/moderation/reports')).body.reports ?? [];
+
+r = await mod('/auth/me');
+check('модератор видит свой флаг', r.body.user?.moderator === true, JSON.stringify(r.body.user));
+r = await mb('/auth/me');
+check('у остальных флага нет', !('moderator' in (r.body.user ?? {})), JSON.stringify(r.body.user));
+r = await guest('/moderation/reports');
+check('панель — гостю 401', r.status === 401, `${r.status}`);
+r = await mb('/moderation/reports');
+check('панель — не модератору 403', r.status === 403, `${r.status}`);
+
+r = await mv('/posts', { method: 'POST', body: JSON.stringify({ body: 'Купите мои курсы по заработку' }) });
+const spamPost = r.body.post.id;
+await report(mb, 'post', spamPost, 'spam', 'реклама');
+await report(mc, 'post', spamPost, 'spam');
+r = await mv(`/posts/${spamPost}/comments`, { method: 'POST', body: JSON.stringify({ body: 'и ещё раз реклама' }) });
+const spamComment = r.body.comment.id;
+await report(mb, 'comment', spamComment, 'spam');
+r = await mb('/posts', { method: 'POST', body: JSON.stringify({ body: 'Обычная запись' }) });
+const okPost = r.body.post.id;
+await report(mc, 'post', okPost, 'other', 'не понравилось');
+
+let list = await openReports();
+const spamGroup = list.find((g) => g.targetType === 'post' && g.targetId === spamPost);
+check('жалобы сгруппированы по записи: сколько, причины, комментарии', spamGroup?.count === 2 && spamGroup.reasons.spam === 2
+  && spamGroup.notes.some((n) => n.reporter === userMb && n.note === 'реклама'), JSON.stringify(spamGroup));
+check('в карточке — текст и автор', spamGroup?.subject?.text === 'Купите мои курсы по заработку' && spamGroup.subject.author?.username === userMv, JSON.stringify(spamGroup?.subject));
+check('частые жалобы — сверху', list.findIndex((g) => g.targetId === spamPost && g.targetType === 'post') < list.findIndex((g) => g.targetId === okPost && g.targetType === 'post'), '');
+
+r = await resolve(mod, 'post', okPost, 'dismiss');
+check('жалоба отклонена — запись на месте', r.status === 200 && r.body.resolution === 'dismissed' && (await mb(`/posts/${okPost}`)).status === 200, `${r.status}`);
+r = await resolve(mod, 'post', okPost, 'dismiss');
+check('повторное решение — 404: открытых жалоб нет', r.status === 404, `${r.status}`);
+r = await mod('/moderation/reports?status=resolved');
+check('в разобранных — с решением', r.body.reports?.some((g) => g.targetId === okPost && g.resolution === 'dismissed'), '');
+r = await report(mc, 'post', okPost, 'abuse');
+check('новая жалоба на разобранное — снова открыта', r.status === 201 && r.body.alreadyReported === false
+  && (await openReports()).some((g) => g.targetType === 'post' && g.targetId === okPost), JSON.stringify(r.body));
+await resolve(mod, 'post', okPost, 'dismiss');
+
+r = await resolve(mod, 'comment', spamComment, 'remove');
+check('комментарий удалён модератором', r.status === 200 && r.body.resolution === 'removed'
+  && !(await mb(`/posts/${spamPost}/comments`)).body.comments?.some((c) => c.id === spamComment), `${r.status}`);
+r = await resolve(mod, 'user', 999999, 'remove');
+check('без открытых жалоб — 404', r.status === 404, `${r.status}`);
+r = await resolve(mod, 'post', spamPost, 'launch');
+check('неизвестное решение — 400', r.status === 400, `${r.status}`);
+
+r = await resolve(mod, 'post', spamPost, 'ban');
+check('автор записи заблокирован', r.status === 200 && r.body.resolution === 'banned', `${r.status} ${JSON.stringify(r.body)}`);
+r = await mv('/auth/me');
+check('его сеанс закрыт сразу', r.body.user === null, JSON.stringify(r.body));
+r = await makeClient()('/auth/login', { method: 'POST', body: JSON.stringify({ username: userMv, password: 'parol12345' }) });
+check('войти нельзя — 403 «заблокирован»', r.status === 403 && /заблокирован/.test(r.body.error ?? ''), `${r.status} ${r.body.error}`);
+r = await makeClient()('/auth/login', { method: 'POST', body: JSON.stringify({ username: userMv, password: 'ne-tot' }) });
+check('с неверным паролем — обычное 401: блокировку не выдаём', r.status === 401, `${r.status}`);
+r = await mod('/moderation/banned');
+check('в списке заблокированных', r.body.users?.some((u) => u.username === userMv && u.reason.includes('post')), JSON.stringify(r.body));
+
+await report(mb, 'user', (await mod('/auth/me')).body.user.id, 'abuse');
+r = await resolve(mod, 'user', (await mod('/auth/me')).body.user.id, 'ban');
+check('себя не заблокировать — 400', r.status === 400, `${r.status}`);
+r = await resolve(mod, 'user', (await mod('/auth/me')).body.user.id, 'remove');
+check('человека не «удалить» — 400', r.status === 400, `${r.status}`);
+
+r = await mod(`/moderation/banned/${userMv}`, { method: 'DELETE' });
+check('блокировка снята', r.status === 200, `${r.status}`);
+r = await mv('/auth/login', { method: 'POST', body: JSON.stringify({ username: userMv, password: 'parol12345' }) });
+check('после снятия — входит, записи на месте', r.status === 200 && (await mv(`/posts/${spamPost}`)).status === 200, `${r.status}`);
+r = await mod(`/moderation/banned/${userMv}`, { method: 'DELETE' });
+check('снять ещё раз — 404', r.status === 404, `${r.status}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
