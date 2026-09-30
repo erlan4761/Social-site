@@ -233,7 +233,11 @@ export type Message = MessageExtras & {
 };
 
 /** Настройки чата в списке — у каждого свои: закреплён ли и приглушён ли. */
-export type ChatPrefs = { pinnedAt: string | null; muted: boolean };
+/**
+ * Настройки чата в списке. `archived` — чат в архиве сейчас: он возвращается
+ * из архива с новым сообщением, если не приглушён (решает сервер).
+ */
+export type ChatPrefs = { pinnedAt: string | null; muted: boolean; archived: boolean };
 export type PrefKind = 'dm' | 'chat' | 'channel';
 
 /** Предпросмотр ссылки. `image` — адрес на нашем сервере, а не на чужом сайте. */
@@ -950,8 +954,8 @@ const realApi = {
     request<{ folders: ChatFolder[] }>('/folders/order', { method: 'PUT', body: body({ ids }) }),
 
   /** Закрепить чат или выключить уведомления. target — логин, номер чата или адрес канала. */
-  setPref: (kind: PrefKind, target: string | number, input: { pinned?: boolean; muted?: boolean }) =>
-    request<{ pinned: boolean; muted: boolean }>(`/prefs/${kind}/${encodeURIComponent(String(target))}`, {
+  setPref: (kind: PrefKind, target: string | number, input: { pinned?: boolean; muted?: boolean; archived?: boolean }) =>
+    request<{ pinned: boolean; muted: boolean; archived: boolean }>(`/prefs/${kind}/${encodeURIComponent(String(target))}`, {
       method: 'PUT',
       body: body(input),
     }),

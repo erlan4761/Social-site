@@ -132,7 +132,8 @@ export type DbChatMessage = DbExtras & { id: number; chatId: number; authorId: n
 /** Черновик — как строка таблицы drafts. */
 export type DbDraft = { userId: number; kind: PrefKind; targetId: number; body: string; updatedAt: string };
 
-export type DbPref = { userId: number; kind: PrefKind; targetId: number; pinnedAt: string | null; muted: boolean };
+/** `archivedAt` — когда чат убрали в архив, как chat_prefs.archived_at. */
+export type DbPref = { userId: number; kind: PrefKind; targetId: number; pinnedAt: string | null; muted: boolean; archivedAt?: string | null };
 
 /** Закреплённое сообщение — одно на переписку, как pinned_messages на сервере. */
 export type DbPin = { kind: PrefKind; scope: string; messageId: number };

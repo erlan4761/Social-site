@@ -278,3 +278,18 @@
 
 .icon-btn:hover { background: var(--surface-2); color: var(--ink); }
 .icon-btn.on { background: var(--accent-tint); color: var(--accent); }
+
+/* ─ Архив ─────────────────────────────────────────────────────────────── */
+.archive-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+.archive-entry { width: 100%; border: 0; background: none; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.archive-head { display: flex; align-items: center; gap: var(--s-2); padding: 0 var(--s-3) var(--s-2); }
+.archive-head strong { font-size: 1rem; }

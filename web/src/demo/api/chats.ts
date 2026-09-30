@@ -34,7 +34,7 @@ export const chatsApi = {
           mentions: unreadMentions(c.id, u.id),
           lastMessage: last ? toChatMessage(last) : null,
           readUpTo: othersReadUpTo(c.id, u.id),
-          ...prefFields(u.id, 'chat', c.id),
+          ...prefFields(u.id, 'chat', c.id, last?.createdAt ?? null),
           draft: draftOf(u.id, 'chat', c.id),
         };
       })

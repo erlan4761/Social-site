@@ -41,6 +41,7 @@ export function Messenger() {
   const [foundChannels, setFoundChannels] = useState<Channel[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
   const [rowMenu, setRowMenu] = useState<{ row: Row; x: number; y: number } | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [folders, setFolders] = useState<ChatFolder[]>([]);
   const [activeFolder, setActiveFolder] = useState<number | null>(() => readActiveFolder());
   const [foldersOpen, setFoldersOpen] = useState<{ editId: number | null } | null>(null);
@@ -122,11 +123,16 @@ export function Messenger() {
   }, [menuOpen]);
 
   const q = fold(query.trim());
+  // Архив — как в Телеграме: его чаты не видны ни во «Все», ни в папках, а
+  // собраны за строкой «Архив» наверху. Поиск ищет везде.
+  const archived = useMemo(() => items?.filter((r) => r.item.archived) ?? [], [items]);
   const shown = useMemo(() => {
     if (!items) return items;
     if (q) return items.filter((r) => matches(r, q));
-    return current ? items.filter((r) => inFolder(current, folderRow(r))) : items;
-  }, [items, q, current]);
+    if (archiveOpen) return archived;
+    const main = items.filter((r) => !r.item.archived);
+    return current ? main.filter((r) => inFolder(current, folderRow(r))) : main;
+  }, [items, q, current, archiveOpen, archived]);
 
   async function toggleFolder(folder: ChatFolder, row: Row, on: boolean) {
     setRowMenu(null);
@@ -181,7 +187,7 @@ export function Messenger() {
     setRowMenu({ row, x, y });
   }
 
-  async function applyPref(row: Row, change: { pinned?: boolean; muted?: boolean }) {
+  async function applyPref(row: Row, change: { pinned?: boolean; muted?: boolean; archived?: boolean }) {
     setRowMenu(null);
     const target = row.kind === 'dm' ? row.item.user.username : row.kind === 'chat' ? row.item.id : row.item.handle;
     try {
@@ -288,7 +294,16 @@ export function Messenger() {
             />
           </label>
 
-          {folders.length > 0 && !q && (
+          {archiveOpen && !q && (
+            <div className="archive-head">
+              <button className="icon-btn" type="button" aria-label="Назад к чатам" onClick={() => setArchiveOpen(false)}>
+                <Icon name="chevron-left" />
+              </button>
+              <strong>Архив</strong>
+            </div>
+          )}
+
+          {folders.length > 0 && !q && !archiveOpen && (
             <div className="folder-tabs" role="tablist" aria-label="Папки чатов">
               <FolderTab label="Все" active={current == null} unread={0} onClick={() => chooseFolder(null)} />
               {folders.map((f) => (
@@ -325,7 +340,13 @@ export function Messenger() {
               </p>
             ) : (
               <>
-                {current && !q && shown.length === 0 && (
+                {archiveOpen && !q && shown.length === 0 && (
+                  <p className="list-note">
+                    <strong>Архив пуст.</strong>
+                    Уберите сюда чат через его меню — правый клик или долгое нажатие по строке.
+                  </p>
+                )}
+                {current && !q && !archiveOpen && shown.length === 0 && (
                   <p className="list-note">
                     <strong>В папке «{current.title}» пусто.</strong>
                     Добавьте чаты через меню чата — правый клик или долгое нажатие по строке во «Все».
@@ -335,6 +356,11 @@ export function Messenger() {
                   <p className="list-note">Ничего не нашлось.</p>
                 )}
                 <ul className="dialogs">
+                  {!q && !archiveOpen && current == null && archived.length > 0 && (
+                    <li>
+                      <ArchiveRow rows={archived} onOpen={() => setArchiveOpen(true)} />
+                    </li>
+                  )}
                   {shown.map((row) => (
                     <li
                       key={row.key}
@@ -427,6 +453,7 @@ export function Messenger() {
           onClose={() => setRowMenu(null)}
           onPin={(pinned) => void applyPref(rowMenu.row, { pinned })}
           onMute={(muted) => void applyPref(rowMenu.row, { muted })}
+          onArchive={(archived) => void applyPref(rowMenu.row, { archived })}
           folders={folders.map((f) => ({ folder: f, inside: inFolder(f, folderRow(rowMenu.row)) }))}
           onFolder={(folder, on) => void toggleFolder(folder, rowMenu.row, on)}
         />
@@ -478,5 +505,35 @@ export function MessengerEmpty() {
       <Icon name="message" size={40} />
       <p>Выберите чат слева или найдите человека или канал через поиск.</p>
     </div>
+  );
+}
+
+/**
+ * Строка «Архив» наверху списка: кто там (первые имена) и сколько в нём
+ * непрочитанного. Непрочитанное в архиве — только у приглушённых чатов
+ * (остальные с новым сообщением из архива выходят), поэтому счётчик серый.
+ */
+function ArchiveRow({ rows, onOpen }: { rows: Row[]; onOpen: () => void }) {
+  const unread = rows.reduce((sum, r) => sum + (r.item.unread > 0 ? 1 : 0), 0);
+  return (
+    <button className="dialog archive-entry" type="button" onClick={onOpen}>
+      <span className="archive-avatar" aria-hidden="true">
+        <Icon name="archive" />
+      </span>
+      <span className="dialog-body">
+        <span className="dialog-head">
+          <span className="dialog-name">Архив</span>
+        </span>
+        <span className="dialog-foot">
+          <span className="dialog-last">{rows.slice(0, 3).map((r) => r.name).join(', ')}</span>
+          {unread > 0 && (
+            <span className="badge muted">
+              {unread}
+              <span className="sr-only"> с непрочитанным</span>
+            </span>
+          )}
+        </span>
+      </span>
+    </button>
   );
 }

@@ -10,17 +10,19 @@ type RowMenuProps = {
   onClose: () => void;
   onPin: (pinned: boolean) => void;
   onMute: (muted: boolean) => void;
+  onArchive: (archived: boolean) => void;
   folders: { folder: ChatFolder; inside: boolean }[];
   onFolder: (folder: ChatFolder, on: boolean) => void;
 };
 
-/** Меню строки списка: закрепить и выключить уведомления. Встаёт там, где
+/** Меню строки списка: закрепить, выключить уведомления, убрать в архив. Встаёт там, где
  *  щёлкнули, и отодвигается от краёв окна, как меню сообщения. */
-export function RowMenu({ state, onClose, onPin, onMute, folders, onFolder }: RowMenuProps) {
+export function RowMenu({ state, onClose, onPin, onMute, onArchive, folders, onFolder }: RowMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: state.x, top: state.y });
   const pinned = Boolean(state.row.item.pinnedAt);
   const muted = state.row.item.muted;
+  const archived = state.row.item.archived;
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -56,6 +58,10 @@ export function RowMenu({ state, onClose, onPin, onMute, folders, onFolder }: Ro
         <button className="msg-menu-item" type="button" role="menuitem" onClick={() => onMute(!muted)}>
           <Icon name={muted ? 'bell' : 'bell-off'} size={18} />
           {muted ? 'Включить уведомления' : 'Выключить уведомления'}
+        </button>
+        <button className="msg-menu-item" type="button" role="menuitem" onClick={() => onArchive(!archived)}>
+          <Icon name="archive" size={18} />
+          {archived ? 'Вернуть из архива' : 'В архив'}
         </button>
       </div>
       {folders.length > 0 && (

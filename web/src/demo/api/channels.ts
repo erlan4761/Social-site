@@ -22,7 +22,7 @@ export const channelsApi = {
         const last = postsOf(c.id).at(-1) ?? null;
         return {
           ...toChannel(c), unread: channelUnread(s), lastPost: last ? toChannelPost(last) : null,
-          ...prefFields(u.id, 'channel', c.id),
+          ...prefFields(u.id, 'channel', c.id, last?.createdAt ?? null),
           draft: draftOf(u.id, 'channel', c.id),
         };
       })

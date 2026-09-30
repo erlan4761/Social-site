@@ -52,6 +52,7 @@ export type IconName =
   | 'chevron-right'
   | 'megaphone'
   | 'phone'
+  | 'archive'
   | 'pin'
   | 'bell-off'
   | 'video'
@@ -295,6 +296,12 @@ const SHAPES: Record<IconName, ReactElement> = {
     </>
   ),
   // Канал — рупор: говорит один, слушают многие.
+  archive: (
+    <>
+      <rect x="3.6" y="4.4" width="16.8" height="4.4" rx="1.2" />
+      <path d="M5 8.8v9.4a1.4 1.4 0 0 0 1.4 1.4h11.2a1.4 1.4 0 0 0 1.4-1.4V8.8M10 12.6h4" />
+    </>
+  ),
   phone: (
     <path d="M6.6 3.8h2.6l1.6 4.2-2 1.4a11.6 11.6 0 0 0 5.8 5.8l1.4-2 4.2 1.6v2.6a2 2 0 0 1-2.2 2A16.6 16.6 0 0 1 4.6 6a2 2 0 0 1 2-2.2z" />
   ),

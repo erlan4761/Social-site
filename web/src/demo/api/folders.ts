@@ -50,7 +50,7 @@ export const foldersApi = {
     return tick({ folders: myFolders(u.id) });
   },
 
-  setPref: (kind: PrefKind, target: string | number, input: { pinned?: boolean; muted?: boolean }) => {
+  setPref: (kind: PrefKind, target: string | number, input: { pinned?: boolean; muted?: boolean; archived?: boolean }) => {
     const u = requireMe()!;
     let targetId: number | null = null;
     if (kind === 'dm') {
@@ -72,9 +72,12 @@ export const foldersApi = {
       ? current?.pinnedAt ?? null
       : input.pinned ? current?.pinnedAt ?? new Date().toISOString() : null;
     const muted = input.muted === undefined ? Boolean(current?.muted) : input.muted;
+    const archivedAt = input.archived === undefined
+      ? current?.archivedAt ?? null
+      : input.archived ? new Date().toISOString() : null;
 
     db.prefs = db.prefs.filter((x) => x !== current);
-    if (pinnedAt || muted) db.prefs.push({ userId: u.id, kind, targetId: targetId!, pinnedAt, muted });
-    return tick({ pinned: Boolean(pinnedAt), muted });
+    if (pinnedAt || muted || archivedAt) db.prefs.push({ userId: u.id, kind, targetId: targetId!, pinnedAt, muted, archivedAt });
+    return tick({ pinned: Boolean(pinnedAt), muted, archived: archivedAt != null });
   },
 };
