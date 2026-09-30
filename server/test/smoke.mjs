@@ -4149,5 +4149,27 @@ check('свой канал с публикациями', dump.channels?.own?.[0]
 check('сеансы — без токенов', dump.sessions?.length >= 1 && dump.sessions.every((s) => !('token' in s)), JSON.stringify(dump.sessions));
 check('ни хеша пароля, ни токенов', !/scrypt\$|password_hash|"token"/.test(exportText), exportText.match(/scrypt\$|password_hash|"token"/)?.[0]);
 
+console.log('\n— разметка текста —');
+const mkA = makeClient();
+const mkB = makeClient();
+const userMkA = `fmta_${stamp}`;
+const userMkB = `fmtb_${stamp}`;
+await legacySignUp(mkA, userMkA, 'Оформитель');
+await legacySignUp(mkB, userMkB, 'Читатель');
+const markedText = '**Итог:** __переносим__ на ~~среду~~ четверг, ||торт — сюрприз||, `npm run dev`';
+r = await dmSend(mkA, userMkB, { body: markedText });
+const markedMsg = r.body.message;
+check('текст хранится со знаками, как написан', r.status === 201 && markedMsg?.body === markedText, `${r.status} ${markedMsg?.body}`);
+r = await dmSend(mkB, userMkA, { body: 'Понял', replyTo: markedMsg.id });
+check('цитата в ответе — без знаков, спойлер скрыт',
+  r.body.message?.replyTo?.body === 'Итог: переносим на среду четверг, ▒▒▒, npm run dev', r.body.message?.replyTo?.body);
+r = await mkA(`/messages/${userMkB}/${markedMsg.id}/pin`, { method: 'PUT' });
+check('закреплённое — тоже без знаков', r.body.pinned?.body?.startsWith('Итог: переносим') && !r.body.pinned.body.includes('сюрприз'), r.body.pinned?.body);
+r = await mkB(`/messages/${userMkA}/search?q=${encodeURIComponent('переносим')}`);
+check('найденное — без знаков', r.body.results?.[0]?.body?.startsWith('Итог: переносим на среду'), JSON.stringify(r.body.results?.[0]));
+r = await dmSend(mkA, userMkB, { body: '2 ** 3 = 8, а a__b__c — имя' });
+r = await dmSend(mkB, userMkA, { body: 'ок', replyTo: r.body.message.id });
+check('знаки у пробела и внутри слова — как у клиента', r.body.message?.replyTo?.body === '2 ** 3 = 8, а abc — имя', r.body.message?.replyTo?.body);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
