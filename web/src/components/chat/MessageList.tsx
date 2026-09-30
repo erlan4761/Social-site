@@ -9,7 +9,7 @@ import { StickerArt } from '../../stickers';
 import { AttachmentView, ImageViewer } from './attachments';
 import { Ticks, type Delivery } from './status';
 import { PollCard } from './PollCard';
-import { MessageText, firstUrl } from './MessageText';
+import { MessageText, firstUrl, internalPath } from './MessageText';
 import { LinkPreview } from './LinkPreview';
 import { callText } from './format';
 import type { Selection } from './selection';
@@ -86,13 +86,17 @@ export function groupAlbums(items: BubbleItem[]): BubbleItem[] {
 
 /** Какие действия есть в меню. У публикации канала нет «Ответить», у
  *  комментария — ни реакций, ни пересылки. */
-export type ListActions = { reply?: boolean; react?: boolean; forward?: boolean; pin?: boolean; readers?: boolean; reactors?: boolean };
+export type ListActions = {
+  reply?: boolean; react?: boolean; forward?: boolean; pin?: boolean; readers?: boolean; reactors?: boolean;
+  /** «Копировать ссылку» — в группе и канале: в личке ссылку открыть некому, кроме двоих. */
+  link?: boolean;
+};
 /** Закреплять вправе не все (в группе и канале — владелец), поэтому «pin»
  *  включается явно, а остальное есть по умолчанию. */
 // «Кто прочитал» — только в группах: в личке хватает двух галочек.
 // «Кто поставил реакции» — тоже только в группах: в личке их двое, а в канале
 // реакции анонимны.
-const ALL_ACTIONS: Required<ListActions> = { reply: true, react: true, forward: true, pin: false, readers: false, reactors: false };
+const ALL_ACTIONS: Required<ListActions> = { reply: true, react: true, forward: true, pin: false, readers: false, reactors: false, link: false };
 
 export type MessageAction =
   | { type: 'reply' }
@@ -102,6 +106,7 @@ export type MessageAction =
   | { type: 'forward' }
   | { type: 'select' }
   | { type: 'copy' }
+  | { type: 'link' }
   | { type: 'pin' }
   | { type: 'readers' }
   /** `emoji` — открыть окно сразу на этой реакции (правый клик по значку). */
@@ -488,7 +493,9 @@ export function MessageList({
                           </span>
                         </div>
                         {/* У фото и файла своя картинка — карточка ссылки там лишняя. */}
-                        {!m.attachment && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} onLoad={onMediaLoad} />}
+                        {!m.attachment && firstUrl(m.body) && !internalPath(firstUrl(m.body)!) && (
+                          <LinkPreview url={firstUrl(m.body)!} onLoad={onMediaLoad} />
+                        )}
                       </>
                     ) : (
                       m.reactions.length === 0 && <span className="bubble-foot" aria-hidden="true" />
@@ -688,6 +695,11 @@ function MessageMenu({ state, readOnly, can, pinned, selectable, onClose, onActi
             Копировать текст
           </MenuItem>
         )}
+        {can.link && (
+          <MenuItem icon="link" onClick={() => onAction({ type: 'link' })}>
+            Копировать ссылку
+          </MenuItem>
+        )}
         {can.forward && !item.poll && !item.call && (
           <MenuItem icon="forward" onClick={() => onAction({ type: 'forward' })}>
             Переслать
@@ -734,7 +746,7 @@ function MenuItem({
   onClick,
   children,
 }: {
-  icon: 'reply' | 'copy' | 'forward' | 'edit' | 'trash' | 'pin' | 'eye' | 'check' | 'heart';
+  icon: 'reply' | 'copy' | 'forward' | 'edit' | 'trash' | 'pin' | 'eye' | 'check' | 'heart' | 'link';
   danger?: boolean;
   onClick: () => void;
   children: ReactNode;

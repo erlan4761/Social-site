@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, type AttachmentInput, type Channel, type ChannelPost, type PinnedPreview } from '../api';
 import {
-  Composer, ConversationSearch, MessageList, SelectionBar, messagesCount, plainText, useSelection, PaneHead, PinnedBar, editable, mergeLatest, previewText, revealOlder,
+  Composer, ConversationSearch, MessageList, PaneNotice, useNotice, SelectionBar, messagesCount, plainText, useSelection, PaneHead, PinnedBar, editable, mergeLatest, previewText, revealOlder,
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
 import { ScheduledBar } from '../components/Scheduled';
 import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
-import { ShareLink } from '../components/ShareLink';
+import { ShareLink, siteUrl } from '../components/ShareLink';
 import { AutoDeleteNote, AutoDeleteSelect } from '../components/chat/AutoDelete';
 import { plural } from '../time';
 import { ChannelAvatar } from '../components/messenger/ListRows';
@@ -44,6 +44,7 @@ function ChannelPane({ handle }: { handle: string }) {
   const [gone, setGone] = useState<string | null>(null);
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<Forwarding | null>(null);
+  const [notice, notify] = useNotice();
   const selection = useSelection(posts.map((p) => p.id));
   const [pollOpen, setPollOpen] = useState(false);
   const [pinned, setPinned] = useState<PinnedPreview | null>(null);
@@ -147,10 +148,22 @@ function ChannelPane({ handle }: { handle: string }) {
       setPosts(res.list);
       setCursor(res.cursor);
       if (res.found) setJump({ id, seq: Date.now() });
+      else setError('Публикация не найдена — возможно, её удалили');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось найти публикацию');
     }
   }
+
+  // `?m=` — открыть канал сразу на публикации: так ведёт ссылка на неё.
+  const [params, setParams] = useSearchParams();
+  const wanted = Number.parseInt(params.get('m') ?? '', 10);
+  useEffect(() => {
+    if (loading || !Number.isSafeInteger(wanted)) return;
+    setParams({}, { replace: true });
+    void reveal(wanted);
+    // reveal читает текущую ленту — эффект нужен ровно раз, когда она загрузилась.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, wanted]);
 
   async function togglePin(id: number) {
     if (pinned?.id === id) {
@@ -227,6 +240,10 @@ function ChannelPane({ handle }: { handle: string }) {
           break;
         case 'copy':
           await navigator.clipboard.writeText(plainText(post.body, 'show'));
+          break;
+        case 'link':
+          await navigator.clipboard.writeText(siteUrl(`messages/ch/${handle}?m=${post.id}`));
+          notify('Ссылка скопирована');
           break;
         case 'forward':
           setForwarding(forwardingOf('channel', item, previewText(post.body, post.attachment)));
@@ -391,7 +408,7 @@ function ChannelPane({ handle }: { handle: string }) {
         onLoadOlder={() => void loadOlder()}
         onAction={(action, item) => void act(action, item)}
         selection={selection}
-        actions={{ reply: false, pin: owner }}
+        actions={{ reply: false, pin: owner, link: true }}
         pinnedId={pinned?.id ?? null}
         jump={jump}
         variant="channel"
@@ -411,6 +428,7 @@ function ChannelPane({ handle }: { handle: string }) {
       />
 
       {error && <p className="error pane-error">{error}</p>}
+      <PaneNotice text={notice} />
 
       {selection.active ? (
         <SelectionBar

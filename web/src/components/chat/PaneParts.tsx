@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { type PinnedPreview } from '../../api';
@@ -76,5 +77,27 @@ export function PaneHead({ avatar, title, subtitle, to, actions, live = false, b
       )}
       {actions && <div className="pane-actions">{actions}</div>}
     </header>
+  );
+}
+
+/* ─ Короткое уведомление над полем ввода ─────────────────────────────── */
+
+/** «Ссылка скопирована» и подобное: показать на две секунды и убрать. */
+export function useNotice(): [string | null, (text: string) => void] {
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 2000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+  return [notice, useCallback((text: string) => setNotice(text), [])];
+}
+
+export function PaneNotice({ text }: { text: string | null }) {
+  // Живая область есть всегда — иначе скринридер не заметил бы первое уведомление.
+  return (
+    <p className={text ? 'pane-notice' : 'pane-notice empty'} role="status">
+      {text}
+    </p>
   );
 }
