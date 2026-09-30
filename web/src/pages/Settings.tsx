@@ -587,7 +587,76 @@ function Sessions() {
           )}
         </>
       )}
+      <LinkDevice onLinked={() => window.dispatchEvent(new Event('sessions-changed'))} />
     </section>
+  );
+}
+
+/**
+ * Подключить компьютер по коду — если QR на экране компьютера нечем
+ * сфотографировать. Тот же запрос, что по QR: код живёт две минуты.
+ */
+function LinkDevice({ onLinked }: { onLinked: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const info = await api.qrInfo(code);
+      if (!window.confirm(`Войти в ваш аккаунт на устройстве «${info.device}»? Подтверждайте, только если это ваш компьютер.`)) return;
+      const res = await api.qrApprove({ code });
+      setDone(`Готово: вход на устройстве «${res.device}» подтверждён.`);
+      setCode('');
+      setOpen(false);
+      window.setTimeout(onLinked, 2500);
+    } catch (err) {
+      setError(errorText(err, 'Не получилось'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="link-device">
+      {done && <p className="settings-status" role="status">{done}</p>}
+      {open ? (
+        <form className="settings-form" onSubmit={submit}>
+          {error && <p className="error">{error}</p>}
+          <label className="field">
+            <span>Код с экрана компьютера</span>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              placeholder="XXXX-XXXX"
+              autoCapitalize="characters"
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={9}
+              autoFocus
+              required
+            />
+          </label>
+          <div className="settings-actions">
+            <button className="btn" type="submit" disabled={busy || code.replace(/[^A-Z0-9]/g, '').length !== 8}>
+              {busy ? 'Проверяю…' : 'Подключить'}
+            </button>
+            <button className="btn ghost" type="button" onClick={() => setOpen(false)}>
+              Отмена
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button className="btn ghost" type="button" onClick={() => setOpen(true)}>
+          Подключить устройство по коду
+        </button>
+      )}
+    </div>
   );
 }
 

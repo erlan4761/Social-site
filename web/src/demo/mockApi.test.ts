@@ -384,3 +384,18 @@ describe('витрина: архив', () => {
     expect((await row()).archived).toBe(true);
   });
 });
+
+describe('витрина: вход по QR-коду', () => {
+  it('код с «компьютера» подтверждают на «телефоне» — и компьютер входит', async () => {
+    await api.logout();
+    const qr = await api.qrLoginStart();
+    expect(await api.qrLoginPoll(qr.token, qr.secret)).toEqual({ status: 'pending' });
+    await loginAs('marina');
+    await expect(api.qrApprove({ code: 'AAAAAAAA' })).rejects.toMatchObject({ status: 404 });
+    await api.qrApprove({ code: `${qr.code.slice(0, 4).toLowerCase()}-${qr.code.slice(4)}` });
+    await api.logout();
+    const res = await api.qrLoginPoll(qr.token, qr.secret);
+    expect(res.status === 'approved' && res.user.username).toBe('marina');
+    await expect(api.qrLoginPoll(qr.token, qr.secret)).rejects.toMatchObject({ status: 410 });
+  });
+});

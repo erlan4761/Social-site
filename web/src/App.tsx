@@ -11,6 +11,7 @@ import { ChatThread } from './pages/ChatThread';
 import { Feed } from './pages/Feed';
 import { Join } from './pages/Join';
 import { Moderation } from './pages/Moderation';
+import { QrApprove } from './pages/QrApprove';
 import { ForgotPassword } from './pages/ForgotPassword';
 import { Messenger, MessengerEmpty } from './pages/Messenger';
 import { Notifications } from './pages/Notifications';
@@ -76,6 +77,7 @@ export function App() {
             <Route path="notifications" element={<Notifications />} />
             <Route path="join/:token" element={<Join />} />
             <Route path="moderation" element={<Moderation />} />
+            <Route path="qr/:token" element={<QrApprove />} />
             {/* Мессенджер — список чатов и открытая переписка рядом, как в
                 Телеграме. Переписка вложена в него, поэтому список не
                 перерисовывается при переходе между чатами. */}

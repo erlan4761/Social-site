@@ -184,3 +184,17 @@
 .readers-title { font-size: var(--t-meta); font-weight: 600; color: var(--ink-2); margin: 0 0 var(--s-2); }
 .readers-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
 .readers-list li { display: flex; align-items: center; gap: var(--s-2); font-size: 0.875rem; }
+
+/* ─ Вход по QR-коду ───────────────────────────────────────────────────── */
+.qr-login { display: grid; justify-items: center; gap: var(--s-3); }
+.qr-login .auth-lede { text-align: left; }
+.qr-code { border-radius: var(--r-sm); box-shadow: 0 0 0 1px var(--line); }
+.qr-code-text {
+  margin: 0;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 1.25rem;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+}
+.qr-approve { max-width: 30rem; }
+.link-device { margin-top: var(--s-3); }
