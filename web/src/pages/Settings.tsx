@@ -8,7 +8,7 @@ import { useSession } from '../session';
 import { EMPTY_PHONE, PhoneField } from '../components/PhoneField';
 import { formatPhone, toE164 } from '../phone';
 import { TwoFactorSettings } from '../components/TwoFactorSettings';
-import { fullDate, joinedOn, plural } from '../time';
+import { fullDate, joinedOn, plural, timeAgo } from '../time';
 
 type Choice = { value: LastSeenPrivacy; title: string; hint: string };
 
@@ -126,7 +126,7 @@ export function Settings() {
         {account && <Password account={account} onChange={reload} />}
         {account && <TwoFactorSettings account={account} onChange={reload} />}
         <Device />
-        <Sessions />
+        <Sessions account={account} onAccountChange={reload} />
         <MyData />
         {account && <DeleteAccount account={account} />}
       </div>
@@ -522,8 +522,20 @@ function Password({ account, onChange }: { account: AccountSettings; onChange: (
 
 /* ─ Сеансы ─────────────────────────────────────────────────────────────── */
 
-function Sessions() {
+const TTL_CHOICES: { days: number; label: string }[] = [
+  { days: 7, label: 'неделю' },
+  { days: 30, label: 'месяц' },
+  { days: 90, label: 'три месяца' },
+  { days: 180, label: 'полгода' },
+  { days: 365, label: 'год' },
+];
+
+type SessionsProps = { account: AccountSettings | null; onAccountChange: () => void };
+
+function Sessions({ account, onAccountChange }: SessionsProps) {
+  const ttlId = useId();
   const [sessions, setSessions] = useState<Session[] | null>(null);
+  const [ttlNote, setTtlNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -571,7 +583,9 @@ function Sessions() {
               <li key={s.id} className={s.current ? 'session current' : 'session'}>
                 <span className="session-who">
                   <strong>{deviceName(s.userAgent)}</strong>
-                  <span>{s.current ? 'Этот сеанс' : `Вход ${fullDate(s.createdAt)}`}</span>
+                  <span title={`Вход ${fullDate(s.createdAt)}`}>
+                    {s.current ? 'Этот сеанс' : `Активен ${timeAgo(s.lastUsedAt)}`}
+                  </span>
                 </span>
                 {!s.current && (
                   <button className="btn ghost small" type="button" disabled={busy} onClick={() => void run(() => api.endSession(s.id))}>
@@ -589,6 +603,40 @@ function Sessions() {
             <p className="settings-note">Других сеансов нет — аккаунт открыт только здесь.</p>
           )}
         </>
+      )}
+      {account && (
+        <div className="session-ttl">
+          <label className="field" htmlFor={ttlId}>
+            <span>Завершать сеанс, если им не пользовались</span>
+            <select
+              id={ttlId}
+              value={account.sessionTtlDays}
+              disabled={busy}
+              onChange={(e) =>
+                void run(async () => {
+                  const res = await api.setSessionTtl(Number(e.target.value));
+                  setTtlNote(
+                    res.ended
+                      ? `Закрыто неактивных: ${res.ended}.`
+                      : 'Сохранено. Сеансы, которыми не пользуются дольше, закроются сами.',
+                  );
+                  onAccountChange();
+                })
+              }
+            >
+              {TTL_CHOICES.map((c) => (
+                <option key={c.days} value={c.days}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {ttlNote && (
+            <p className="settings-status" role="status">
+              {ttlNote}
+            </p>
+          )}
+        </div>
       )}
       <LinkDevice onLinked={() => window.dispatchEvent(new Event('sessions-changed'))} />
     </section>

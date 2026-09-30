@@ -27,6 +27,8 @@ export type DbUser = {
   moderator?: boolean;
   bannedAt?: string | null;
   banReason?: string;
+  /** Срок автозавершения сеансов — как users.session_ttl_days; нет — месяц. */
+  sessionTtlDays?: number;
   /** Вход с кодом из приложения — как users.totp_* и totp_backup_codes (model/twoFactor.ts). */
   totpSecret?: string | null;
   totpPending?: string | null;
@@ -163,7 +165,7 @@ export type DbPoll = {
 export type DbScheduled = Scheduled & { userId: number; targetId: number };
 
 /** Сеансы — чтобы в настройках было что показать и что завершить. */
-export type DbSession = { id: number; userId: number; createdAt: string; userAgent: string | null };
+export type DbSession = { id: number; userId: number; createdAt: string; userAgent: string | null; lastUsedAt?: string };
 
 /**
  * Всё состояние витрины — одним объектом: модули читают и переписывают поля

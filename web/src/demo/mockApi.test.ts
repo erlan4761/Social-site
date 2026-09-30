@@ -384,6 +384,21 @@ describe('витрина: несколько закреплённых', () => {
   });
 });
 
+describe('витрина: автозавершение сеансов', () => {
+  it('по умолчанию месяц; неделя закрывает давно неактивный сеанс, текущий — нет', async () => {
+    expect((await api.account()).sessionTtlDays).toBe(30);
+    let { sessions } = await api.sessions();
+    expect(sessions.every((x) => typeof x.lastUsedAt === 'string')).toBe(true);
+    const before = sessions.length;
+    await expect(api.setSessionTtl(3)).rejects.toMatchObject({ status: 400 });
+    expect(await api.setSessionTtl(7)).toEqual({ days: 7, ended: 1 });
+    ({ sessions } = await api.sessions());
+    expect(sessions).toHaveLength(before - 1);
+    expect(sessions.some((x) => x.current)).toBe(true);
+    expect((await api.account()).sessionTtlDays).toBe(7);
+  });
+});
+
 describe('витрина: предпросмотр ссылок', () => {
   it('карточка только у заготовленной ссылки', async () => {
     expect((await api.linkPreview('https://github.com/erlan4761/Social-site')).preview?.siteName).toBe('GitHub');

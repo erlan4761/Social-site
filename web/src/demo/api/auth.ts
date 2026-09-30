@@ -272,6 +272,7 @@ export const authApi = {
       phoneShow: u.phoneShow ?? 'nobody',
       createdAt: u.createdAt,
       twoFactor: twoFactorOn(u) ? { enabled: true, backupCodesLeft: backupCodesLeft(u) } : { enabled: false },
+      sessionTtlDays: u.sessionTtlDays ?? 30,
     });
   },
 
@@ -385,7 +386,12 @@ export const authApi = {
     const u = requireMe()!;
     const list = db.sessions
       .filter((s) => s.userId === u.id)
-      .map((s) => ({ id: s.id, current: s.id === db.currentSession, createdAt: s.createdAt, userAgent: s.userAgent }))
+      .map((s) => ({
+        id: s.id, current: s.id === db.currentSession, createdAt: s.createdAt,
+        // Текущим пользуются прямо сейчас; у остальных — когда пользовались в последний раз.
+        lastUsedAt: s.id === db.currentSession ? new Date().toISOString() : s.lastUsedAt ?? s.createdAt,
+        userAgent: s.userAgent,
+      }))
       .sort((a, b) => Number(b.current) - Number(a.current) || b.createdAt.localeCompare(a.createdAt));
     return tick({ sessions: list });
   },
@@ -402,6 +408,18 @@ export const authApi = {
   endOtherSessions: () => {
     const u = requireMe()!;
     return tick({ ok: true as const, ended: endOtherSessions(u.id) });
+  },
+
+  setSessionTtl: (days: number) => {
+    const u = requireMe()!;
+    if (![7, 30, 90, 180, 365].includes(days)) fail(400, 'Срок — один из: 7, 30, 90, 180, 365 дней');
+    u.sessionTtlDays = days;
+    const cutoff = Date.now() - days * 864e5;
+    const before = db.sessions.length;
+    db.sessions = db.sessions.filter(
+      (s) => s.userId !== u.id || s.id === db.currentSession || Date.parse(s.lastUsedAt ?? s.createdAt) > cutoff,
+    );
+    return tick({ days, ended: before - db.sessions.length });
   },
 
   deleteAccount: (proof: { password: string } | { code: string }) => {
