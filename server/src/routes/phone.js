@@ -5,6 +5,7 @@ import {
   checkCode, dropTicket, failTicket, hasPassword, issueTicket, normalizePhone, readTicket, sendCode,
 } from '../phone.js';
 import { notifyLogin } from '../notifications.js';
+import { issueTwoFactorTicket, twoFactorOn } from '../twoFactor.js';
 import { usernameTaken } from '../usernames.js';
 import * as v from '../validate.js';
 
@@ -23,6 +24,16 @@ import * as v from '../validate.js';
  * владельцу номера.
  */
 export const router = Router();
+
+/**
+ * Код и пароль пройдены: дальше — код из приложения, если он включён, иначе
+ * сразу сеанс. Блокировка проверяется до билета, как и у входа по логину.
+ */
+const finish = (req, res, user) => {
+  assertNotBanned(user);
+  if (twoFactorOn(user)) return { status: 'two-factor', ticket: issueTwoFactorTicket(user.id) };
+  return { status: 'signed-in', user: signIn(req, res, user) };
+};
 
 /** Открыть сеанс. `announce` — известить о входе остальные устройства (не при регистрации). */
 const signIn = (req, res, user, { announce = true } = {}) => {
@@ -48,7 +59,7 @@ router.post('/verify', (req, res, next) => {
     const user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
     if (!user) return res.json({ status: 'signup', ticket: issueTicket('signup', phone) });
     if (hasPassword(user)) return res.json({ status: 'password', ticket: issueTicket('password', phone, user.id) });
-    res.json({ status: 'signed-in', user: signIn(req, res, user) });
+    res.json(finish(req, res, user));
   } catch (err) {
     next(err);
   }
@@ -64,7 +75,7 @@ router.post('/password', async (req, res, next) => {
       return res.status(403).json({ error: 'Пароль не подходит' });
     }
     dropTicket(ticket.token);
-    res.json({ user: signIn(req, res, user) });
+    res.json(finish(req, res, user));
   } catch (err) {
     next(err);
   }

@@ -7,6 +7,7 @@ import { disablePush, enablePush, install, isStandalone, pushState, useInstallAv
 import { useSession } from '../session';
 import { EMPTY_PHONE, PhoneField } from '../components/PhoneField';
 import { formatPhone, toE164 } from '../phone';
+import { TwoFactorSettings } from '../components/TwoFactorSettings';
 import { fullDate, joinedOn, plural } from '../time';
 
 type Choice = { value: LastSeenPrivacy; title: string; hint: string };
@@ -123,6 +124,7 @@ export function Settings() {
           />
         )}
         {account && <Password account={account} onChange={reload} />}
+        {account && <TwoFactorSettings account={account} onChange={reload} />}
         <Device />
         <Sessions />
         <MyData />

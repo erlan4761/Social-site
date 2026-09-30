@@ -2,7 +2,7 @@
 // Сервер нужно поднять с RELAX_RATE_LIMITS=1, иначе лимит регистраций
 // (10 в час на IP) остановит прогон на середине.
 import { DatabaseSync } from 'node:sqlite';
-import { randomBytes, scryptSync } from 'node:crypto';
+import { createHmac, randomBytes, scryptSync } from 'node:crypto';
 
 // Сам прогон лимиты не проверяет — с RELAX_RATE_LIMITS=1 их и нет. Если такую
 // проверку когда-нибудь добавят, API_URL обязан быть http://127.0.0.1:<порт>,
@@ -46,6 +46,27 @@ const LEGACY_SALT = randomBytes(16);
 // Тот же формат, что у hashPassword() сервера: scrypt$соль$ключ.
 const LEGACY_HASH = ['scrypt', LEGACY_SALT.toString('hex'), scryptSync('parol12345', LEGACY_SALT, 64).toString('hex')].join('$');
 let legacyDb = null;
+/** Код приложения-аутентификатора (RFC 6238) — на `shift` шагов по 30 с вперёд. */
+function totpCode(secret, shift = 0) {
+  const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let value = 0;
+  const bytes = [];
+  for (const ch of secret) {
+    value = (value << 5) | B32.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30_000) + shift));
+  const mac = createHmac('sha1', Buffer.from(bytes)).update(counter).digest();
+  const offset = mac[mac.length - 1] & 15;
+  return String((mac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).padStart(6, '0');
+}
+
 async function legacySignUp(client, username, displayName) {
   if (!legacyDb) {
     legacyDb = new DatabaseSync(process.env.DB_PATH);
@@ -3045,6 +3066,22 @@ r = await fin('/auth/phone/signup', { method: 'POST', body: JSON.stringify({ tic
 check('регистрация с галочкой «находить по номеру»', r.status === 201 && (await fin('/account')).body.phoneFind === 'all', `${r.status}`);
 r = await oldie('/users/by-phone', { method: 'POST', body: JSON.stringify({ phones: [phoneFindable] }) });
 check('такого находят по номеру', r.body.users?.length === 1 && r.body.users[0].username === `fin_${stamp}`, JSON.stringify(r.body));
+
+// Вход по номеру, когда включён код из приложения: SMS — и ещё шесть цифр.
+r = await fin('/account/2fa/setup', { method: 'POST', body: '{}' });
+check('аккаунт без пароля подключает код без пароля', r.status === 200 && typeof r.body.secret === 'string', `${r.status} ${JSON.stringify(r.body)}`);
+const finSecret = r.body.secret;
+r = await fin('/account/2fa/enable', { method: 'POST', body: JSON.stringify({ code: totpCode(finSecret) }) });
+check('код включён — десять резервных кодов', r.status === 200 && r.body.backupCodes?.length === 10, `${r.status}`);
+const finAgain = makeClient();
+await new Promise((ok) => setTimeout(ok, RESEND_WAIT));
+await start(finAgain, phoneFindable);
+r = await verify(finAgain, phoneFindable, lastCode(phoneFindable));
+check('после SMS — шаг с кодом, сеанса ещё нет', r.body.status === 'two-factor' && typeof r.body.ticket === 'string'
+  && (await finAgain('/auth/me')).body.user === null, JSON.stringify(r.body));
+r = await finAgain('/auth/2fa', { method: 'POST', body: JSON.stringify({ ticket: r.body.ticket, code: totpCode(finSecret, 1) }) });
+check('код из приложения — и вход', r.status === 200 && r.body.user?.username === `fin_${stamp}` && (await finAgain('/auth/me')).body.user?.username === `fin_${stamp}`,
+  `${r.status} ${JSON.stringify(r.body)}`);
 fakeTwilio.close();
 
 console.log('\n— уведомление о новом входе —');
@@ -4210,6 +4247,92 @@ r = await rxA(`${rxPath}/reactions`);
 check('заблокированного в списке нет', r.body.reactions?.length === 1 && r.body.reactions[0].user.username === userRxB, JSON.stringify(r.body));
 r = await rxC(`${rxPath}/reactions`);
 check('заблокированный не видит и само сообщение — 404, как везде', r.status === 404, `${r.status}`);
+
+console.log('\n— вход с кодом из приложения —');
+const tf = makeClient();
+const userTf = `totp_${stamp}`;
+await legacySignUp(tf, userTf, 'Осторожный');
+const tfLogin = (client) => client('/auth/login', { method: 'POST', body: JSON.stringify({ username: userTf, password: 'parol12345' }) });
+const tfCode = (client, ticket, code) => client('/auth/2fa', { method: 'POST', body: JSON.stringify({ ticket, code }) });
+
+r = await guest('/account/2fa/setup', { method: 'POST', body: '{}' });
+check('гостю — 401', r.status === 401, `${r.status}`);
+r = await tf('/account');
+check('по умолчанию выключено', r.body.twoFactor?.enabled === false, JSON.stringify(r.body.twoFactor));
+r = await tf('/account/2fa/setup', { method: 'POST', body: JSON.stringify({ password: 'не тот' }) });
+check('подключение — только с паролем, если он есть', r.status === 403, `${r.status}`);
+r = await tf('/account/2fa/setup', { method: 'POST', body: JSON.stringify({ password: 'parol12345' }) });
+const tfSecret = r.body.secret;
+check('секрет и адрес для QR', r.status === 200 && /^[A-Z2-7]{32}$/.test(tfSecret ?? '')
+  && r.body.uri === `otpauth://totp/${encodeURIComponent('Хроника')}:${userTf}?secret=${tfSecret}&issuer=${encodeURIComponent('Хроника')}&algorithm=SHA1&digits=6&period=30`,
+  JSON.stringify(r.body));
+r = await tf('/account');
+check('пока код не подтверждён — не включено', r.body.twoFactor?.enabled === false, JSON.stringify(r.body.twoFactor));
+r = await tfLogin(makeClient());
+check('и вход пока без кода', r.status === 200 && r.body.user?.username === userTf, JSON.stringify(r.body));
+r = await tf('/account/2fa/enable', { method: 'POST', body: JSON.stringify({ code: '000000' === totpCode(tfSecret) ? '111111' : '000000' }) });
+check('неверный первый код — не включает', r.status === 403, `${r.status}`);
+const enableCode = totpCode(tfSecret);
+r = await tf('/account/2fa/enable', { method: 'POST', body: JSON.stringify({ code: enableCode }) });
+const backup = r.body.backupCodes ?? [];
+check('включено: десять резервных кодов вида xxxx-xxxx', r.status === 200 && backup.length === 10 && backup.every((c) => /^[a-z2-9]{4}-[a-z2-9]{4}$/.test(c))
+  && new Set(backup).size === 10, JSON.stringify(r.body));
+r = await tf('/account');
+check('в настройках — включено и сколько кодов осталось', r.body.twoFactor?.enabled === true && r.body.twoFactor.backupCodesLeft === 10, JSON.stringify(r.body.twoFactor));
+
+const tfNew = makeClient();
+r = await tfLogin(tfNew);
+check('пароль верный — ещё не вход, а шаг с кодом', r.status === 200 && r.body.status === 'two-factor' && typeof r.body.ticket === 'string' && !r.body.user,
+  JSON.stringify(r.body));
+const tfTicket = r.body.ticket;
+check('сеанса после пароля нет', (await tfNew('/auth/me')).body.user === null, '');
+r = await tfLogin(makeClient());
+r = await makeClient()('/auth/login', { method: 'POST', body: JSON.stringify({ username: userTf, password: 'не тот' }) });
+check('неверный пароль — как раньше, 401 без намёка на код', r.status === 401 && !r.body.ticket, JSON.stringify(r.body));
+r = await tfCode(tfNew, tfTicket, enableCode);
+check('код, которым включали, второй раз не проходит', r.status === 403, `${r.status}`);
+r = await tfCode(tfNew, tfTicket, totpCode(tfSecret, 1));
+check('свежий код — вход', r.status === 200 && r.body.user?.username === userTf && (await tfNew('/auth/me')).body.user?.username === userTf,
+  `${r.status} ${JSON.stringify(r.body)}`);
+r = await tfCode(tfNew, tfTicket, totpCode(tfSecret, 1));
+check('билет одноразовый', r.status === 410, `${r.status}`);
+r = await tfCode(tfNew, 'выдуманный', totpCode(tfSecret));
+check('выдуманный билет — 410', r.status === 410, `${r.status}`);
+
+const tfGuess = makeClient();
+r = await tfLogin(tfGuess);
+const guessTicket = r.body.ticket;
+for (let i = 0; i < 5; i++) r = await tfCode(tfGuess, guessTicket, String(100000 + i));
+check('пять неверных кодов — билет сгорает', r.status === 403 && (await tfCode(tfGuess, guessTicket, totpCode(tfSecret))).status === 410, `${r.status}`);
+
+const tfBackup = makeClient();
+r = await tfLogin(tfBackup);
+r = await tfCode(tfBackup, r.body.ticket, backup[0].toUpperCase().replace('-', ' '));
+check('резервный код (в любом регистре, с пробелом) — вход и сколько осталось', r.status === 200 && r.body.backupCodesLeft === 9, JSON.stringify(r.body));
+r = await tfLogin(makeClient());
+r = await tfCode(makeClient(), r.body.ticket, backup[0]);
+check('резервный код одноразовый', r.status === 403, `${r.status}`);
+
+r = await tf('/account/2fa/backup-codes', { method: 'POST', body: JSON.stringify({ code: 'не код' }) });
+check('новые резервные коды — только с кодом', r.status === 403, `${r.status}`);
+r = await tf('/account/2fa/backup-codes', { method: 'POST', body: JSON.stringify({ code: backup[1] }) });
+const backup2 = r.body.backupCodes ?? [];
+check('новые резервные коды', r.status === 200 && backup2.length === 10 && !backup2.includes(backup[2]), `${r.status}`);
+const tfOld = makeClient();
+r = await tfLogin(tfOld);
+r = await tfCode(tfOld, r.body.ticket, backup[2]);
+check('прежние резервные коды больше не работают', r.status === 403, `${r.status}`);
+
+r = await tf('/account/2fa/disable', { method: 'POST', body: JSON.stringify({ password: 'не тот', code: backup2[0] }) });
+check('выключить — не без пароля', r.status === 403, `${r.status}`);
+r = await tf('/account/2fa/disable', { method: 'POST', body: JSON.stringify({ password: 'parol12345', code: '123' }) });
+check('и не без кода', r.status === 403, `${r.status}`);
+r = await tf('/account/2fa/disable', { method: 'POST', body: JSON.stringify({ password: 'parol12345', code: backup2[0] }) });
+check('выключено паролем и резервным кодом', r.status === 200, `${r.status} ${JSON.stringify(r.body)}`);
+r = await tfLogin(makeClient());
+check('после выключения — снова вход одним паролем', r.status === 200 && r.body.user?.username === userTf, JSON.stringify(r.body));
+r = await tf('/account');
+check('в настройках — выключено', r.body.twoFactor?.enabled === false, JSON.stringify(r.body.twoFactor));
 
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

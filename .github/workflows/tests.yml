@@ -57,6 +57,9 @@ jobs:
       - name: Юнит-тесты предпросмотра ссылок
         run: npm run test:preview
 
+      - name: Юнит-тесты кода из приложения (TOTP)
+        run: npm run test:totp
+
       - name: Запуск сервера
         run: |
           node src/index.js > /tmp/server.log 2>&1 &

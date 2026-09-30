@@ -22,7 +22,8 @@ type Step =
   | { kind: 'signup'; phone: string; ticket: string }
   | { kind: 'password'; phone: string; ticket: string }
   | { kind: 'legacy' }
-  | { kind: 'qr' };
+  | { kind: 'qr' }
+  | { kind: 'two-factor'; ticket: string };
 
 /** Куда вернуть после входа: только путь этого же сайта, не чужой адрес. */
 function backTo(state: unknown) {
@@ -67,13 +68,22 @@ export function Auth({ mode }: { mode: 'login' | 'register' }) {
             onResent={(resendIn, demoCode) => setStep({ ...step, resendAt: Date.now() + resendIn * 1000, demoCode })}
             onVerdict={(v) => {
               if (v.status === 'signed-in') done(v.user);
+              else if (v.status === 'two-factor') setStep({ kind: 'two-factor', ticket: v.ticket });
               else setStep({ kind: v.status, phone: step.phone, ticket: v.ticket });
             }}
           />
         )}
         {step.kind === 'signup' && <SignupStep step={step} onDone={done} />}
-        {step.kind === 'password' && <PasswordStep step={step} onDone={done} onRestart={() => setStep({ kind: 'phone' })} />}
-        {step.kind === 'legacy' && <LegacyLogin onDone={done} />}
+        {step.kind === 'password' && (
+          <PasswordStep
+            step={step}
+            onDone={done}
+            onTwoFactor={(ticket) => setStep({ kind: 'two-factor', ticket })}
+            onRestart={() => setStep({ kind: 'phone' })}
+          />
+        )}
+        {step.kind === 'legacy' && <LegacyLogin onDone={done} onTwoFactor={(ticket) => setStep({ kind: 'two-factor', ticket })} />}
+        {step.kind === 'two-factor' && <TwoFactorStep ticket={step.ticket} onDone={done} onRestart={() => setStep({ kind: 'phone' })} />}
         {step.kind === 'qr' && <QrStep onDone={done} />}
 
         <p className="auth-switch">
@@ -397,9 +407,14 @@ function QrStep({ onDone }: { onDone: (u: User) => void }) {
 
 /* ─ Двухэтапная проверка ─────────────────────────────────────────────── */
 
-type PasswordProps = { step: Extract<Step, { kind: 'password' }>; onDone: (u: User) => void; onRestart: () => void };
+type PasswordProps = {
+  step: Extract<Step, { kind: 'password' }>;
+  onDone: (u: User) => void;
+  onTwoFactor: (ticket: string) => void;
+  onRestart: () => void;
+};
 
-function PasswordStep({ step, onDone, onRestart }: PasswordProps) {
+function PasswordStep({ step, onDone, onTwoFactor, onRestart }: PasswordProps) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -409,7 +424,9 @@ function PasswordStep({ step, onDone, onRestart }: PasswordProps) {
     setBusy(true);
     setError(null);
     try {
-      onDone((await api.phonePassword(step.ticket, password)).user);
+      const res = await api.phonePassword(step.ticket, password);
+      if (res.status === 'two-factor') onTwoFactor(res.ticket);
+      else onDone(res.user);
     } catch (err) {
       setError(errorText(err));
       setBusy(false);
@@ -442,9 +459,100 @@ function PasswordStep({ step, onDone, onRestart }: PasswordProps) {
   );
 }
 
+/* ─ Код из приложения ────────────────────────────────────────────────── */
+
+type TwoFactorProps = { ticket: string; onDone: (u: User) => void; onRestart: () => void };
+
+/**
+ * Третий шаг, если включён вход с кодом: шесть цифр из приложения — или
+ * резервный код, если телефона под рукой нет. Шестая цифра отправляет сама.
+ */
+function TwoFactorStep({ ticket, onDone, onRestart }: TwoFactorProps) {
+  const [backup, setBackup] = useState(false);
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [expired, setExpired] = useState(false);
+
+  async function send(value: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      onDone((await api.twoFactorLogin(ticket, value)).user);
+    } catch (err) {
+      setExpired(err instanceof ApiError && err.status === 410);
+      setError(errorText(err));
+      setCode('');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        void send(code);
+      }}
+    >
+      <p className="auth-lede">
+        {backup
+          ? 'Введите один из резервных кодов, которые вы сохранили при подключении. Каждый действует один раз.'
+          : 'Включён вход с кодом. Откройте приложение-аутентификатор и введите шесть цифр для «Хроники».'}
+      </p>
+      {error && (
+        <p className="error">
+          {error}{' '}
+          {expired && (
+            <button className="btn link" type="button" onClick={onRestart}>
+              Начать заново
+            </button>
+          )}
+        </p>
+      )}
+      <label className="field">
+        <span>{backup ? 'Резервный код' : 'Код из приложения'}</span>
+        <input
+          key={backup ? 'backup' : 'totp'}
+          className="code-input"
+          value={code}
+          inputMode={backup ? 'text' : 'numeric'}
+          autoComplete="one-time-code"
+          autoCapitalize="none"
+          spellCheck={false}
+          maxLength={backup ? 9 : 6}
+          disabled={expired}
+          autoFocus
+          required
+          onChange={(e) => {
+            const value = backup ? e.target.value : e.target.value.replace(/\D/g, '');
+            setCode(value);
+            if (!backup && value.length === 6 && !busy) void send(value);
+          }}
+        />
+      </label>
+      <button className="btn block" type="submit" disabled={busy || expired}>
+        {busy ? 'Проверяю…' : 'Войти'}
+      </button>
+      <p className="auth-switch">
+        <button
+          className="btn link"
+          type="button"
+          onClick={() => {
+            setBackup((v) => !v);
+            setCode('');
+            setError(null);
+          }}
+        >
+          {backup ? 'Ввести код из приложения' : 'Нет телефона под рукой? Войти резервным кодом'}
+        </button>
+      </p>
+    </form>
+  );
+}
+
 /* ─ Старый вход по логину ────────────────────────────────────────────── */
 
-function LegacyLogin({ onDone }: { onDone: (u: User) => void }) {
+function LegacyLogin({ onDone, onTwoFactor }: { onDone: (u: User) => void; onTwoFactor: (ticket: string) => void }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -455,7 +563,9 @@ function LegacyLogin({ onDone }: { onDone: (u: User) => void }) {
     setBusy(true);
     setError(null);
     try {
-      onDone((await api.login({ username, password })).user);
+      const res = await api.login({ username, password });
+      if (res.status === 'two-factor') onTwoFactor(res.ticket);
+      else onDone(res.user);
     } catch (err) {
       setError(errorText(err));
       setBusy(false);

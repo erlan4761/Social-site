@@ -502,6 +502,28 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_channel_posts_album ON channel_posts(album_id) WHERE album_id IS NOT NULL;
 `);
 
+// Двухэтапная проверка (twoFactor.js): секрет приложения-аутентификатора,
+// ещё не подтверждённый секрет, когда включена, шаг последнего принятого кода.
+ensureColumn('users', 'totp_secret', 'TEXT');
+ensureColumn('users', 'totp_pending', 'TEXT');
+ensureColumn('users', 'totp_enabled_at', 'TEXT');
+ensureColumn('users', 'totp_last_step', 'INTEGER');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS totp_backup_codes (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash  TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    used_at    TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_totp_backup_user ON totp_backup_codes(user_id);
+  CREATE TABLE IF NOT EXISTS totp_tickets (
+    token      TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT NOT NULL
+  );
+`);
+
 // Бронь старого логина после смены (см. usernames.js). Строка без внешнего
 // ключа на users намеренно не удаляется вместе с аккаунтом: логин удалённого
 // тоже не должен сразу достаться другому.

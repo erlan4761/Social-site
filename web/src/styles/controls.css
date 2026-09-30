@@ -359,3 +359,23 @@ a.btn { display: inline-block; text-decoration: none; }
 
 /* «Избранное»: закладка на цвете акцента вместо своего лица. */
 .monogram.saved { background: var(--accent); color: var(--accent-contrast); }
+
+/* ─ Вход с кодом из приложения ─────────────────────────────────────────── */
+.totp-steps { margin: 0 0 var(--s-3); padding-left: 1.25rem; color: var(--ink-2); font-size: var(--t-meta); }
+.totp-steps li + li { margin-top: var(--s-1); }
+.totp-qr { display: flex; justify-content: flex-start; margin-bottom: var(--s-3); }
+.totp-secret,
+.backup-codes code {
+  font-family: var(--mono, ui-monospace, "Cascadia Mono", Consolas, monospace);
+  letter-spacing: 0.04em;
+}
+.totp-secret { padding: 0.0625em 0.3em; border-radius: var(--r-xs); background: var(--surface-2); color: var(--ink); overflow-wrap: anywhere; }
+.backup-codes {
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: var(--s-1) var(--s-5, 1.5rem);
+  margin: 0 0 var(--s-3);
+  padding-left: 1.75rem;
+  font-size: var(--t-body);
+}
+.code-input { font-variant-numeric: tabular-nums; letter-spacing: 0.12em; }

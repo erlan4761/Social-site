@@ -303,7 +303,12 @@ export type AccountSettings = {
   phoneFind: PhonePrivacy;
   phoneShow: PhonePrivacy;
   createdAt: string;
+  /** Вход с кодом из приложения-аутентификатора; включён — сколько резервных кодов осталось. */
+  twoFactor: { enabled: boolean; backupCodesLeft?: number };
 };
+
+/** Пароль (или код из SMS) верный, дальше — шесть цифр из приложения. */
+export type TwoFactorNeeded = { status: 'two-factor'; ticket: string };
 
 /** Код отправлен: через сколько секунд он сгорит и когда можно попросить новый. */
 export type CodeSent = { ok: true; phone: string; expiresIn: number; resendIn: number; demoCode?: string };
@@ -312,7 +317,8 @@ export type CodeSent = { ok: true; phone: string; expiresIn: number; resendIn: n
 export type PhoneVerdict =
   | { status: 'signed-in'; user: User }
   | { status: 'password'; ticket: string }
-  | { status: 'signup'; ticket: string };
+  | { status: 'signup'; ticket: string }
+  | TwoFactorNeeded;
 
 /** Открытый вход в аккаунт. Токена здесь нет и не будет — только номер. */
 export type Session = { id: number; current: boolean; createdAt: string; userAgent: string | null };
@@ -501,7 +507,11 @@ const realApi = {
     request<PhoneVerdict>('/auth/phone/verify', { method: 'POST', body: body({ phone, code }) }),
 
   phonePassword: (ticket: string, password: string) =>
-    request<{ user: User }>('/auth/phone/password', { method: 'POST', body: body({ ticket, password }) }),
+    request<{ status: 'signed-in'; user: User } | TwoFactorNeeded>('/auth/phone/password', { method: 'POST', body: body({ ticket, password }) }),
+
+  /** Второй шаг входа — код из приложения или резервный; вошли резервным — сколько их осталось. */
+  twoFactorLogin: (ticket: string, code: string) =>
+    request<{ user: User; backupCodesLeft?: number }>('/auth/2fa', { method: 'POST', body: body({ ticket, code }) }),
 
   /** `findable` — галочка «находить меня по номеру»; без неё по номеру не найдут. */
   phoneSignup: (ticket: string, username: string, displayName: string, findable = false) =>
@@ -509,7 +519,7 @@ const realApi = {
 
   /** Вход по логину и паролю — только для аккаунтов, созданных до входа по номеру. */
   login: (input: { username: string; password: string }) =>
-    request<{ user: User }>('/auth/login', { method: 'POST', body: body(input) }),
+    request<{ user: User; status?: undefined } | TwoFactorNeeded>('/auth/login', { method: 'POST', body: body(input) }),
 
   logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
 
@@ -949,6 +959,22 @@ const realApi = {
   // ─ Аккаунт ─────────────────────────────────────────────────────────────
 
   account: () => request<AccountSettings>('/account'),
+
+  // ─ Вход с кодом из приложения (twoFactor.js) ────────────────────────
+
+  /** Секрет и адрес для QR; пароль — если он у аккаунта есть. */
+  twoFactorSetup: (password?: string) =>
+    request<{ secret: string; uri: string }>('/account/2fa/setup', { method: 'POST', body: body({ password }) }),
+
+  /** Первый код из приложения включает проверку и выдаёт резервные коды — один раз. */
+  twoFactorEnable: (code: string) =>
+    request<{ backupCodes: string[] }>('/account/2fa/enable', { method: 'POST', body: body({ code }) }),
+
+  twoFactorDisable: (password: string | undefined, code: string) =>
+    request<{ ok: true }>('/account/2fa/disable', { method: 'POST', body: body({ password, code }) }),
+
+  twoFactorBackupCodes: (code: string) =>
+    request<{ backupCodes: string[] }>('/account/2fa/backup-codes', { method: 'POST', body: body({ code }) }),
 
   /** Все свои данные одним объектом — для файла «Мои данные» (см. exportData.js). */
   exportData: () => request<DataExport>('/account/export'),
