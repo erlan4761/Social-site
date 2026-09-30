@@ -150,8 +150,8 @@ type ListProps = {
   actions?: ListActions;
   /** Канал: публикации шире и без хвостов «своё/чужое». */
   variant?: 'chat' | 'channel';
-  /** Какое сообщение закреплено — в меню у него «Открепить». */
-  pinnedId?: number | null;
+  /** Какие сообщения закреплены — в меню у них «Открепить». */
+  pinnedIds?: number[];
   /** Команда страницы «покажи это сообщение»: новое seq — новый переход. */
   jump?: { id: number; seq: number } | null;
   /** Выбор нескольких (selection.tsx): есть — в меню появляется «Выбрать». */
@@ -176,7 +176,7 @@ export function MessageList({
   readOnly = false,
   actions,
   variant = 'chat',
-  pinnedId = null,
+  pinnedIds = [],
   jump = null,
   selection,
 }: ListProps) {
@@ -575,7 +575,7 @@ export function MessageList({
           state={menu}
           readOnly={readOnly}
           can={can}
-          pinned={menu.item.id === pinnedId}
+          pinned={pinnedIds.includes(menu.item.id)}
           selectable={Boolean(selection)}
           onClose={() => setMenu(null)}
           onAction={(action) => {

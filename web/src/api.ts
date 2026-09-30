@@ -166,6 +166,9 @@ export type ConversationHit = {
 /** Закреплённое сообщение переписки — для полосы под шапкой. */
 export type PinnedPreview = { id: number; body: string; attachmentKind: AttachmentKind | null };
 
+/** Закреплённые переписки (до двадцати, свежие сверху) и первое из них. */
+export type PinsPayload = { pinned: PinnedPreview | null; pins: PinnedPreview[] };
+
 /** Откуда пересланное: от человека или из канала — подпись ведёт туда. */
 export type ForwardedFrom =
   | { kind: 'user'; username: string; displayName: string }
@@ -613,6 +616,8 @@ const realApi = {
       /** Собеседник набирает сообщение прямо сейчас. */
       typing: boolean;
       pinned: PinnedPreview | null;
+      /** Все закреплённые, свежие сверху; `pinned` — первое из них. */
+      pins: PinnedPreview[];
       /** Общий таймер автоудаления пары, секунды; 0 — выключен. */
       autoDelete: number;
     }>(
@@ -656,10 +661,11 @@ const realApi = {
     request<{ results: ConversationHit[] }>(`/channels/${encodeURIComponent(handle)}/search?q=${encodeURIComponent(q)}`),
 
   pinMessage: (username: string, id: number) =>
-    request<{ pinned: PinnedPreview | null }>(`/messages/${encodeURIComponent(username)}/${id}/pin`, { method: 'PUT' }),
+    request<PinsPayload>(`/messages/${encodeURIComponent(username)}/${id}/pin`, { method: 'PUT' }),
 
-  unpinMessage: (username: string) =>
-    request<{ ok: true }>(`/messages/${encodeURIComponent(username)}/pin`, { method: 'DELETE' }),
+  /** Открепить одно (`id`) или все закреплённые переписки. */
+  unpinMessage: (username: string, id?: number) =>
+    request<PinsPayload>(`/messages/${encodeURIComponent(username)}${id != null ? `/${id}` : ''}/pin`, { method: 'DELETE' }),
 
   reactMessage: (username: string, id: number, emoji: string | null) =>
     request<{ message: Message }>(`/messages/${encodeURIComponent(username)}/${id}/reaction`, {
@@ -834,6 +840,8 @@ const realApi = {
       /** Кто из остальных участников набирает сообщение прямо сейчас. */
       typing: { id: number; displayName: string }[];
       pinned: PinnedPreview | null;
+      /** Все закреплённые, свежие сверху; `pinned` — первое из них. */
+      pins: PinnedPreview[];
     }>(
       `/chats/${id}/messages${qs}`,
     );
@@ -861,9 +869,10 @@ const realApi = {
     request<{ ok: true }>(`/chats/${chatId}/messages/${id}`, { method: 'DELETE' }),
 
   pinChatMessage: (chatId: number, id: number) =>
-    request<{ pinned: PinnedPreview | null }>(`/chats/${chatId}/messages/${id}/pin`, { method: 'PUT' }),
+    request<PinsPayload>(`/chats/${chatId}/messages/${id}/pin`, { method: 'PUT' }),
 
-  unpinChatMessage: (chatId: number) => request<{ ok: true }>(`/chats/${chatId}/pin`, { method: 'DELETE' }),
+  unpinChatMessage: (chatId: number, id?: number) =>
+    request<PinsPayload>(`/chats/${chatId}${id != null ? `/messages/${id}` : ''}/pin`, { method: 'DELETE' }),
 
   /** Кто поставил реакции на сообщение в группе — любому участнику, свежие сверху. */
   chatReactions: (chatId: number, id: number) =>
@@ -1068,7 +1077,7 @@ const realApi = {
     request<{ ok: true }>(`/channels/${encodeURIComponent(handle)}/read`, { method: 'PUT' }),
 
   channelPosts: (handle: string, cursor?: number | null) =>
-    request<{ channel: Channel; posts: ChannelPost[]; nextCursor: number | null; pinned: PinnedPreview | null }>(
+    request<{ channel: Channel; posts: ChannelPost[]; nextCursor: number | null } & PinsPayload>(
       `/channels/${encodeURIComponent(handle)}/posts${cursor != null ? `?cursor=${cursor}` : ''}`,
     ),
 
@@ -1089,10 +1098,10 @@ const realApi = {
     request<{ ok: true }>(`/channels/${encodeURIComponent(handle)}/posts/${id}`, { method: 'DELETE' }),
 
   pinPost: (handle: string, id: number) =>
-    request<{ pinned: PinnedPreview | null }>(`/channels/${encodeURIComponent(handle)}/posts/${id}/pin`, { method: 'PUT' }),
+    request<PinsPayload>(`/channels/${encodeURIComponent(handle)}/posts/${id}/pin`, { method: 'PUT' }),
 
-  unpinPost: (handle: string) =>
-    request<{ ok: true }>(`/channels/${encodeURIComponent(handle)}/pin`, { method: 'DELETE' }),
+  unpinPost: (handle: string, id?: number) =>
+    request<PinsPayload>(`/channels/${encodeURIComponent(handle)}${id != null ? `/posts/${id}` : ''}/pin`, { method: 'DELETE' }),
 
   reactPost: (handle: string, id: number, emoji: string | null) =>
     request<{ post: ChannelPost }>(`/channels/${encodeURIComponent(handle)}/posts/${id}/reaction`, {

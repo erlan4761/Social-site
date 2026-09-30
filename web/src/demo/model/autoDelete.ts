@@ -1,6 +1,6 @@
 import { type PrefKind } from '../../api';
 import { db } from '../store';
-import { pinnedOf, pinScope, setPin } from './folders';
+import { pinScope, removePin } from './folders';
 import { dispatchLive } from '../../live';
 
 /** Автоудаление в витрине — как autoDelete.js: таймер у переписки, срок у сообщения. */
@@ -25,9 +25,7 @@ export function expiryFor(kind: PrefKind, targetId: number, fromId: number | nul
   return seconds ? new Date(Date.now() + seconds * 1000).toISOString() : null;
 }
 
-const unpinIf = (kind: PrefKind, scope: string | number, messageId: number) => {
-  if (pinnedOf(kind, scope)?.messageId === messageId) setPin(kind, scope, null);
-};
+const unpinIf = (kind: PrefKind, scope: string | number, messageId: number) => removePin(kind, scope, messageId);
 
 /** Убрать истёкшее — тем же тактом, что отправляет отложенные. */
 export function sweepExpired() {

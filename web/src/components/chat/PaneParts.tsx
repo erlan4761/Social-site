@@ -7,24 +7,56 @@ import { Icon } from '../Icon';
 /* ─ Шапка переписки и полоса закреплённого ───────────────────────────── */
 
 type PinnedBarProps = {
-  pinned: PinnedPreview;
-  onOpen: () => void;
+  /** Закреплённые, свежие сверху. */
+  pins: PinnedPreview[];
+  onOpen: (id: number) => void;
   /** Нет — значит, откреплять этому человеку нельзя (группа, канал). */
-  onUnpin?: () => void;
+  onUnpin?: (id: number) => void;
 };
 
-/** Полоса под шапкой, как в Телеграме: по нажатию лента едет к сообщению. */
-export function PinnedBar({ pinned, onOpen, onUnpin }: PinnedBarProps) {
+/**
+ * Полоса под шапкой, как в Телеграме: по нажатию лента едет к сообщению, а
+ * полоса переходит к предыдущему закреплённому — и так по кругу. Риски слева
+ * показывают, какое из нескольких сейчас на виду; крестик открепляет его.
+ */
+export function PinnedBar({ pins, onOpen, onUnpin }: PinnedBarProps) {
+  const [index, setIndex] = useState(0);
+  const n = pins.length;
+  const i = Math.min(index, n - 1);
+  const current = pins[i];
+  // Больше четырёх рисок не различить глазом — окно из четырёх, как в Телеграме.
+  const marks = Math.min(n, 4);
+  const lit = n <= 4 ? i : Math.round((i * 3) / (n - 1));
   return (
     <div className="pinned-bar">
-      <button className="pinned-open" type="button" onClick={onOpen}>
+      <button
+        className={n > 1 ? 'pinned-open many' : 'pinned-open'}
+        type="button"
+        onClick={() => {
+          onOpen(current.id);
+          if (n > 1) setIndex((i + 1) % n);
+        }}
+      >
+        {n > 1 && (
+          <span className="pinned-marks" aria-hidden="true">
+            {Array.from({ length: marks }, (_, k) => (
+              <span key={k} className={k === lit ? 'on' : undefined} />
+            ))}
+          </span>
+        )}
         <span className="pinned-text">
-          <strong>Закреплённое сообщение</strong>
-          <span>{pinned.body}</span>
+          <strong>{n > 1 ? `Закреплённое ${i + 1} из ${n}` : 'Закреплённое сообщение'}</strong>
+          <span>{current.body}</span>
         </span>
       </button>
       {onUnpin && (
-        <button className="icon-btn" type="button" aria-label="Открепить" title="Открепить" onClick={onUnpin}>
+        <button
+          className="icon-btn"
+          type="button"
+          aria-label={n > 1 ? 'Открепить это сообщение' : 'Открепить'}
+          title={n > 1 ? 'Открепить это сообщение' : 'Открепить'}
+          onClick={() => onUnpin(current.id)}
+        >
           <Icon name="close" size={18} />
         </button>
       )}

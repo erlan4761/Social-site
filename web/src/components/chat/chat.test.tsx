@@ -5,6 +5,7 @@ import { api, type Poll } from '../../api';
 import { Composer } from './Composer';
 import { MessageText, firstUrl } from './MessageText';
 import { PollCard } from './PollCard';
+import { PinnedBar } from './PaneParts';
 import { DRAFT_SAVE_MS } from './draft';
 
 /** Поведение деталей переписки — как его видит человек: кнопки, подсказки, ссылки. */
@@ -238,5 +239,39 @@ describe('меню кнопки отправки', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Отправить' }));
     });
     expect(onSend).toHaveBeenCalledWith('Громко');
+  });
+});
+
+describe('несколько закреплённых', () => {
+  const pins = [
+    { id: 30, body: 'Третье', attachmentKind: null },
+    { id: 20, body: 'Второе', attachmentKind: null },
+    { id: 10, body: 'Первое', attachmentKind: null },
+  ];
+
+  it('нажатие ведёт к закреплённому и переходит к предыдущему — по кругу', () => {
+    const onOpen = vi.fn();
+    render(<PinnedBar pins={pins} onOpen={onOpen} />);
+    const bar = screen.getByRole('button', { name: /Закреплённое 1 из 3/ });
+    expect(bar).toHaveTextContent('Третье');
+    fireEvent.click(bar);
+    expect(onOpen).toHaveBeenLastCalledWith(30);
+    expect(screen.getByRole('button', { name: /Закреплённое 2 из 3/ })).toHaveTextContent('Второе');
+    fireEvent.click(screen.getByRole('button', { name: /2 из 3/ }));
+    fireEvent.click(screen.getByRole('button', { name: /3 из 3/ }));
+    expect(onOpen.mock.calls.map((c) => c[0])).toEqual([30, 20, 10]);
+    expect(screen.getByRole('button', { name: /1 из 3/ })).toBeInTheDocument();
+    expect(document.querySelectorAll('.pinned-marks span')).toHaveLength(3);
+  });
+
+  it('крестик открепляет то, что на виду; одно — без счёта и рисок', () => {
+    const onUnpin = vi.fn();
+    const { rerender } = render(<PinnedBar pins={pins} onOpen={() => undefined} onUnpin={onUnpin} />);
+    fireEvent.click(screen.getByRole('button', { name: /1 из 3/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Открепить это сообщение' }));
+    expect(onUnpin).toHaveBeenCalledWith(20);
+    rerender(<PinnedBar pins={[pins[2]]} onOpen={() => undefined} onUnpin={onUnpin} />);
+    expect(screen.getByRole('button', { name: /Закреплённое сообщение/ })).toHaveTextContent('Первое');
+    expect(document.querySelector('.pinned-marks')).toBeNull();
   });
 });

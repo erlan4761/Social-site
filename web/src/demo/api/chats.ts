@@ -3,7 +3,7 @@ import type { SendExtra } from './dm';
 import { type DbUser, type DbChat, NO_EXTRAS, type DbChatMessage, db, id, tick, fail } from '../store';
 import { byId, byName, requireMe, blockedPair, hidden } from '../model/people';
 import { attachmentFrom, assertEditable, setReaction, findHits, setTyping, clearTyping, isTyping, forwardSource, readSticker, CHAT_PAGE, BODY_MAX, checkAlbum } from '../model/messages';
-import { pinnedOf, setPin, pinPreview } from '../model/folders';
+import { addPin, removePin, pinsPayload } from '../model/folders';
 import { prefFields, dropPrefs, notify, saveMentions, unreadMentions, unreadMentionIds, markNotificationsRead } from '../model/notifications';
 import { clearDraft, draftOf } from '../model/drafts';
 import { expiryFor } from '../model/autoDelete';
@@ -148,7 +148,7 @@ export const chatsApi = {
       typing: membersOf(chat.id)
         .filter((m) => m.userId !== u.id && !hidden(m.userId) && isTyping(`chat:${chat.id}`, m.userId))
         .map((m) => ({ id: m.userId, displayName: byId(m.userId)!.displayName })),
-      pinned: pinPreview('chat', chat.id, visibleChatMessages(chat.id)),
+      ...pinsPayload('chat', chat.id, visibleChatMessages(chat.id)),
       ...(cursor == null ? { unreadMentions: unreadMentionIds(chat.id, u.id) } : {}),
     });
   },
@@ -214,7 +214,7 @@ export const chatsApi = {
     // Своё — автор; владелец — любое, администратор — сообщения участников.
     if (m.authorId !== u.id && !outranks(chat, u.id, m.authorId)) fail(403, 'Удалить можно своё сообщение, а администратору — сообщения участников');
     db.chatMessages = db.chatMessages.filter((x) => x.id !== m.id);
-    if (pinnedOf('chat', chat.id)?.messageId === m.id) setPin('chat', chat.id, null);
+    removePin('chat', chat.id, m.id);
     db.chatReactions = db.chatReactions.filter((r) => r.messageId !== m.id);
     db.chatMentions = db.chatMentions.filter((x) => x.messageId !== m.id);
     db.notifications = db.notifications.filter((n) => n.messageId !== m.id);
@@ -395,15 +395,15 @@ export const chatsApi = {
     const { u, chat } = requireChat(chatId);
     if (!isAdmin(chat, u.id)) fail(403, 'Закреплять сообщения могут владелец и администраторы');
     const m = requireChatMessage(chat.id, messageId);
-    setPin('chat', chat.id, m.id);
-    return tick({ pinned: pinPreview('chat', chat.id, visibleChatMessages(chat.id)) });
+    addPin('chat', chat.id, m.id);
+    return tick(pinsPayload('chat', chat.id, visibleChatMessages(chat.id)));
   },
 
-  unpinChatMessage: (chatId: number) => {
+  unpinChatMessage: (chatId: number, id?: number) => {
     const { u, chat } = requireChat(chatId);
     if (!isAdmin(chat, u.id)) fail(403, 'Откреплять сообщения могут владелец и администраторы');
-    setPin('chat', chat.id, null);
-    return tick({ ok: true as const });
+    removePin('chat', chat.id, id ?? null);
+    return tick(pinsPayload('chat', chat.id, visibleChatMessages(chat.id)));
   },
 
   sendChatSticker: (chatId: number, sticker: string) =>

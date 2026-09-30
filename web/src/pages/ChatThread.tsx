@@ -70,7 +70,7 @@ function ChatView({ idParam }: { idParam: string }) {
   const [notice, notify] = useNotice();
   const selection = useSelection(messages.map((m) => m.id));
   const [pollOpen, setPollOpen] = useState(false);
-  const [pinned, setPinned] = useState<PinnedPreview | null>(null);
+  const [pins, setPins] = useState<PinnedPreview[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [jump, setJump] = useState<{ id: number; seq: number } | null>(null);
   /** Номер последнего своего изменения — см. Thread.tsx. */
@@ -105,7 +105,7 @@ function ChatView({ idParam }: { idParam: string }) {
         setReadUpTo(res.readUpTo);
         setCursor(res.nextCursor);
         setTyping(res.typing.map((t) => t.displayName));
-        setPinned(res.pinned);
+        setPins(res.pins);
         markRead();
       })
       .catch((err) => {
@@ -143,7 +143,7 @@ function ChatView({ idParam }: { idParam: string }) {
           setTyping(res.typing.map((t) => t.displayName));
           window.clearTimeout(typingTimer.current);
           if (res.typing.length > 0) typingTimer.current = window.setTimeout(() => pullRef.current(), 6_500);
-          setPinned(res.pinned);
+          setPins(res.pins);
           if (edits.current !== startedAt) return;
           setMessages((prev) => {
             const newest = prev.at(-1)?.id ?? 0;
@@ -187,13 +187,10 @@ function ChatView({ idParam }: { idParam: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, wanted]);
 
+  /** Закрепить или открепить — ответ сервера приносит весь список закреплённых. */
   async function togglePin(id: number) {
-    if (pinned?.id === id) {
-      await api.unpinChatMessage(chatId);
-      setPinned(null);
-    } else {
-      setPinned((await api.pinChatMessage(chatId, id)).pinned);
-    }
+    const res = pins.some((x) => x.id === id) ? await api.unpinChatMessage(chatId, id) : await api.pinChatMessage(chatId, id);
+    setPins(res.pins);
   }
 
   async function loadOlder() {
@@ -546,11 +543,11 @@ function ChatView({ idParam }: { idParam: string }) {
         />
       )}
 
-      {pinned && (
+      {pins.length > 0 && (
         <PinnedBar
-          pinned={pinned}
-          onOpen={() => void reveal(pinned.id)}
-          onUnpin={amAdmin ? () => void api.unpinChatMessage(chatId).then(() => setPinned(null)).catch(() => undefined) : undefined}
+          pins={pins}
+          onOpen={(id) => void reveal(id)}
+          onUnpin={amAdmin ? (id) => void api.unpinChatMessage(chatId, id).then((r) => setPins(r.pins)).catch(() => undefined) : undefined}
         />
       )}
 
@@ -669,7 +666,7 @@ function ChatView({ idParam }: { idParam: string }) {
         selection={selection}
         // Закреплять в группе — владельцу и администраторам.
         actions={{ pin: amAdmin, readers: true, reactors: true, link: true }}
-        pinnedId={pinned?.id ?? null}
+        pinnedIds={pins.map((x) => x.id)}
         jump={jump}
         empty={
           <>
