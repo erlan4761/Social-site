@@ -142,6 +142,9 @@ app.put('/api/account/username', rateLimit({ windowMs: 60 * 60_000, max: relaxed
 app.post('/api/calls', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 10 }));
 app.post('/api/calls/*splat', rateLimit({ windowMs: 60_000, max: relaxed ? 10_000 : 400 }));
 
+// Выгрузка данных тяжёлая: пять раз в час с адреса хватит любому.
+app.get('/api/account/export', rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 5 }));
+
 const blockLimit = rateLimit({ windowMs: 60 * 60_000, max: relaxed ? 10_000 : 30 });
 app.put('/api/users/:username/block', blockLimit);
 app.delete('/api/users/:username/block', blockLimit);

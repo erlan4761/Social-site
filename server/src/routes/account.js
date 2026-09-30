@@ -6,6 +6,7 @@ import { deleteUpload } from '../media.js';
 import { dropPrefs } from '../prefs.js';
 import { dropDrafts } from '../drafts.js';
 import { heirOf } from '../chatRoles.js';
+import { exportFor } from '../exportData.js';
 import { HOLD_DAYS, changeUsername, holdUsername, usernameTaken } from '../usernames.js';
 import { unpin } from '../pins.js';
 import { LAST_SEEN_OPTIONS } from '../presence.js';
@@ -184,6 +185,16 @@ router.delete('/password', async (req, res, next) => {
  * Токен сеанса — это и есть вход в аккаунт, наружу он не отдаётся даже
  * владельцу: у сеанса в ответе только rowid.
  */
+
+/** Выгрузка своих данных одним JSON-файлом (см. exportData.js). */
+router.get('/export', (req, res) => {
+  const date = new Date().toISOString().slice(0, 10);
+  res.set({
+    'Content-Disposition': `attachment; filename="hronika-${req.user.username}-${date}.json"`,
+    'Cache-Control': 'no-store',
+  });
+  res.json(exportFor(req.user.id));
+});
 
 router.get('/sessions', (req, res) => {
   const rows = db.prepare(`
