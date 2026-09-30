@@ -333,8 +333,8 @@ export function seed() {
   kept.fwdUserId = marina.id;
 
   db.sessions.push(
-    { id: id(), userId: demo.id, createdAt: ago(days(20)), userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0' },
-    { id: id(), userId: demo.id, createdAt: ago(days(4)), userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1' },
+    { id: id(), userId: demo.id, createdAt: ago(days(20)), lastUsedAt: ago(days(10)), userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0' },
+    { id: id(), userId: demo.id, createdAt: ago(days(4)), lastUsedAt: ago(120), userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1' },
   );
   // Смотрящий витрины — модератор: в «Жалобах» лежат две жалобы на снимок Нины.
   demo.moderator = true;

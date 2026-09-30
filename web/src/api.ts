@@ -313,6 +313,8 @@ export type AccountSettings = {
   createdAt: string;
   /** Вход с кодом из приложения-аутентификатора; включён — сколько резервных кодов осталось. */
   twoFactor: { enabled: boolean; backupCodesLeft?: number };
+  /** Сеанс, которым не пользовались столько дней, закрывается сам. */
+  sessionTtlDays: number;
 };
 
 /** Пароль (или код из SMS) верный, дальше — шесть цифр из приложения. */
@@ -329,7 +331,11 @@ export type PhoneVerdict =
   | TwoFactorNeeded;
 
 /** Открытый вход в аккаунт. Токена здесь нет и не будет — только номер. */
-export type Session = { id: number; current: boolean; createdAt: string; userAgent: string | null };
+/** `lastUsedAt` — когда сеансом пользовались (с точностью до часа). */
+export type Session = { id: number; current: boolean; createdAt: string; lastUsedAt: string; userAgent: string | null };
+
+/** Через сколько дней без использования сеанс закрывается сам. */
+export const SESSION_TTL_OPTIONS = [7, 30, 90, 180, 365] as const;
 
 export type Conversation = ChatPrefs & WithDraft & {
   user: Person;
@@ -1026,6 +1032,10 @@ const realApi = {
   endSession: (id: number) => request<{ ok: true }>(`/account/sessions/${id}`, { method: 'DELETE' }),
 
   endOtherSessions: () => request<{ ok: true; ended: number }>('/account/sessions', { method: 'DELETE' }),
+
+  /** Новый срок автозавершения; давно неактивные сеансы закрываются сразу — `ended`. */
+  setSessionTtl: (days: number) =>
+    request<{ days: number; ended: number }>('/account/session-ttl', { method: 'PUT', body: body({ days }) }),
 
   /** Код на свой номер для удаления аккаунта без пароля. */
   deleteCode: () => request<CodeSent>('/account/delete-code', { method: 'POST' }),

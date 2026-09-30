@@ -4409,5 +4409,54 @@ check('после выключения — снова вход одним пар
 r = await tf('/account');
 check('в настройках — выключено', r.body.twoFactor?.enabled === false, JSON.stringify(r.body.twoFactor));
 
+console.log('\n— автозавершение сеансов —');
+const ttlA = makeClient();
+const ttlB = makeClient();
+const ttlC = makeClient();
+const userTtl = `ttl_${stamp}`;
+await legacySignUp(ttlA, userTtl, 'Сеансовый');
+const ttlLogin = (client) => client('/auth/login', { method: 'POST', body: JSON.stringify({ username: userTtl, password: 'parol12345' }) });
+await ttlLogin(ttlB);
+const agoIso = (ms) => new Date(Date.now() - ms).toISOString();
+const sessionIdOf = async (client) => (await client('/account/sessions')).body.sessions?.find((s) => s.current)?.id;
+const idTtlA = await sessionIdOf(ttlA);
+const idTtlB = await sessionIdOf(ttlB);
+
+r = await ttlA('/account');
+check('по умолчанию — месяц без использования', r.body.sessionTtlDays === 30, JSON.stringify(r.body.sessionTtlDays));
+r = await ttlA('/account/sessions');
+check('у сеанса — когда им пользовались', r.body.sessions?.length === 2 && r.body.sessions.every((s) => typeof s.lastUsedAt === 'string'), JSON.stringify(r.body.sessions));
+r = await ttlA('/account/session-ttl', { method: 'PUT', body: JSON.stringify({ days: 3 }) });
+check('срок не из списка — 400', r.status === 400, `${r.status}`);
+r = await guest('/account/session-ttl', { method: 'PUT', body: JSON.stringify({ days: 7 }) });
+check('гостю — 401', r.status === 401, `${r.status}`);
+
+// Вторым сеансом не пользовались десять дней — неделя его закрывает сразу.
+legacyDb.prepare('UPDATE sessions SET last_used_at = ? WHERE rowid = ?').run(agoIso(10 * 864e5), idTtlB);
+r = await ttlA('/account/session-ttl', { method: 'PUT', body: JSON.stringify({ days: 7 }) });
+check('срок «неделя» — давно неактивный сеанс закрыт сразу', r.status === 200 && r.body.days === 7 && r.body.ended === 1, JSON.stringify(r.body));
+check('им больше не войти', (await ttlB('/auth/me')).body.user === null, '');
+check('текущий — на месте', (await ttlA('/auth/me')).body.user?.username === userTtl, '');
+r = await ttlA('/account');
+check('в настройках — неделя', r.body.sessionTtlDays === 7, JSON.stringify(r.body.sessionTtlDays));
+
+// Пользуются — срок сдвигается вперёд (не чаще раза в час) вместе с кукой.
+legacyDb.prepare('UPDATE sessions SET last_used_at = ?, expires_at = ? WHERE rowid = ?')
+  .run(agoIso(2 * 3_600_000), new Date(Date.now() + 3_600_000).toISOString(), idTtlA);
+raw = await ttlA.raw('/api/auth/me');
+const extended = legacyDb.prepare('SELECT expires_at FROM sessions WHERE rowid = ?').get(idTtlA);
+const extendedLeft = Date.parse(extended?.expires_at) - Date.now();
+check('пользуются — срок сдвинут на неделю вперёд', extendedLeft > 7 * 864e5 - 60_000 && extendedLeft <= 7 * 864e5 + 5_000, extended?.expires_at);
+check('и кука продлена', /sid=/.test(raw.headers.get('set-cookie') ?? ''), raw.headers.get('set-cookie'));
+raw = await ttlA.raw('/api/auth/me');
+check('свежий сеанс не продлевается на каждом запросе', !raw.headers.get('set-cookie'), raw.headers.get('set-cookie'));
+
+// Истёкшие убирает такт планировщика — вместе с их пуш-подписками.
+await ttlLogin(ttlC);
+const idTtlC = await sessionIdOf(ttlC);
+legacyDb.prepare('UPDATE sessions SET expires_at = ? WHERE rowid = ?').run(agoIso(1000), idTtlC);
+await sleep(Number(process.env.SCHEDULE_TICK_MS ?? 500) * 2 + 300);
+check('истёкший сеанс убран тактом планировщика', !legacyDb.prepare('SELECT 1 FROM sessions WHERE rowid = ?').get(idTtlC), '');
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
