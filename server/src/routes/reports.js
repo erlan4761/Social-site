@@ -60,16 +60,22 @@ router.post('/', (req, res, next) => {
     // INSERT OR IGNORE вместо предварительной выборки: уникальность уже
     // объявлена в схеме, и полагаться на неё честнее, чем на проверку,
     // между которой и вставкой всегда есть щель.
+    // Жалоба на то, что модератор уже оставил, — снова открытая: вдруг
+    // запись с тех пор поменялась или жалуются по другой причине.
     const info = db.prepare(`
-      INSERT OR IGNORE INTO reports (reporter_id, target_type, target_id, reason, note, created_at)
+      INSERT INTO reports (reporter_id, target_type, target_id, reason, note, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (reporter_id, target_type, target_id) DO UPDATE
+        SET reason = excluded.reason, note = excluded.note, created_at = excluded.created_at,
+            resolved_at = NULL, resolution = NULL, resolved_by = NULL
+        WHERE reports.resolved_at IS NOT NULL
     `).run(req.user.id, targetType, targetId, reason, note, nowIso());
 
     const alreadyReported = info.changes === 0;
 
-    // Панели модератора в проекте нет, и делать вид, что жалоба куда-то
-    // уходит, нечестно: она ложится в таблицу и печатается в лог сервера —
-    // тот же подход, что у письма для сброса пароля без RESEND_API_KEY.
+    // Жалоба ложится в таблицу — её разбирают в панели модератора
+    // (routes/moderation.js) — и дублируется строкой в лог сервера: пока
+    // модератор не назначен, это единственный способ её заметить.
     // Повтор не печатается: это второй клик, а не второй сигнал.
     if (!alreadyReported) {
       console.warn(

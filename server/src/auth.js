@@ -69,13 +69,16 @@ export function loadUser(req, _res, next) {
   const token = req.cookies?.[SESSION_COOKIE];
   if (token) {
     const row = db.prepare(`
-      SELECT u.id, u.username, u.display_name, u.bio, u.avatar_path, u.created_at, s.expires_at
+      SELECT u.id, u.username, u.display_name, u.bio, u.avatar_path, u.created_at, u.moderator, u.banned_at, s.expires_at
       FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token = ?
     `).get(token);
 
-    if (row && new Date(row.expires_at) > new Date()) {
-      req.user = publicUser(row);
+    // Заблокированный модератором не входит: блокировка и так закрывает
+    // сеансы, а эта проверка — на случай, если какой-то уцелел.
+    if (row && new Date(row.expires_at) > new Date() && !row.banned_at) {
+      // Флаг модератора — только в собственном «я»: другим его не показывают.
+      req.user = selfUser(row);
       req.sessionToken = token;
       touchLastSeen(row.id);
     } else if (row) {
@@ -85,10 +88,18 @@ export function loadUser(req, _res, next) {
   next();
 }
 
+/** Вход заблокированного модератором — 403. Проверять после пароля или кода. */
+export function assertNotBanned(user) {
+  if (user?.banned_at) throw Object.assign(new Error('Аккаунт заблокирован модератором'), { status: 403 });
+}
+
 export function requireAuth(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Требуется вход в аккаунт' });
   next();
 }
+
+/** Своё «я»: как publicUser, плюс флаг модератора — его видит только сам человек. */
+export const selfUser = (row) => (row.moderator ? { ...publicUser(row), moderator: true } : publicUser(row));
 
 export function publicUser(row) {
   return {

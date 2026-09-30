@@ -23,6 +23,10 @@ export type DbUser = {
   alwaysOnline?: boolean;
   /** Кому видно время захода — как колонка last_seen_privacy. */
   lastSeenPrivacy?: LastSeenPrivacy;
+  /** Модератор жалоб и блокировка модератором — как users.moderator, banned_at. */
+  moderator?: boolean;
+  bannedAt?: string | null;
+  banReason?: string;
   /** Кто найдёт по номеру и кому он виден — phone_find / phone_show; нет — «никто». */
   phoneFind?: LastSeenPrivacy;
   phoneShow?: LastSeenPrivacy;
@@ -100,6 +104,9 @@ export type DbReport = {
   reason: ReportReason;
   note: string;
   createdAt: string;
+  /** Решение модератора — как reports.resolved_at и resolution. */
+  resolvedAt?: string | null;
+  resolution?: 'dismissed' | 'removed' | 'banned' | null;
 };
 
 /** `invite` — код ссылки-приглашения, как chats.invite_token; нет — ссылки нет. */

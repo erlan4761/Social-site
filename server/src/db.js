@@ -488,6 +488,15 @@ db.exec(`
   );
 `);
 
+// Модерация (см. routes/moderation.js): кто модератор, кого модератор
+// заблокировал, чем кончилась жалоба.
+ensureColumn('users', 'moderator', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('users', 'banned_at', 'TEXT');
+ensureColumn('users', 'ban_reason', 'TEXT');
+ensureColumn('reports', 'resolved_at', 'TEXT');
+ensureColumn('reports', 'resolution', 'TEXT');
+ensureColumn('reports', 'resolved_by', 'INTEGER');
+
 // Черновики (см. drafts.js): по одному на человека и чат.
 db.exec(`
   CREATE TABLE IF NOT EXISTS drafts (

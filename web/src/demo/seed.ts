@@ -332,6 +332,13 @@ export function seed() {
     { id: id(), userId: demo.id, createdAt: ago(days(20)), userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0' },
     { id: id(), userId: demo.id, createdAt: ago(days(4)), userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1' },
   );
+  // Смотрящий витрины — модератор: в «Жалобах» лежат две жалобы на снимок Нины.
+  demo.moderator = true;
+  db.reports.push(
+    { reporterId: marina.id, targetType: 'post', targetId: op1.id, reason: 'other', note: 'Кажется, это чужой снимок', createdAt: ago(300) },
+    { reporterId: oleg.id, targetType: 'post', targetId: op1.id, reason: 'other', note: '', createdAt: ago(120) },
+  );
+
   // Недописанный ответ Олегу — в списке чатов видно «Черновик: …».
   db.drafts.push({ userId: demo.id, kind: 'dm', targetId: oleg.id, body: 'Да, Am7 — а станок какого года?', updatedAt: ago(20) });
   openSession(demo.id);

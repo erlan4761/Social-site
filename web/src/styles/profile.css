@@ -314,3 +314,26 @@
 
 .settings-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-bottom: var(--s-4); }
 .settings-actions:empty { display: none; }
+
+/* ─ Панель модератора ─────────────────────────────────────────────────── */
+.mod-tabs { display: flex; gap: var(--s-2); margin-bottom: var(--s-4); flex-wrap: wrap; }
+.mod-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-3); }
+.mod-card {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.mod-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2) var(--s-3); }
+.mod-kind { font-size: var(--t-micro); font-weight: 600; color: var(--ink-2); }
+.mod-count { font-size: var(--t-meta); font-weight: 600; color: var(--danger); }
+.mod-meta { font-size: var(--t-micro); color: var(--ink-3); display: block; }
+.mod-head .mod-meta { display: inline; margin-left: auto; }
+.mod-who { display: flex; align-items: center; gap: var(--s-2); color: inherit; text-decoration: none; font-size: 0.875rem; }
+.mod-subject { display: grid; gap: var(--s-2); justify-items: start; }
+.mod-text { margin: 0; font-family: var(--read); white-space: pre-wrap; overflow-wrap: anywhere; }
+.mod-text.gone { color: var(--ink-3); font-style: italic; }
+.mod-media { max-width: 12rem; max-height: 9rem; border-radius: var(--r-sm); object-fit: cover; }
+.mod-notes { margin: 0; padding-left: var(--s-4); font-size: var(--t-meta); color: var(--ink-2); }

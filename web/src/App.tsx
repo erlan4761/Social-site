@@ -10,6 +10,7 @@ import { ChannelView } from './pages/ChannelView';
 import { ChatThread } from './pages/ChatThread';
 import { Feed } from './pages/Feed';
 import { Join } from './pages/Join';
+import { Moderation } from './pages/Moderation';
 import { ForgotPassword } from './pages/ForgotPassword';
 import { Messenger, MessengerEmpty } from './pages/Messenger';
 import { Notifications } from './pages/Notifications';
@@ -74,6 +75,7 @@ export function App() {
             <Route path="p/:id" element={<PostPage />} />
             <Route path="notifications" element={<Notifications />} />
             <Route path="join/:token" element={<Join />} />
+            <Route path="moderation" element={<Moderation />} />
             {/* Мессенджер — список чатов и открытая переписка рядом, как в
                 Телеграме. Переписка вложена в него, поэтому список не
                 перерисовывается при переходе между чатами. */}

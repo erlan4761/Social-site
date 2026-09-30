@@ -171,6 +171,10 @@ export const peopleApi = {
       if (targetId === u.id) fail(400, 'Нельзя пожаловаться на себя');
     }
 
+    // Жалоба на то, что модератор уже разобрал, — снова открытая, как на сервере.
+    db.reports = db.reports.filter(
+      (r) => !(r.reporterId === u.id && r.targetType === input.targetType && r.targetId === targetId && r.resolvedAt),
+    );
     const already = db.reports.some(
       (r) => r.reporterId === u.id && r.targetType === input.targetType && r.targetId === targetId,
     );
@@ -180,9 +184,8 @@ export const peopleApi = {
         reporterId: u.id, targetType: input.targetType, targetId,
         reason: input.reason, note, createdAt: new Date().toISOString(),
       });
-      // Панели модератора в проекте нет, и жалоба честно уходит в лог — на
-      // сервере в консоль процесса, здесь в консоль вкладки. Повтор не
-      // печатается: это второй клик, а не второй сигнал.
+      // Жалобу разбирают в панели модератора; как и на сервере, она ещё и
+      // печатается — здесь в консоль вкладки. Повтор не печатается.
       console.warn(
         `⚑ Жалоба: @${u.username} → ${input.targetType} #${targetId}, причина «${input.reason}»`
         + (note ? `, комментарий: ${note}` : ''),

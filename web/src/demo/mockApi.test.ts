@@ -339,3 +339,29 @@ describe('витрина: смена логина', () => {
     expect((await api.changeUsername('demo')).user.username).toBe('demo');
   });
 });
+
+describe('витрина: модерация', () => {
+  it('жалобы на снимок Нины сгруппированы; «оставить» закрывает их', async () => {
+    const { reports } = await api.moderationReports('open');
+    expect(reports[0]).toMatchObject({ targetType: 'post', count: 2 });
+    expect(reports[0].subject?.author?.username).toBe('nina');
+    await api.resolveReport('post', reports[0].targetId, 'dismiss');
+    expect((await api.moderationReports('open')).reports).toHaveLength(0);
+    expect((await api.moderationReports('resolved')).reports[0].resolution).toBe('dismissed');
+  });
+
+  it('блокировка: заблокированный не входит, после снятия — входит', async () => {
+    const { reports } = await api.moderationReports('open');
+    await api.resolveReport('post', reports[0].targetId, 'ban');
+    expect((await api.bannedUsers()).users.map((u) => u.username)).toEqual(['nina']);
+    await expect(loginAs('nina')).rejects.toMatchObject({ status: 403 });
+    await loginAs('demo');
+    await api.unbanUser('nina');
+    expect((await loginAs('nina')).user.username).toBe('nina');
+  });
+
+  it('не модератору панель закрыта', async () => {
+    await loginAs('marina');
+    await expect(api.moderationReports('open')).rejects.toMatchObject({ status: 403 });
+  });
+});
