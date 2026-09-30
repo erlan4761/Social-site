@@ -365,3 +365,22 @@ describe('витрина: модерация', () => {
     await expect(api.moderationReports('open')).rejects.toMatchObject({ status: 403 });
   });
 });
+
+describe('витрина: архив', () => {
+  it('в архив — и обратно с новым сообщением, если не приглушён', async () => {
+    const row = async () => (await api.conversations()).conversations.find((c) => c.user.username === 'marina')!;
+    expect((await api.setPref('dm', 'marina', { archived: true })).archived).toBe(true);
+    expect((await row()).archived).toBe(true);
+    await new Promise((r) => setTimeout(r, 5));
+    await loginAs('marina');
+    await api.sendMessage('demo', 'Выходи из архива');
+    await loginAs('demo');
+    expect((await row()).archived).toBe(false);
+    await api.setPref('dm', 'marina', { archived: true, muted: true });
+    await new Promise((r) => setTimeout(r, 5));
+    await loginAs('marina');
+    await api.sendMessage('demo', 'Я приглушена');
+    await loginAs('demo');
+    expect((await row()).archived).toBe(true);
+  });
+});

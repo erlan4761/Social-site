@@ -3899,5 +3899,49 @@ check('запись о звонке не правится', r.status === 403, `$
 r = await ka(`/messages/${userKb}`, { method: 'POST', body: JSON.stringify({ forward: { from: 'dm', id: callRows[0].id } }) });
 check('и не пересылается', r.status === 400, `${r.status}`);
 
+console.log('\n— архив чатов —');
+const xa = makeClient();
+const xb = makeClient();
+const userXa = `archa_${stamp}`;
+const userXb = `archb_${stamp}`;
+await legacySignUp(xa, userXa, 'Архивариус');
+await legacySignUp(xb, userXb, 'Собеседник');
+await dmSend(xb, userXa, { body: 'Привет' });
+const setPref = (client, kind, target, body) => client(`/prefs/${kind}/${target}`, { method: 'PUT', body: JSON.stringify(body) });
+const dmRow = async () => (await xa('/messages')).body.conversations?.find((c) => c.user.username === userXb);
+
+r = await setPref(xa, 'dm', userXb, { archived: 'да' });
+check('archived не да/нет — 400', r.status === 400, `${r.status}`);
+r = await setPref(xa, 'dm', userXb, { archived: true });
+check('переписка убрана в архив', r.status === 200 && r.body.archived === true && r.body.muted === false, JSON.stringify(r.body));
+check('в списке — с пометкой «в архиве»', (await dmRow())?.archived === true, '');
+check('у собеседника — нет: архив свой у каждого', (await xb('/messages')).body.conversations?.find((c) => c.user.username === userXa)?.archived === false, '');
+await sleep(5);
+await dmSend(xb, userXa, { body: 'Ты тут?' });
+check('новое сообщение возвращает из архива', (await dmRow())?.archived === false, '');
+await setPref(xa, 'dm', userXb, { archived: true, muted: true });
+await sleep(5);
+await dmSend(xb, userXa, { body: 'Всё равно пишу' });
+check('приглушённая переписка в архиве остаётся', (await dmRow())?.archived === true, '');
+r = await setPref(xa, 'dm', userXb, { archived: false });
+check('вернуть из архива вручную', r.body.archived === false && (await dmRow())?.archived === false && r.body.muted === true, JSON.stringify(r.body));
+r = await xa(`/prefs/dm/${userXb}`);
+check('настройки читаются с архивом', r.status === 200 && r.body.archived === false, JSON.stringify(r.body));
+
+r = await xa('/chats', { method: 'POST', body: JSON.stringify({ title: 'Архивная', members: [userXb] }) });
+const xchat = r.body.chat.id;
+await setPref(xa, 'chat', xchat, { archived: true });
+check('пустая группа в архиве', (await xa('/chats')).body.chats?.find((c) => c.id === xchat)?.archived === true, '');
+await sleep(5);
+await xb(`/chats/${xchat}/messages`, { method: 'POST', body: JSON.stringify({ body: 'Оживим' }) });
+check('сообщение в группе возвращает её из архива', (await xa('/chats')).body.chats?.find((c) => c.id === xchat)?.archived === false, '');
+r = await xb('/channels', { method: 'POST', body: JSON.stringify({ title: 'Архивный канал', handle: `archch_${stamp}` }) });
+await xa(`/channels/archch_${stamp}/subscription`, { method: 'PUT' });
+await setPref(xa, 'channel', `archch_${stamp}`, { archived: true });
+check('канал в архиве', (await xa('/channels')).body.channels?.find((c) => c.handle === `archch_${stamp}`)?.archived === true, '');
+await sleep(5);
+await xb(`/channels/archch_${stamp}/posts`, { method: 'POST', body: JSON.stringify({ body: 'Новая публикация' }) });
+check('новая публикация возвращает канал', (await xa('/channels')).body.channels?.find((c) => c.handle === `archch_${stamp}`)?.archived === false, '');
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

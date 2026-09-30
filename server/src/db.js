@@ -524,6 +524,9 @@ ensureColumn('reports', 'resolved_by', 'INTEGER');
 // duration}. У обычного сообщения — NULL.
 ensureColumn('messages', 'call', 'TEXT');
 
+// Архив чатов (см. prefs.js): когда чат убрали в архив; NULL — не в архиве.
+ensureColumn('chat_prefs', 'archived_at', 'TEXT');
+
 // Черновики (см. drafts.js): по одному на человека и чат.
 db.exec(`
   CREATE TABLE IF NOT EXISTS drafts (

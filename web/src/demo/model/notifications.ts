@@ -29,9 +29,18 @@ export const prefOf = (userId: number, kind: PrefKind, targetId: number) =>
 export const mutedFor = (userId: number, kind: PrefKind, targetId: number | null) =>
   targetId != null && Boolean(prefOf(userId, kind, targetId)?.muted);
 
-export const prefFields = (userId: number, kind: PrefKind, targetId: number) => {
+/**
+ * Настройки строки списка. `lastAt` — время последнего сообщения: чат выходит
+ * из архива с новым сообщением, если не приглушён (как inArchive() на сервере).
+ */
+export const prefFields = (userId: number, kind: PrefKind, targetId: number, lastAt: string | null = null) => {
   const x = prefOf(userId, kind, targetId);
-  return { pinnedAt: x?.pinnedAt ?? null, muted: Boolean(x?.muted) };
+  const archivedAt = x?.archivedAt ?? null;
+  return {
+    pinnedAt: x?.pinnedAt ?? null,
+    muted: Boolean(x?.muted),
+    archived: archivedAt != null && (Boolean(x?.muted) || !lastAt || lastAt <= archivedAt),
+  };
 };
 
 /** Общий счётчик ЛС — без приглушённых собеседников. */

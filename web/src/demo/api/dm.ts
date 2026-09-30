@@ -26,7 +26,7 @@ export const dmApi = {
           // История не удаляется и диалог из списка не исчезает — меняется
           // только возможность отвечать.
           blocked: blockedPair(u.id, otherId),
-          ...prefFields(u.id, 'dm', otherId),
+          ...prefFields(u.id, 'dm', otherId, last.createdAt),
           draft: draftOf(u.id, 'dm', otherId),
         };
       })
