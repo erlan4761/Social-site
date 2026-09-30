@@ -27,6 +27,7 @@ import { router as pollRoutes } from './routes/polls.js';
 import { router as scheduledRoutes } from './routes/scheduled.js';
 import { router as pushRoutes } from './routes/push.js';
 import { router as phoneRoutes } from './routes/phone.js';
+import { router as qrLoginRoutes } from './routes/qrLogin.js';
 import { startScheduler } from './scheduled.js';
 import { dropDeadStreams, nudge, openStream } from './live.js';
 import { router as draftRoutes } from './routes/drafts.js';
@@ -75,6 +76,11 @@ app.delete('/api/account/password', passwordCheckLimit);
 app.use('/api/auth/phone/password', passwordCheckLimit);
 // Каждое SMS стоит денег: коды с одного адреса — не чаще десяти за четверть
 // часа (поверх потолка на сам номер в phone.js), попытки ввести код — 30.
+// Вход по QR: коды на компьютере — не чаще, чем нужно человеку; подтверждение
+// по коду — с потолком, чтобы 8 знаков нельзя было перебрать.
+app.post('/api/auth/qr', rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 20 }));
+app.post('/api/auth/qr/approve', rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 20 }));
+
 const smsLimit = rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 10 });
 for (const path of ['/api/auth/phone/start', '/api/account/phone/start', '/api/account/delete-code']) app.use(path, smsLimit);
 app.use('/api/auth/phone/verify', rateLimit({ windowMs: 15 * 60_000, max: relaxed ? 10_000 : 30 }));
@@ -176,6 +182,7 @@ for (const path of ['/api/auth/logout', '/api/auth/reset-password', '/api/accoun
 }
 
 app.use('/api/auth/phone', phoneRoutes);
+app.use('/api/auth/qr', qrLoginRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/posts', postRoutes);

@@ -3943,5 +3943,47 @@ await sleep(5);
 await xb(`/channels/archch_${stamp}/posts`, { method: 'POST', body: JSON.stringify({ body: 'Новая публикация' }) });
 check('новая публикация возвращает канал', (await xa('/channels')).body.channels?.find((c) => c.handle === `archch_${stamp}`)?.archived === false, '');
 
+console.log('\n— вход по QR-коду —');
+const phone = makeClient();
+const desk = makeClient();
+const userQr = `qrusr_${stamp}`;
+await legacySignUp(phone, userQr, 'Телефонный');
+const DESK_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
+const qrCreate = (client) => client('/auth/qr', { method: 'POST', headers: { 'User-Agent': DESK_UA } });
+const qrPoll = (client, token, secret) => client('/auth/qr/poll', { method: 'POST', body: JSON.stringify({ token, secret }) });
+
+r = await qrCreate(phone);
+check('уже вошедшему код не нужен — 400', r.status === 400, `${r.status}`);
+r = await qrCreate(desk);
+const qr = r.body;
+check('компьютер получил токен, код и секрет', r.status === 201 && /^[A-Za-z0-9_-]{22}$/.test(qr.token ?? '') && /^[A-HJ-NP-Z2-9]{8}$/.test(qr.code ?? '')
+  && typeof qr.secret === 'string' && qr.expiresIn === 120, JSON.stringify(qr));
+r = await qrPoll(desk, qr.token, 'чужой секрет');
+check('без верного секрета — будто кода нет', r.status === 410, `${r.status}`);
+r = await qrPoll(desk, qr.token, qr.secret);
+check('пока не подтвердили — ждём', r.status === 200 && r.body.status === 'pending', JSON.stringify(r.body));
+r = await guest(`/auth/qr/${qr.token}`);
+check('посмотреть запрос — только вошедшему', r.status === 401, `${r.status}`);
+r = await phone(`/auth/qr/${qr.token}`);
+check('телефон видит, какое устройство просит войти', r.status === 200 && r.body.device === 'Chrome, Windows' && r.body.expiresIn > 100, JSON.stringify(r.body));
+const typed = `${qr.code.slice(0, 4).toLowerCase()}-${qr.code.slice(4)}`;
+r = await phone(`/auth/qr/${encodeURIComponent(typed)}`);
+check('и по коду, набранному как попало', r.status === 200 && r.body.device === 'Chrome, Windows', `${r.status}`);
+r = await phone('/auth/qr/approve', { method: 'POST', body: JSON.stringify({ code: 'AAAAAAAA' }) });
+check('выдуманный код — 404', r.status === 404, `${r.status}`);
+r = await phone('/auth/qr/approve', { method: 'POST', body: JSON.stringify({ code: typed }) });
+check('телефон подтвердил вход', r.status === 200 && r.body.device === 'Chrome, Windows', JSON.stringify(r.body));
+r = await phone('/auth/qr/approve', { method: 'POST', body: JSON.stringify({ token: qr.token }) });
+check('подтвердить второй раз нельзя', r.status === 404, `${r.status}`);
+r = await qrPoll(desk, qr.token, qr.secret);
+check('компьютер вошёл в тот же аккаунт', r.status === 200 && r.body.status === 'approved' && r.body.user?.username === userQr
+  && (await desk('/auth/me')).body.user?.username === userQr, JSON.stringify(r.body));
+r = await qrPoll(desk, qr.token, qr.secret);
+check('код одноразовый', r.status === 410, `${r.status}`);
+r = await phone('/notifications');
+check('на телефоне — событие о входе с компьютера', r.body.notifications?.[0]?.kind === 'new_login' && r.body.notifications[0].device === 'Chrome, Windows', JSON.stringify(r.body.notifications?.[0]));
+r = await phone('/account/sessions');
+check('новый сеанс — с устройством компьютера', r.body.sessions?.some((s) => !s.current && /Chrome/.test(s.userAgent ?? '')), JSON.stringify(r.body.sessions));
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
