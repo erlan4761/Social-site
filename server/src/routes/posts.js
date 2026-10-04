@@ -46,6 +46,10 @@ const serializeComment = (row) => ({
   postId: row.post_id,
   body: row.body,
   createdAt: row.created_at,
+  // На какой комментарий ответ: клиент собирает из этого ветки.
+  replyTo: row.reply_to_id
+    ? { id: row.reply_to_id, author: { username: row.reply_username, displayName: row.reply_display_name } }
+    : null,
   author: {
     id: row.author_id,
     username: row.username,
@@ -368,9 +372,12 @@ router.get('/:id/comments', (req, res) => {
   // :viewerId, а смешивать именованные с позиционными — лишний повод
   // ошибиться порядком.
   const rows = db.prepare(`
-    SELECT c.id, c.post_id, c.body, c.created_at, c.author_id,
-           u.username, u.display_name, u.avatar_path AS author_avatar_path
+    SELECT c.id, c.post_id, c.body, c.created_at, c.author_id, c.reply_to_id,
+           u.username, u.display_name, u.avatar_path AS author_avatar_path,
+           ru.username AS reply_username, ru.display_name AS reply_display_name
     FROM comments c JOIN users u ON u.id = c.author_id
+    LEFT JOIN comments rc ON rc.id = c.reply_to_id
+    LEFT JOIN users ru ON ru.id = rc.author_id
     WHERE c.post_id = :id AND ${blockPairSql('c.author_id')}
     ORDER BY c.id ASC
     LIMIT :limit
@@ -395,9 +402,23 @@ router.post('/:id/comments', requireAuth, (req, res, next) => {
     }
 
     const body = v.str(req.body?.body, 'текст комментария', { min: 1, max: 300 });
+
+    // Ответ — на комментарий этого же поста, видимый отвечающему: на реплику
+    // того, с кем он в блокировке, ответить нельзя, её и не видно.
+    let replied = null;
+    if (req.body?.replyTo != null) {
+      const replyId = Number(req.body.replyTo);
+      replied = Number.isSafeInteger(replyId) && replyId > 0
+        ? db.prepare('SELECT id, author_id FROM comments WHERE id = ? AND post_id = ?').get(replyId, id)
+        : null;
+      if (!replied || isBlockedPair(req.user.id, replied.author_id)) {
+        return res.status(400).json({ error: 'Комментарий, на который вы отвечаете, не найден' });
+      }
+    }
+
     const info = db.prepare(
-      'INSERT INTO comments (post_id, author_id, body, created_at) VALUES (?, ?, ?, ?)',
-    ).run(id, req.user.id, body, nowIso());
+      'INSERT INTO comments (post_id, author_id, body, created_at, reply_to_id) VALUES (?, ?, ?, ?, ?)',
+    ).run(id, req.user.id, body, nowIso(), replied?.id ?? null);
 
     // Комментарии не схлопываются и не дедуплицируются: каждый — отдельная
     // реплика, поэтому событие несёт и пост, и сам комментарий.
@@ -408,11 +429,24 @@ router.post('/:id/comments', requireAuth, (req, res, next) => {
       postId: id,
       commentId: Number(info.lastInsertRowid),
     });
+    // Тому, кому ответили, — своё событие; автор поста уже узнал из «comment».
+    if (replied && replied.author_id !== post.author_id) {
+      notify({
+        userId: replied.author_id,
+        actorId: req.user.id,
+        kind: 'comment_reply',
+        postId: id,
+        commentId: Number(info.lastInsertRowid),
+      });
+    }
 
     const row = db.prepare(`
-      SELECT c.id, c.post_id, c.body, c.created_at, c.author_id,
-             u.username, u.display_name, u.avatar_path AS author_avatar_path
+      SELECT c.id, c.post_id, c.body, c.created_at, c.author_id, c.reply_to_id,
+             u.username, u.display_name, u.avatar_path AS author_avatar_path,
+             ru.username AS reply_username, ru.display_name AS reply_display_name
       FROM comments c JOIN users u ON u.id = c.author_id
+      LEFT JOIN comments rc ON rc.id = c.reply_to_id
+      LEFT JOIN users ru ON ru.id = rc.author_id
       WHERE c.id = ?
     `).get(info.lastInsertRowid);
 

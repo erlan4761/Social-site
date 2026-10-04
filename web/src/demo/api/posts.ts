@@ -96,7 +96,7 @@ export const postsApi = {
     return tick({ comments: visibleComments(postId).sort((a, b) => a.id - b.id).map(toComment) });
   },
 
-  addComment: (postId: number, text: string) => {
+  addComment: (postId: number, text: string, replyTo?: number | null) => {
     const u = requireMe()!;
     const body = text.trim();
     if (!body) fail(400, '«текст комментария»: минимум 1 символов');
@@ -105,9 +105,16 @@ export const postsApi = {
     const p = db.posts.find((x) => x.id === postId);
     if (p && hidden(p.authorId)) fail(403, 'Комментировать этот пост нельзя');
 
-    const c: DbComment = { id: id(), postId, authorId: u.id, body, createdAt: new Date().toISOString() };
+    const replied = replyTo != null ? db.comments.find((x) => x.id === replyTo && x.postId === postId) : undefined;
+    if (replyTo != null && (!replied || hidden(replied.authorId))) fail(400, 'Комментарий, на который вы отвечаете, не найден');
+
+    const c: DbComment = { id: id(), postId, authorId: u.id, body, createdAt: new Date().toISOString(), replyToId: replied?.id ?? null };
     db.comments.push(c);
     if (p) notify({ userId: p.authorId, actorId: u.id, kind: 'comment', postId, commentId: c.id });
+    // Тому, кому ответили, — своё событие; автор записи уже узнал.
+    if (replied && p && replied.authorId !== p.authorId) {
+      notify({ userId: replied.authorId, actorId: u.id, kind: 'comment_reply', postId, commentId: c.id });
+    }
     return tick({ comment: toComment(c) });
   },
 

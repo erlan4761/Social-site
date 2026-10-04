@@ -446,6 +446,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_poll_options ON poll_options(poll_id, position);
   CREATE INDEX IF NOT EXISTS idx_poll_votes   ON poll_votes(poll_id, user_id);
 `);
+// Ответ на комментарий в ленте: на какой комментарий того же поста. Удалили
+// исходный — ответ остаётся, просто перестаёт им быть (SET NULL).
+ensureColumn('comments', 'reply_to_id', 'INTEGER REFERENCES comments(id) ON DELETE SET NULL');
+
 // Викторина (polls.js): опрос с одним правильным ответом и пояснением к нему.
 ensureColumn('polls', 'quiz', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('polls', 'correct_option_id', 'INTEGER');

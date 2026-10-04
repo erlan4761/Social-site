@@ -100,6 +100,8 @@ function describe(n) {
       return { title: 'Хроника', body: `${who} добавил(а) вас в чат «${n.chat_title ?? ''}»`, url: `/messages/c/${n.chat_id}`, tag: `chat-${n.chat_id}` };
     case 'comment':
       return { title: `${who} ответил(а) вам`, body: cut(n.comment_body ?? ''), url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
+    case 'comment_reply':
+      return { title: `${who} ответил(а) на ваш комментарий`, body: cut(n.comment_body ?? ''), url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
     case 'like':
       return { title: 'Хроника', body: `${who} отметил(а) вашу запись`, url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
     case 'follow':

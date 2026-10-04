@@ -431,6 +431,21 @@ describe('витрина: викторина', () => {
   });
 });
 
+describe('витрина: ответы на комментарии', () => {
+  it('ответ на свой комментарий в чужой записи — событие «ответили на ваш комментарий»', async () => {
+    const post = (await api.posts({ author: 'oleg_k' })).posts[0];
+    const { comment } = await api.addComment(post.id, 'Какая плёнка?');
+    await loginAs('nina');
+    const reply = (await api.addComment(post.id, 'HP5', comment.id)).comment;
+    expect(reply.replyTo?.id).toBe(comment.id);
+    await expect(api.addComment(post.id, 'В пустоту', 999999)).rejects.toMatchObject({ status: 400 });
+    await loginAs('demo');
+    const events = (await api.notifications()).notifications.filter((n) => n.kind === 'comment_reply');
+    expect(events.map((n) => n.actor.username)).toEqual(['nina']);
+    expect((await api.comments(post.id)).comments.find((c) => c.id === reply.id)?.replyTo?.author.displayName).toBe('Ерлан');
+  });
+});
+
 describe('витрина: предпросмотр ссылок', () => {
   it('карточка только у заготовленной ссылки', async () => {
     expect((await api.linkPreview('https://github.com/erlan4761/Social-site')).preview?.siteName).toBe('GitHub');

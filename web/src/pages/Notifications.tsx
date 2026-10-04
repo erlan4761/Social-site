@@ -15,6 +15,7 @@ function targetOf(event: NotificationItem) {
   switch (event.kind) {
     case 'like':
     case 'comment':
+    case 'comment_reply':
       return event.post ? `/p/${event.post.id}` : profile;
     case 'follow':
       return profile;
@@ -41,6 +42,8 @@ function lineOf(event: NotificationItem) {
       return `${who} отметил вашу запись`;
     case 'comment':
       return `${who} ответил вам`;
+    case 'comment_reply':
+      return `${who} ответил на ваш комментарий`;
     case 'follow':
       return `${who} подписался на вас`;
     case 'message':
@@ -58,7 +61,7 @@ function lineOf(event: NotificationItem) {
 
 /** Цитата предмета: у ответа — сам ответ, у отметки — начало записи. */
 function quoteOf(event: NotificationItem) {
-  if (event.kind === 'comment') return event.comment?.excerpt ?? null;
+  if (event.kind === 'comment' || event.kind === 'comment_reply') return event.comment?.excerpt ?? null;
   if (event.kind === 'like') return event.post?.excerpt ?? null;
   if (event.kind === 'mention') return event.message?.excerpt ?? null;
   if (event.kind === 'new_login') return 'Если это были не вы — завершите этот сеанс в настройках.';
