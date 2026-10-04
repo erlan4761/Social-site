@@ -4549,5 +4549,52 @@ await quizVote(qzB, plainPoll.id, [plainPoll.options[0].id]);
 r = await quizVote(qzB, plainPoll.id, [plainPoll.options[1].id]);
 check('в обычном опросе голос по-прежнему меняют', r.status === 200 && r.body.poll?.quiz === false && r.body.poll.correctOptionId === null, JSON.stringify(r.body.poll));
 
+console.log('\n— ответы на комментарии —');
+const crA = makeClient();
+const crB = makeClient();
+const crC = makeClient();
+const userCrA = `cra_${stamp}`;
+const userCrB = `crb_${stamp}`;
+const userCrC = `crc_${stamp}`;
+await legacySignUp(crA, userCrA, 'Автор поста');
+await legacySignUp(crB, userCrB, 'Бета');
+await legacySignUp(crC, userCrC, 'Гамма');
+r = await crA('/posts', { method: 'POST', body: JSON.stringify({ body: 'Проявил первую плёнку' }) });
+const crPost = r.body.post.id;
+r = await crA('/posts', { method: 'POST', body: JSON.stringify({ body: 'Другая запись' }) });
+const crOther = r.body.post.id;
+const crComment = (client, post, body, replyTo) =>
+  client(`/posts/${post}/comments`, { method: 'POST', body: JSON.stringify({ body, replyTo }) });
+const eventsOf = async (client, kind) => (await client('/notifications')).body.notifications?.filter((n) => n.kind === kind) ?? [];
+
+r = await crComment(crB, crPost, 'Какая плёнка?');
+const crRoot = r.body.comment;
+check('обычный комментарий — без replyTo', r.status === 201 && crRoot?.replyTo === null, JSON.stringify(r.body));
+r = await crComment(crC, crPost, 'Похоже на HP5', crRoot.id);
+const crReply = r.body.comment;
+check('ответ на комментарий — кому ответили', r.status === 201 && crReply?.replyTo?.id === crRoot.id
+  && crReply.replyTo.author.username === userCrB && crReply.replyTo.author.displayName === 'Бета', JSON.stringify(r.body));
+let crEvents = await eventsOf(crB, 'comment_reply');
+check('тому, кому ответили, — событие с цитатой ответа', crEvents.length === 1 && crEvents[0].actor.username === userCrC
+  && crEvents[0].comment?.excerpt === 'Похоже на HP5' && crEvents[0].post?.id === crPost, JSON.stringify(crEvents));
+check('автор поста — как раньше, «comment»', (await eventsOf(crA, 'comment')).length === 2 && (await eventsOf(crA, 'comment_reply')).length === 0, '');
+r = await crComment(crA, crPost, 'Да, HP5', crReply.id);
+check('автор поста отвечает на ответ — событие Гамме', r.status === 201 && (await eventsOf(crC, 'comment_reply')).length === 1, `${r.status}`);
+r = await crComment(crB, crPost, 'Сам себе', crRoot.id);
+check('ответ самому себе — без события', r.status === 201 && (await eventsOf(crB, 'comment_reply')).length === 1, `${r.status}`);
+r = await crComment(crB, crOther, 'Не туда', crRoot.id);
+check('ответ на комментарий другого поста — 400', r.status === 400, `${r.status}`);
+r = await crComment(crB, crPost, 'В пустоту', 999999999);
+check('ответ на несуществующий — 400', r.status === 400, `${r.status}`);
+r = await crB(`/posts/${crPost}/comments`);
+check('в треде у ответа — replyTo', r.body.comments?.find((c) => c.id === crReply.id)?.replyTo?.id === crRoot.id, JSON.stringify(r.body.comments?.map((c) => [c.id, c.replyTo?.id])));
+await crB(`/users/${userCrC}/block`, { method: 'PUT' });
+r = await crComment(crC, crPost, 'Ещё ответ', crRoot.id);
+check('на комментарий того, с кем в блокировке, ответить нельзя', r.status === 400, `${r.status}`);
+await crB(`/users/${userCrC}/block`, { method: 'DELETE' });
+await crB(`/comments/${crRoot.id}`, { method: 'DELETE' });
+r = await crA(`/posts/${crPost}/comments`);
+check('удалили исходный — ответ остался, уже не ответ', r.body.comments?.find((c) => c.id === crReply.id)?.replyTo === null, JSON.stringify(r.body.comments?.find((c) => c.id === crReply.id)));
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
