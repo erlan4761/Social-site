@@ -48,7 +48,7 @@ export type DbPost = {
   media: Media | null;
 };
 
-export type DbComment = { id: number; postId: number; authorId: number; body: string; createdAt: string };
+export type DbComment = { id: number; postId: number; authorId: number; body: string; createdAt: string; replyToId?: number | null };
 
 /** Поля действий с сообщениями — как колонки reply_to_id, edited_at, fwd_user_id на сервере. */
 /** Вложение витрины — ссылка blob: или data: прямо в памяти вкладки. */

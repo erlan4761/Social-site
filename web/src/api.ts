@@ -60,6 +60,8 @@ export type Comment = {
   body: string;
   createdAt: string;
   author: Author;
+  /** Ответ на комментарий — на какой и кому; null — комментарий к самой записи. */
+  replyTo?: { id: number; author: { username: string; displayName: string } } | null;
 };
 
 export type Page = { posts: Post[]; nextCursor: number | null };
@@ -361,6 +363,8 @@ export type Conversation = ChatPrefs & WithDraft & {
 export type NotificationKind =
   | 'like'
   | 'comment'
+  /** Ответили на ваш комментарий в чужой записи. */
+  | 'comment_reply'
   | 'follow'
   | 'message'
   | 'chat_message'
@@ -603,10 +607,11 @@ const realApi = {
   comments: (postId: number) =>
     request<{ comments: Comment[] }>(`/posts/${postId}/comments`),
 
-  addComment: (postId: number, text: string) =>
+  /** `replyTo` — комментарий этой же записи, на который отвечают. */
+  addComment: (postId: number, text: string, replyTo?: number | null) =>
     request<{ comment: Comment }>(`/posts/${postId}/comments`, {
       method: 'POST',
-      body: body({ body: text }),
+      body: body({ body: text, replyTo: replyTo ?? undefined }),
     }),
 
   deleteComment: (id: number) =>

@@ -64,13 +64,19 @@ export const toPost = (p: DbPost): Post => ({
   author: author(byId(p.authorId)!),
 });
 
-export const toComment = (c: DbComment): Comment => ({
-  id: c.id,
-  postId: c.postId,
-  body: c.body,
-  createdAt: c.createdAt,
-  author: author(byId(c.authorId)!),
-});
+export const toComment = (c: DbComment): Comment => {
+  const replied = c.replyToId != null ? db.comments.find((x) => x.id === c.replyToId) : undefined;
+  const who = replied ? byId(replied.authorId) : undefined;
+  return {
+    id: c.id,
+    postId: c.postId,
+    body: c.body,
+    createdAt: c.createdAt,
+    author: author(byId(c.authorId)!),
+    // Удалённый исходный — ответ больше не ответ, как SET NULL на сервере.
+    replyTo: replied && who ? { id: replied.id, author: { username: who.username, displayName: who.displayName } } : null,
+  };
+};
 
 export const PAGE = 20;
 
