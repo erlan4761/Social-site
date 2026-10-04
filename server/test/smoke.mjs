@@ -4596,5 +4596,33 @@ await crB(`/comments/${crRoot.id}`, { method: 'DELETE' });
 r = await crA(`/posts/${crPost}/comments`);
 check('удалили исходный — ответ остался, уже не ответ', r.body.comments?.find((c) => c.id === crReply.id)?.replyTo === null, JSON.stringify(r.body.comments?.find((c) => c.id === crReply.id)));
 
+console.log('\n— темы переписки —');
+const thA = makeClient();
+const thB = makeClient();
+const userThA = `tha_${stamp}`;
+const userThB = `thb_${stamp}`;
+await legacySignUp(thA, userThA, 'Оформитель');
+await legacySignUp(thB, userThB, 'Собеседник');
+await dmSend(thA, userThB, { body: 'Привет' });
+const themeOfDm = async (client, other) => (await client(`/prefs/dm/${other}`)).body.theme;
+
+check('по умолчанию — «как везде»', (await themeOfDm(thA, userThB)) === null, '');
+r = await thA(`/prefs/dm/${userThB}`, { method: 'PUT', body: JSON.stringify({ theme: 'неон' }) });
+check('тема не из списка — 400', r.status === 400, `${r.status}`);
+r = await thA(`/prefs/dm/${userThB}`, { method: 'PUT', body: JSON.stringify({ theme: 'sea' }) });
+check('тема выставлена', r.status === 200 && r.body.theme === 'sea' && r.body.pinned === false, JSON.stringify(r.body));
+check('и читается', (await themeOfDm(thA, userThB)) === 'sea', '');
+check('собеседник её не видит — у него своя', (await themeOfDm(thB, userThA)) === null, '');
+r = await thA(`/prefs/dm/${userThB}`, { method: 'PUT', body: JSON.stringify({ muted: true }) });
+check('другие настройки тему не трогают', r.body.theme === 'sea' && r.body.muted === true, JSON.stringify(r.body));
+r = await thA(`/prefs/dm/${userThB}`, { method: 'PUT', body: JSON.stringify({ muted: false }) });
+check('тема одна держит настройку чата', r.body.theme === 'sea', JSON.stringify(r.body));
+r = await thA(`/prefs/dm/${userThB}`, { method: 'PUT', body: JSON.stringify({ theme: 'default' }) });
+check('«как везде» — тема снята', r.status === 200 && r.body.theme === null && (await themeOfDm(thA, userThB)) === null, JSON.stringify(r.body));
+r = await thA('/chats', { method: 'POST', body: JSON.stringify({ title: 'Оформление', members: [userThB] }) });
+const thChat = r.body.chat.id;
+r = await thA(`/prefs/chat/${thChat}`, { method: 'PUT', body: JSON.stringify({ theme: 'forest' }) });
+check('тема и у группы', r.body.theme === 'forest' && (await thA(`/prefs/chat/${thChat}`)).body.theme === 'forest', JSON.stringify(r.body));
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

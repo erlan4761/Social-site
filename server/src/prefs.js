@@ -7,18 +7,28 @@ import { db } from './db.js';
  * собственное «непрочитанное» по-прежнему считается — в списке оно серое.
  */
 
+/**
+ * Темы переписки — фон и цвет своих пузырей, как «Темы чатов» в Телеграме.
+ * Тема — личная настройка: собеседник её не видит, а на другом устройстве
+ * того же человека она та же. Сервер знает только имена; как выглядит тема,
+ * решает клиент (web/src/chatThemes.ts). null — «как везде».
+ */
+export const CHAT_THEMES = ['gold', 'sea', 'forest', 'dusk', 'rose', 'plain'];
+
 /** Столько чатов можно закрепить — как у Телеграма без подписки. */
 export const PIN_LIMIT = 5;
 export const PREF_KINDS = ['dm', 'chat', 'channel'];
 
 /** Настройки человека для всех чатов одного вида: target_id → {pinnedAt, muted}. */
 export function prefsOf(userId, kind) {
-  const rows = db.prepare('SELECT target_id, pinned_at, muted, archived_at FROM chat_prefs WHERE user_id = ? AND kind = ?')
+  const rows = db.prepare('SELECT target_id, pinned_at, muted, archived_at, theme FROM chat_prefs WHERE user_id = ? AND kind = ?')
     .all(userId, kind);
-  return new Map(rows.map((r) => [r.target_id, { pinnedAt: r.pinned_at ?? null, muted: Boolean(r.muted), archivedAt: r.archived_at ?? null }]));
+  return new Map(rows.map((r) => [r.target_id, {
+    pinnedAt: r.pinned_at ?? null, muted: Boolean(r.muted), archivedAt: r.archived_at ?? null, theme: r.theme ?? null,
+  }]));
 }
 
-const NO_PREFS = { pinnedAt: null, muted: false, archivedAt: null };
+const NO_PREFS = { pinnedAt: null, muted: false, archivedAt: null, theme: null };
 
 /**
  * В архиве ли чат — как в Телеграме: убранный в архив чат возвращается в
@@ -60,8 +70,8 @@ export function dmUnreadTotal(userId) {
  * undefined (не трогать). Когда всё выключено, строка удаляется: «ничего не
  * настроено» не должно занимать место. Лимит закреплённых проверяет вызывающий.
  */
-export function setPrefs(userId, kind, targetId, { pinned, muted, archived }) {
-  const current = db.prepare('SELECT pinned_at, muted, archived_at FROM chat_prefs WHERE user_id = ? AND kind = ? AND target_id = ?')
+export function setPrefs(userId, kind, targetId, { pinned, muted, archived, theme }) {
+  const current = db.prepare('SELECT pinned_at, muted, archived_at, theme FROM chat_prefs WHERE user_id = ? AND kind = ? AND target_id = ?')
     .get(userId, kind, targetId);
 
   // Время закрепления сохраняется при повторном «закрепить»: порядок
@@ -73,17 +83,19 @@ export function setPrefs(userId, kind, targetId, { pinned, muted, archived }) {
   // «В архив» — каждый раз новое время: чат, вернувшийся из архива новым
   // сообщением, уходит туда снова уже с этого момента.
   const archivedAt = archived === undefined ? current?.archived_at ?? null : archived ? new Date().toISOString() : null;
+  // Тема: undefined — не трогать, null — «как везде».
+  const themeNow = theme === undefined ? current?.theme ?? null : theme;
 
-  if (!pinnedAt && !mutedNow && !archivedAt) {
+  if (!pinnedAt && !mutedNow && !archivedAt && !themeNow) {
     db.prepare('DELETE FROM chat_prefs WHERE user_id = ? AND kind = ? AND target_id = ?').run(userId, kind, targetId);
   } else {
     db.prepare(`
-      INSERT INTO chat_prefs (user_id, kind, target_id, pinned_at, muted, archived_at) VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO chat_prefs (user_id, kind, target_id, pinned_at, muted, archived_at, theme) VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (user_id, kind, target_id) DO UPDATE
-        SET pinned_at = excluded.pinned_at, muted = excluded.muted, archived_at = excluded.archived_at
-    `).run(userId, kind, targetId, pinnedAt, mutedNow ? 1 : 0, archivedAt);
+        SET pinned_at = excluded.pinned_at, muted = excluded.muted, archived_at = excluded.archived_at, theme = excluded.theme
+    `).run(userId, kind, targetId, pinnedAt, mutedNow ? 1 : 0, archivedAt, themeNow);
   }
-  return { pinnedAt, muted: mutedNow, archivedAt };
+  return { pinnedAt, muted: mutedNow, archivedAt, theme: themeNow };
 }
 
 export const pinnedCount = (userId) =>
