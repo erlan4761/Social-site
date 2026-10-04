@@ -12,12 +12,18 @@ import { bad } from './validate.js';
  *
  * Результаты видны тому, кто уже проголосовал, автору и всем после завершения:
  * иначе первые проценты подсказывали бы, за что голосовать.
+ *
+ * Викторина — опрос с одним правильным ответом, как в Телеграме: ответ один и
+ * окончательный (не меняется и не отзывается), правильный вариант и пояснение
+ * открываются ответившему, автору и всем после завершения — до того они были
+ * бы подсказкой.
  */
 
 export const POLL_OPTIONS_MIN = 2;
 export const POLL_OPTIONS_MAX = 10;
 const QUESTION_MAX = 255;
 const OPTION_MAX = 100;
+export const EXPLANATION_MAX = 200;
 
 const COLUMN = { chat: 'chat_message_id', channel: 'channel_post_id' };
 
@@ -37,18 +43,35 @@ export function readPoll(raw) {
   const seen = new Set(options.map((o) => o.toLocaleLowerCase('ru')));
   if (seen.size !== options.length) throw bad('Варианты ответа не должны повторяться');
 
-  for (const flag of ['multiple', 'anonymous']) {
+  for (const flag of ['multiple', 'anonymous', 'quiz']) {
     if (raw[flag] !== undefined && typeof raw[flag] !== 'boolean') throw bad(`«${flag}» — true или false`);
   }
-  return { question, options, multiple: raw.multiple === true, anonymous: raw.anonymous !== false };
+  const quiz = raw.quiz === true;
+  let correct = null;
+  let explanation = null;
+  if (quiz) {
+    if (raw.multiple === true) throw bad('В викторине один правильный ответ — «несколько ответов» к ней не подходит');
+    // Номер правильного — среди вариантов, как они пришли после очистки пустых.
+    correct = raw.correct;
+    if (!Number.isSafeInteger(correct) || correct < 0 || correct >= options.length) {
+      throw bad('Отметьте правильный ответ викторины');
+    }
+    if (raw.explanation != null) {
+      if (typeof raw.explanation !== 'string') throw bad('Пояснение — строка');
+      explanation = raw.explanation.trim() || null;
+      if (explanation && explanation.length > EXPLANATION_MAX) throw bad(`Пояснение — не длиннее ${EXPLANATION_MAX} символов`);
+    }
+  }
+  return { question, options, multiple: raw.multiple === true && !quiz, anonymous: raw.anonymous !== false, quiz, correct, explanation };
 }
 
 export function createPoll(kind, messageId, poll) {
-  const info = db.prepare(`INSERT INTO polls (${COLUMN[kind]}, multiple, anonymous, created_at) VALUES (?, ?, ?, ?)`)
-    .run(messageId, poll.multiple ? 1 : 0, poll.anonymous ? 1 : 0, nowIso());
+  const info = db.prepare(`INSERT INTO polls (${COLUMN[kind]}, multiple, anonymous, quiz, explanation, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(messageId, poll.multiple ? 1 : 0, poll.anonymous ? 1 : 0, poll.quiz ? 1 : 0, poll.explanation ?? null, nowIso());
   const pollId = Number(info.lastInsertRowid);
   const insert = db.prepare('INSERT INTO poll_options (poll_id, position, text) VALUES (?, ?, ?)');
-  poll.options.forEach((text, i) => insert.run(pollId, i, text));
+  const ids = poll.options.map((text, i) => Number(insert.run(pollId, i, text).lastInsertRowid));
+  if (poll.quiz) db.prepare('UPDATE polls SET correct_option_id = ? WHERE id = ?').run(ids[poll.correct], pollId);
   return pollId;
 }
 
@@ -71,12 +94,17 @@ export function serializePoll(poll, viewerId, authorId) {
   const closed = poll.closed_at != null;
   const results = closed || mine.length > 0 || viewerId === authorId;
   const anonymous = Boolean(poll.anonymous);
+  const quiz = Boolean(poll.quiz);
 
   return {
     id: poll.id,
     multiple: Boolean(poll.multiple),
     anonymous,
     closed,
+    quiz,
+    // Ответ викторины и пояснение — тем же, кому видны итоги: иначе подсказка.
+    correctOptionId: quiz && results ? poll.correct_option_id : null,
+    explanation: quiz && results ? poll.explanation ?? null : null,
     // Голосовавших людей, а не голосов: при нескольких ответах голосов больше.
     total: new Set(votes.map((v) => v.user_id)).size,
     myVotes: mine,

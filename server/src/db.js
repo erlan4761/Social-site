@@ -446,6 +446,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_poll_options ON poll_options(poll_id, position);
   CREATE INDEX IF NOT EXISTS idx_poll_votes   ON poll_votes(poll_id, user_id);
 `);
+// Викторина (polls.js): опрос с одним правильным ответом и пояснением к нему.
+ensureColumn('polls', 'quiz', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('polls', 'correct_option_id', 'INTEGER');
+ensureColumn('polls', 'explanation', 'TEXT');
+
 // Отложенные сообщения (см. scheduled.js): ждут своего времени и уходят обычным
 // путём. target_id — собеседник, группа или канал по kind; без внешнего ключа,
 // как у настроек чатов, — доступ проверяется в момент отправки.
