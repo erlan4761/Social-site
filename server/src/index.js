@@ -34,6 +34,7 @@ import { router as draftRoutes } from './routes/drafts.js';
 import { router as linkPreviewRoutes } from './routes/linkPreview.js';
 import { router as callRoutes } from './routes/calls.js';
 import { router as moderationRoutes } from './routes/moderation.js';
+import { router as readAllRoutes } from './routes/readAll.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -213,6 +214,7 @@ app.use('/api/drafts', draftRoutes);
 app.use('/api/link-preview', linkPreviewRoutes);
 app.use('/api/calls', callRoutes);
 app.use('/api/moderation', moderationRoutes);
+app.use('/api/read-all', readAllRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Нет такого эндпоинта' }));
 

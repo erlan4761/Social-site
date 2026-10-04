@@ -178,3 +178,14 @@
 
 .folder-chat:hover { background: var(--surface); }
 .folder-chat > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* «Непрочитанные»: над списком — сколько чатов ждут и «Прочитать все». */
+.unread-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-4);
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+}

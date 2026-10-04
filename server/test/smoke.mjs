@@ -4458,5 +4458,44 @@ legacyDb.prepare('UPDATE sessions SET expires_at = ? WHERE rowid = ?').run(agoIs
 await sleep(Number(process.env.SCHEDULE_TICK_MS ?? 500) * 2 + 300);
 check('истёкший сеанс убран тактом планировщика', !legacyDb.prepare('SELECT 1 FROM sessions WHERE rowid = ?').get(idTtlC), '');
 
+console.log('\n— прочитать все —');
+const raA = makeClient();
+const raB = makeClient();
+const userRaA = `rda_${stamp}`;
+const userRaB = `rdb_${stamp}`;
+await legacySignUp(raA, userRaA, 'Читатель');
+await legacySignUp(raB, userRaB, 'Писатель');
+const raHandle = `rdch_${stamp}`.slice(0, 32);
+await raB('/channels', { method: 'POST', body: JSON.stringify({ title: 'Новости', handle: raHandle }) });
+await raA(`/channels/${raHandle}/subscription`, { method: 'PUT' });
+r = await raB('/chats', { method: 'POST', body: JSON.stringify({ title: 'Читальня', members: [userRaA] }) });
+const raChat = r.body.chat.id;
+// Один чат приглушён и убран в архив — «прочитать все» касается и его.
+await raA(`/prefs/chat/${raChat}`, { method: 'PUT', body: JSON.stringify({ muted: true, archived: true }) });
+await dmSend(raB, userRaA, { body: 'Раз' });
+const raDm = (await dmSend(raB, userRaA, { body: 'Два' })).body.message;
+await raB(`/chats/${raChat}/messages`, { method: 'POST', body: JSON.stringify({ body: `@${userRaA}, глянь` }) });
+await raB(`/channels/${raHandle}/posts`, { method: 'POST', body: JSON.stringify({ body: 'Свежая новость' }) });
+const unreadOf = async () => ({
+  dm: (await raA('/messages')).body.conversations?.find((c) => c.user.username === userRaB)?.unread,
+  chat: (await raA('/chats')).body.chats?.find((c) => c.id === raChat)?.unread,
+  channel: (await raA('/channels')).body.channels?.find((c) => c.handle === raHandle)?.unread,
+});
+check('до — непрочитано везде', JSON.stringify(await unreadOf()) === JSON.stringify({ dm: 2, chat: 1, channel: 1 }), JSON.stringify(await unreadOf()));
+
+r = await guest('/read-all', { method: 'POST' });
+check('гостю — 401', r.status === 401, `${r.status}`);
+r = await raA('/read-all', { method: 'POST' });
+check('прочитать все — сколько отмечено', r.status === 200 && r.body.dms === 2 && r.body.chats === 1 && r.body.channels === 1, JSON.stringify(r.body));
+check('после — ноль везде, и в приглушённом архивном чате', JSON.stringify(await unreadOf()) === JSON.stringify({ dm: 0, chat: 0, channel: 0 }), JSON.stringify(await unreadOf()));
+r = await raA('/chats');
+check('и «@» в списке погас', r.body.chats?.find((c) => c.id === raChat)?.mentions === 0, '');
+r = await raA('/notifications');
+check('события о сообщениях и упоминании прочитаны', (r.body.notifications ?? []).filter((n) => ['message', 'chat_message', 'mention'].includes(n.kind)).every((n) => n.readAt != null), JSON.stringify(r.body.notifications?.map((n) => [n.kind, n.readAt])));
+r = await raB(`/messages/${userRaA}`);
+check('у отправителя — вторые галочки', r.body.messages?.find((m) => m.id === raDm.id)?.readAt != null, JSON.stringify(r.body.messages?.at(-1)));
+r = await raA('/read-all', { method: 'POST' });
+check('повторно — отмечать нечего', r.body.dms === 0 && r.body.chats === 0 && r.body.channels === 0, JSON.stringify(r.body));
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

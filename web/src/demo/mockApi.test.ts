@@ -399,6 +399,21 @@ describe('витрина: автозавершение сеансов', () => {
   });
 });
 
+describe('витрина: прочитать все', () => {
+  it('личные, группы и каналы — разом; повторно отмечать нечего', async () => {
+    const unread = async () => [
+      ...(await api.conversations()).conversations.map((c) => c.unread),
+      ...(await api.chats()).chats.map((c) => c.unread),
+      ...(await api.channels()).channels.map((c) => c.unread),
+    ].reduce((a, b) => a + b, 0);
+    expect(await unread()).toBeGreaterThan(0);
+    const res = await api.readAll();
+    expect(res.dms + res.chats + res.channels).toBeGreaterThan(0);
+    expect(await unread()).toBe(0);
+    expect(await api.readAll()).toEqual({ ok: true, dms: 0, chats: 0, channels: 0 });
+  });
+});
+
 describe('витрина: предпросмотр ссылок', () => {
   it('карточка только у заготовленной ссылки', async () => {
     expect((await api.linkPreview('https://github.com/erlan4761/Social-site')).preview?.siteName).toBe('GitHub');
