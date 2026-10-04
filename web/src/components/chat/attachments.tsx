@@ -1,19 +1,50 @@
 import { useEffect, useRef, useState } from 'react';
 import { type Attachment } from '../../api';
 import { VIDEO_NOTE_MAX_S, mmss } from '../../voice';
+import { rateLabel, useVoiceRate } from '../../voiceRate';
 import { Icon } from '../Icon';
 import { fileSize } from './format';
 
 /* ─ Вложения в ленте ────────────────────────────────────────────────────
    Фото, видео, голосовые, «кружки», файлы — и просмотр фото во весь экран. */
 
+/** Кнопка скорости «1× → 1,5× → 2×» — у голосового и у «кружка» со звуком. */
+function RateButton({ rate, onNext, className }: { rate: number; onNext: () => void; className: string }) {
+  return (
+    <button
+      className={className}
+      type="button"
+      title="Скорость воспроизведения"
+      aria-label={`Скорость ${rateLabel(rate)} — сменить`}
+      onClick={(e) => {
+        // Внутри «кружка» нажатие не должно ставить его на паузу.
+        e.stopPropagation();
+        onNext();
+      }}
+    >
+      {rateLabel(rate)}
+    </button>
+  );
+}
+
+/** Скорость на элементе: `defaultPlaybackRate` — чтобы загрузка файла её не сбросила. */
+function applyRate(el: HTMLMediaElement | null, rate: number) {
+  if (!el) return;
+  el.defaultPlaybackRate = rate;
+  el.playbackRate = rate;
+}
+
 /**
  * Плеер голосового: кнопка, «волна» и время — как в Телеграме. Сыгранная
- * часть волны закрашена; по волне можно щёлкнуть и перемотать.
+ * часть волны закрашена; по волне можно щёлкнуть и перемотать. Пока слушают —
+ * рядом со временем кнопка скорости; голос при ускорении не «пищит»: браузер
+ * сохраняет высоту тона (preservesPitch по умолчанию).
  */
 function VoicePlayer({ a }: { a: Attachment }) {
   const audio = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
+  const [rate, nextRate] = useVoiceRate();
+  useEffect(() => applyRate(audio.current, rate), [rate]);
   const [at, setAt] = useState(0);
   const total = a.duration ?? 0;
   const bars = (a.wave ?? '').split('').map(Number);
@@ -66,13 +97,19 @@ function VoicePlayer({ a }: { a: Attachment }) {
             />
           ))}
         </span>
-        <span className="voice-time">{mmss(playing || at > 0 ? at : total)}</span>
+        <span className="voice-foot">
+          <span className="voice-time">{mmss(playing || at > 0 ? at : total)}</span>
+          {(playing || at > 0) && <RateButton className="voice-rate" rate={rate} onNext={nextRate} />}
+        </span>
       </span>
       <audio
         ref={audio}
         src={a.url}
         preload="none"
-        onPlay={() => setPlaying(true)}
+        onPlay={(e) => {
+          applyRate(e.currentTarget, rate);
+          setPlaying(true);
+        }}
         onPause={() => setPlaying(false)}
         onEnded={() => {
           setPlaying(false);
@@ -127,6 +164,9 @@ export function VideoNotePreview({ stream, elapsed }: { stream: MediaStream; ela
 function VideoNote({ a, onMediaLoad }: { a: Attachment; onMediaLoad: () => void }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [loud, setLoud] = useState(false);
+  const [rate, nextRate] = useVoiceRate();
+  // Беззвучный круг крутится как есть; скорость — только когда смотрят со звуком.
+  useEffect(() => applyRate(ref.current, loud ? rate : 1), [loud, rate]);
   const [progress, setProgress] = useState(0);
   const [at, setAt] = useState(0);
 
@@ -148,6 +188,7 @@ function VideoNote({ a, onMediaLoad }: { a: Attachment; onMediaLoad: () => void 
       el.muted = false;
       el.loop = false;
       el.currentTime = 0;
+      applyRate(el, rate);
       void el.play().catch(() => undefined);
       setLoud(true);
     } else if (el.paused) {
@@ -158,6 +199,7 @@ function VideoNote({ a, onMediaLoad }: { a: Attachment; onMediaLoad: () => void 
   }
 
   return (
+    <span className="note-wrap">
     <button
       className={loud ? 'note-circle note-bubble loud' : 'note-circle note-bubble'}
       type="button"
@@ -182,6 +224,7 @@ function VideoNote({ a, onMediaLoad }: { a: Attachment; onMediaLoad: () => void 
           const el = e.currentTarget;
           el.muted = true;
           el.loop = true;
+          applyRate(el, 1);
           setLoud(false);
           setProgress(0);
           void el.play().catch(() => undefined);
@@ -195,6 +238,8 @@ function VideoNote({ a, onMediaLoad }: { a: Attachment; onMediaLoad: () => void 
         </span>
       )}
     </button>
+    {loud && <RateButton className="note-rate" rate={rate} onNext={nextRate} />}
+    </span>
   );
 }
 
