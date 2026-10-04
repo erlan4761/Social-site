@@ -186,3 +186,27 @@
 .composer-send:active:not(:disabled) { transform: scale(0.92); }
 .composer-send:disabled { opacity: 0.35; cursor: default; }
 .composer-send .ico { transform: translateX(-1px); }
+
+/* ─ Викторина ──────────────────────────────────────────────────────────
+   Правильный ответ — зелёным, свой неверный — красным; под итогами —
+   «Верно!» или «Неверно» и пояснение автора. */
+.poll-row.correct .poll-bar span { background: var(--tint-4); }
+.poll-row.correct .poll-mine { color: var(--tint-4); }
+.poll-row.wrong .poll-bar span { background: var(--danger); }
+.poll-row.wrong .poll-mine { color: var(--danger); }
+.poll-verdict { margin: var(--s-2) 0 0; font-size: var(--t-meta); font-weight: 600; }
+.poll-verdict.right { color: var(--tint-4); }
+.poll-verdict.wrong { color: var(--danger); }
+.poll-explain {
+  display: flex;
+  gap: var(--s-2);
+  align-items: flex-start;
+  margin: var(--s-2) 0 0;
+  padding: var(--s-2);
+  border-radius: var(--r-xs);
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+}
+.poll-explain svg { flex: none; margin-top: 0.125rem; color: var(--accent); }
+.poll-correct { flex: none; accent-color: var(--tint-4); }

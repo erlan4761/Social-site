@@ -205,13 +205,26 @@ export type Poll = {
   myVotes: number[];
   canClose: boolean;
   options: PollOption[];
+  /** Викторина: один правильный ответ; он и пояснение — после ответа (автору — сразу). */
+  quiz?: boolean;
+  correctOptionId?: number | null;
+  explanation?: string | null;
 };
 
 /** Отложенное сообщение: ждёт sendAt и уходит само. Только текст. */
 export type ScheduledKind = 'dm' | 'chat' | 'channel';
 export type Scheduled = { id: number; kind: ScheduledKind; body: string; sendAt: string; createdAt: string };
 
-export type PollInput = { question: string; options: string[]; multiple?: boolean; anonymous?: boolean };
+export type PollInput = {
+  question: string;
+  options: string[];
+  multiple?: boolean;
+  anonymous?: boolean;
+  /** Викторина: `correct` — номер правильного среди вариантов, `explanation` — до 200 символов. */
+  quiz?: boolean;
+  correct?: number;
+  explanation?: string;
+};
 
 export type ChannelPost = {
   id: number;

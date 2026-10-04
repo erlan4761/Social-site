@@ -26,11 +26,17 @@ export function PollCard({ question, poll, readOnly, onVote, onClose }: PollCard
   const resultsOpen = poll.options.some((o) => o.votes != null);
   const canVote = !poll.closed && !voted && !readOnly;
   const showResults = !canVote || peek;
+  const quiz = Boolean(poll.quiz);
   const kind = poll.closed
-    ? 'Опрос завершён'
-    : [poll.anonymous ? 'Анонимный опрос' : 'Открытый опрос', poll.multiple ? 'несколько ответов' : null]
-      .filter(Boolean)
-      .join(', ');
+    ? quiz ? 'Викторина завершена' : 'Опрос завершён'
+    : quiz
+      ? poll.anonymous ? 'Анонимная викторина' : 'Открытая викторина'
+      : [poll.anonymous ? 'Анонимный опрос' : 'Открытый опрос', poll.multiple ? 'несколько ответов' : null]
+        .filter(Boolean)
+        .join(', ');
+  const correctId = quiz ? poll.correctOptionId ?? null : null;
+  // Свой ответ в викторине: угадал или нет — им и окрашивается строка.
+  const verdict = quiz && voted && correctId != null ? (poll.myVotes.includes(correctId) ? 'right' : 'wrong') : null;
   const top = Math.max(0, ...poll.options.map((o) => o.votes ?? 0));
 
   return (
@@ -68,15 +74,25 @@ export function PollCard({ question, poll, readOnly, onVote, onClose }: PollCard
             const votes = o.votes ?? 0;
             const share = poll.total > 0 ? Math.round((votes / poll.total) * 100) : 0;
             const mine = poll.myVotes.includes(o.id);
+            const cls = ['poll-row'];
+            if (!quiz && votes === top && votes > 0 && poll.closed) cls.push('lead');
+            if (o.id === correctId) cls.push('correct');
+            else if (quiz && mine) cls.push('wrong');
             return (
-              <li key={o.id} className={votes === top && votes > 0 && poll.closed ? 'poll-row lead' : 'poll-row'}>
+              <li key={o.id} className={cls.join(' ')}>
                 <span className="poll-row-head">
                   <span className="poll-share">{o.votes == null ? '' : `${share}%`}</span>
                   <span className="poll-text">
                     {o.text}
-                    {mine && (
-                      <span className="poll-mine" title="Ваш выбор">
+                    {o.id === correctId && (
+                      <span className="poll-mine" title="Правильный ответ">
                         <Icon name="check" size={14} />
+                        <span className="sr-only"> — правильный ответ</span>
+                      </span>
+                    )}
+                    {mine && (quiz ? o.id !== correctId : true) && (
+                      <span className="poll-mine" title="Ваш выбор">
+                        <Icon name={quiz ? 'close' : 'check'} size={14} />
                         <span className="sr-only"> — ваш выбор</span>
                       </span>
                     )}
@@ -98,6 +114,18 @@ export function PollCard({ question, poll, readOnly, onVote, onClose }: PollCard
         </ul>
       )}
 
+      {verdict && (
+        <p className={`poll-verdict ${verdict}`} role="status">
+          {verdict === 'right' ? 'Верно!' : 'Неверно — правильный ответ отмечен зелёным.'}
+        </p>
+      )}
+      {quiz && poll.explanation && showResults && (
+        <p className="poll-explain">
+          <Icon name="poll" size={14} />
+          <span>{poll.explanation}</span>
+        </p>
+      )}
+
       <div className="poll-foot">
         <span className="poll-total">
           {poll.total === 0 ? 'Пока никто не голосовал' : `${poll.total} ${plural(poll.total, 'голос', 'голоса', 'голосов')}`}
@@ -112,7 +140,7 @@ export function PollCard({ question, poll, readOnly, onVote, onClose }: PollCard
             {peek ? 'К голосованию' : 'Результаты'}
           </button>
         )}
-        {voted && !poll.closed && !readOnly && (
+        {voted && !poll.closed && !readOnly && !quiz && (
           <button className="btn link" type="button" onClick={() => onVote([])}>
             Отменить голос
           </button>
