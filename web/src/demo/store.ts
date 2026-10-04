@@ -159,6 +159,8 @@ export type DbFolder = ChatFolder & { userId: number };
 export type DbPoll = {
   id: number; kind: 'chat' | 'channel'; messageId: number; multiple: boolean; anonymous: boolean;
   closedAt: string | null; options: { id: number; text: string }[];
+  /** Викторина — как polls.quiz, correct_option_id, explanation. */
+  quiz?: boolean; correctOptionId?: number | null; explanation?: string | null;
 };
 
 /** Отложенные сообщения — как scheduled_messages: ждут sendAt и уходят сами. */

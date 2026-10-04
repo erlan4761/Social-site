@@ -11,8 +11,12 @@ export function toPoll(poll: DbPoll, authorId: number): Poll {
   const mine = votes.filter((v) => v.userId === db.meId).map((v) => v.optionId);
   const closed = poll.closedAt != null;
   const results = closed || mine.length > 0 || db.meId === authorId;
+  const quiz = Boolean(poll.quiz);
   return {
     id: poll.id, multiple: poll.multiple, anonymous: poll.anonymous, closed,
+    quiz,
+    correctOptionId: quiz && results ? poll.correctOptionId ?? null : null,
+    explanation: quiz && results ? poll.explanation ?? null : null,
     total: new Set(votes.map((v) => v.userId)).size,
     myVotes: mine,
     canClose: !closed && db.meId === authorId,
@@ -39,13 +43,20 @@ export function readPoll(raw: PollInput) {
   if (options.length < 2 || options.length > 10) fail(400, 'Вариантов ответа — от 2 до 10');
   if (options.some((o) => o.length > 100)) fail(400, 'Вариант ответа — не длиннее 100 символов');
   if (new Set(options.map((o) => o.toLocaleLowerCase('ru'))).size !== options.length) fail(400, 'Варианты ответа не должны повторяться');
-  return { question, options, multiple: raw.multiple === true, anonymous: raw.anonymous !== false };
+  const quiz = raw.quiz === true;
+  if (quiz && raw.multiple === true) fail(400, 'В викторине один правильный ответ — «несколько ответов» к ней не подходит');
+  const correct = raw.correct;
+  if (quiz && (!Number.isSafeInteger(correct) || correct! < 0 || correct! >= options.length)) fail(400, 'Отметьте правильный ответ викторины');
+  const explanation = quiz ? raw.explanation?.trim() || null : null;
+  if (explanation && explanation.length > 200) fail(400, 'Пояснение — не длиннее 200 символов');
+  return { question, options, multiple: raw.multiple === true && !quiz, anonymous: raw.anonymous !== false, quiz, correct: quiz ? correct! : null, explanation };
 }
 
 export function addPoll(kind: 'chat' | 'channel', messageId: number, input: ReturnType<typeof readPoll>) {
+  const options = input.options.map((text) => ({ id: id(), text }));
   db.polls.push({
-    id: id(), kind, messageId, multiple: input.multiple, anonymous: input.anonymous, closedAt: null,
-    options: input.options.map((text) => ({ id: id(), text })),
+    id: id(), kind, messageId, multiple: input.multiple, anonymous: input.anonymous, closedAt: null, options,
+    quiz: input.quiz, correctOptionId: input.quiz && input.correct != null ? options[input.correct].id : null, explanation: input.explanation,
   });
 }
 

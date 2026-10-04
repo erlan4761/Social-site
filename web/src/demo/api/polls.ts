@@ -8,6 +8,10 @@ export const pollsApi = {
     const { u, poll, authorId } = requirePoll(pollId);
     if (poll.closedAt) fail(400, 'Опрос завершён — голосовать больше нельзя');
     const chosen = [...new Set(options)];
+    if (poll.quiz) {
+      if (db.pollVotes.some((v) => v.pollId === poll.id && v.userId === u.id)) fail(400, 'Ответ в викторине не меняют');
+      if (chosen.length !== 1) fail(400, 'В викторине выбирают один ответ');
+    }
     if (!poll.multiple && chosen.length > 1) fail(400, 'В этом опросе можно выбрать только один вариант');
     if (chosen.some((x) => !poll.options.some((o) => o.id === x))) fail(400, 'Такого варианта в опросе нет');
     db.pollVotes = db.pollVotes.filter((v) => !(v.pollId === poll.id && v.userId === u.id));

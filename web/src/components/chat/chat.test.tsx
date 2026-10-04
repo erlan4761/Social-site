@@ -6,6 +6,7 @@ import { Composer } from './Composer';
 import { MessageText, firstUrl } from './MessageText';
 import { PollCard } from './PollCard';
 import { PinnedBar } from './PaneParts';
+import { PollDialog } from '../PollDialog';
 import { DRAFT_SAVE_MS } from './draft';
 
 /** Поведение деталей переписки — как его видит человек: кнопки, подсказки, ссылки. */
@@ -273,5 +274,73 @@ describe('несколько закреплённых', () => {
     rerender(<PinnedBar pins={[pins[2]]} onOpen={() => undefined} onUnpin={onUnpin} />);
     expect(screen.getByRole('button', { name: /Закреплённое сообщение/ })).toHaveTextContent('Первое');
     expect(document.querySelector('.pinned-marks')).toBeNull();
+  });
+});
+
+describe('викторина', () => {
+  const answered = (mine: number) =>
+    poll({
+      quiz: true,
+      total: 1,
+      myVotes: [mine],
+      correctOptionId: 12,
+      explanation: 'HP5 — классика ч/б.',
+      options: [
+        { id: 11, text: 'Kodak', votes: mine === 11 ? 1 : 0, voters: [] },
+        { id: 12, text: 'Ilford', votes: mine === 12 ? 1 : 0, voters: [] },
+      ],
+    });
+
+  it('неверный ответ — красным, правильный — зелёным, пояснение; голос не отменить', () => {
+    const { container } = render(<PollCard question="Что ч/б?" poll={answered(11)} readOnly={false} onVote={() => undefined} onClose={() => undefined} />);
+    expect(screen.getByText('Анонимная викторина')).toBeInTheDocument();
+    expect(container.querySelector('.poll-row.wrong')).toHaveTextContent('Kodak');
+    expect(container.querySelector('.poll-row.correct')).toHaveTextContent('Ilford');
+    expect(screen.getByRole('status')).toHaveTextContent('Неверно');
+    expect(screen.getByText('HP5 — классика ч/б.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Отменить голос' })).toBeNull();
+  });
+
+  it('верный ответ — «Верно!»', () => {
+    render(<PollCard question="Что ч/б?" poll={answered(12)} readOnly={false} onVote={() => undefined} onClose={() => undefined} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Верно!');
+    expect(screen.getByText('правильный ответ', { exact: false })).toBeInTheDocument();
+  });
+
+  it('до ответа — обычные кнопки, без подсказки', () => {
+    const { container } = render(
+      <PollCard question="Что ч/б?" poll={poll({ quiz: true, correctOptionId: null })} readOnly={false} onVote={() => undefined} onClose={() => undefined} />,
+    );
+    expect(screen.getAllByRole('button', { name: /Kodak|Ilford/ })).toHaveLength(2);
+    expect(container.querySelector('.poll-row.correct')).toBeNull();
+  });
+});
+
+describe('окно «Новый опрос» — викторина', () => {
+  it('отмеченный правильный уходит номером среди заполненных, с пояснением', async () => {
+    const onSubmit = vi.fn(async () => undefined);
+    HTMLDialogElement.prototype.showModal ??= function showModal(this: HTMLDialogElement) { this.open = true; };
+    HTMLDialogElement.prototype.close ??= function close(this: HTMLDialogElement) { this.open = false; };
+    render(<PollDialog where="В чате" onSubmit={onSubmit} onClose={() => undefined} />);
+    fireEvent.change(screen.getByLabelText('Вопрос'), { target: { value: 'Что ч/б?' } });
+    fireEvent.change(screen.getByLabelText('Вариант 1'), { target: { value: 'Kodak Gold' } });
+    fireEvent.change(screen.getByLabelText('Вариант 2'), { target: { value: 'Ilford HP5' } });
+    fireEvent.change(screen.getByLabelText('Вариант 3'), { target: { value: 'Fomapan' } });
+    fireEvent.click(screen.getByLabelText(/Викторина/));
+    expect(screen.getByRole('heading', { name: 'Новая викторина' })).toBeInTheDocument();
+    // Без отметки — подсказка, а не отправка.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Создать викторину' }));
+    });
+    expect(screen.getByText('Отметьте правильный ответ викторины.')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Вариант 2 — правильный ответ'));
+    fireEvent.change(screen.getByLabelText(/Пояснение/), { target: { value: 'HP5 — ч/б' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Создать викторину' }));
+    });
+    expect(onSubmit).toHaveBeenCalledWith({
+      question: 'Что ч/б?', options: ['Kodak Gold', 'Ilford HP5', 'Fomapan'], multiple: false, anonymous: true,
+      quiz: true, correct: 1, explanation: 'HP5 — ч/б',
+    });
   });
 });

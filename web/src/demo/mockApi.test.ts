@@ -414,6 +414,23 @@ describe('витрина: прочитать все', () => {
   });
 });
 
+describe('витрина: викторина', () => {
+  it('ответ открывает правильный, переответить нельзя', async () => {
+    const chat = await room();
+    await expect(api.sendChatPoll(chat.id, { question: 'Что ч/б?', options: ['Gold', 'HP5'], quiz: true })).rejects.toMatchObject({ status: 400 });
+    const { message } = await api.sendChatPoll(chat.id, { question: 'Что ч/б?', options: ['Gold', 'HP5'], quiz: true, correct: 1, explanation: 'HP5' });
+    const quiz = message.poll!;
+    expect(quiz.correctOptionId).toBe(quiz.options[1].id);
+    await loginAs('nina');
+    const seen = (await api.chatMessages(chat.id)).messages.find((m) => m.id === message.id)!.poll!;
+    expect(seen.correctOptionId).toBeNull();
+    const { poll } = await api.votePoll(quiz.id, [quiz.options[0].id]);
+    expect(poll.correctOptionId).toBe(quiz.options[1].id);
+    expect(poll.explanation).toBe('HP5');
+    await expect(api.votePoll(quiz.id, [quiz.options[1].id])).rejects.toMatchObject({ status: 400 });
+  });
+});
+
 describe('витрина: предпросмотр ссылок', () => {
   it('карточка только у заготовленной ссылки', async () => {
     expect((await api.linkPreview('https://github.com/erlan4761/Social-site')).preview?.siteName).toBe('GitHub');

@@ -4497,5 +4497,57 @@ check('у отправителя — вторые галочки', r.body.messag
 r = await raA('/read-all', { method: 'POST' });
 check('повторно — отмечать нечего', r.body.dms === 0 && r.body.chats === 0 && r.body.channels === 0, JSON.stringify(r.body));
 
+console.log('\n— викторины —');
+const qzA = makeClient();
+const qzB = makeClient();
+const qzC = makeClient();
+const userQzA = `qza_${stamp}`;
+const userQzB = `qzb_${stamp}`;
+const userQzC = `qzc_${stamp}`;
+await legacySignUp(qzA, userQzA, 'Ведущий');
+await legacySignUp(qzB, userQzB, 'Игрок');
+await legacySignUp(qzC, userQzC, 'Знаток');
+r = await qzA('/chats', { method: 'POST', body: JSON.stringify({ title: 'Викторина', members: [userQzB, userQzC] }) });
+const qzChat = r.body.chat.id;
+const quizPost = (poll) => qzA(`/chats/${qzChat}/messages`, { method: 'POST', body: JSON.stringify({ poll }) });
+const quizVote = (client, pollId, options) => client(`/polls/${pollId}/vote`, { method: 'PUT', body: JSON.stringify({ options }) });
+const base = { question: 'Какая плёнка цветная?', options: ['Ilford HP5', 'Kodak Gold', 'Fomapan'], quiz: true };
+
+r = await quizPost({ ...base });
+check('викторина без правильного ответа — 400', r.status === 400 && /правильный/.test(r.body.error ?? ''), `${r.status} ${r.body.error}`);
+r = await quizPost({ ...base, correct: 3 });
+check('правильный за пределами вариантов — 400', r.status === 400, `${r.status}`);
+r = await quizPost({ ...base, correct: 1, multiple: true });
+check('викторина с несколькими ответами — 400', r.status === 400, `${r.status}`);
+r = await quizPost({ ...base, correct: 1, explanation: 'х'.repeat(201) });
+check('пояснение длиннее 200 — 400', r.status === 400, `${r.status}`);
+r = await quizPost({ ...base, correct: 1, explanation: 'Gold — цветной негатив, остальные — ч/б.' });
+const quiz = r.body.message?.poll;
+const goldId = quiz?.options[1].id;
+check('викторина создана; автору правильный ответ виден сразу', r.status === 201 && quiz?.quiz === true && quiz.multiple === false
+  && quiz.correctOptionId === goldId && quiz.explanation?.startsWith('Gold'), `${r.status} ${JSON.stringify(quiz)}`);
+r = await qzB(`/chats/${qzChat}/messages`);
+const seenB = r.body.messages?.at(-1)?.poll;
+check('игроку до ответа — ни правильного, ни пояснения', seenB?.quiz === true && seenB.correctOptionId === null && seenB.explanation === null
+  && seenB.options.every((o) => o.votes === null), JSON.stringify(seenB));
+r = await quizVote(qzB, quiz.id, [quiz.options[0].id, goldId]);
+check('два ответа сразу — 400', r.status === 400, `${r.status}`);
+r = await quizVote(qzB, quiz.id, [quiz.options[0].id]);
+check('ответил неверно — открылись правильный и пояснение', r.status === 200 && r.body.poll?.myVotes[0] === quiz.options[0].id
+  && r.body.poll.correctOptionId === goldId && r.body.poll.explanation?.startsWith('Gold'), JSON.stringify(r.body));
+r = await quizVote(qzB, quiz.id, [goldId]);
+check('переответить нельзя', r.status === 400 && /не меняют/.test(r.body.error ?? ''), `${r.status} ${r.body.error}`);
+r = await quizVote(qzB, quiz.id, []);
+check('и отозвать ответ — тоже', r.status === 400, `${r.status}`);
+r = await quizVote(qzC, quiz.id, [goldId]);
+check('второй игрок ответил верно — итоги', r.status === 200 && r.body.poll?.total === 2
+  && r.body.poll.options.find((o) => o.id === goldId)?.votes === 1, JSON.stringify(r.body.poll));
+// Обычный опрос по-прежнему разрешает передумать.
+r = await quizPost({ question: 'Когда идём?', options: ['Суббота', 'Воскресенье'] });
+const plainPoll = r.body.message?.poll;
+await quizVote(qzB, plainPoll.id, [plainPoll.options[0].id]);
+r = await quizVote(qzB, plainPoll.id, [plainPoll.options[1].id]);
+check('в обычном опросе голос по-прежнему меняют', r.status === 200 && r.body.poll?.quiz === false && r.body.poll.correctOptionId === null, JSON.stringify(r.body.poll));
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

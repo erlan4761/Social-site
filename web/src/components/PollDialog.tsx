@@ -25,6 +25,10 @@ export function PollDialog({ where, onSubmit, onClose }: Props) {
   const [options, setOptions] = useState<string[]>(['', '']);
   const [multiple, setMultiple] = useState(false);
   const [anonymous, setAnonymous] = useState(true);
+  const [quiz, setQuiz] = useState(false);
+  /** Номер правильного варианта в списке полей (с пустыми). */
+  const [correct, setCorrect] = useState<number | null>(null);
+  const [explanation, setExplanation] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,7 +57,10 @@ export function PollDialog({ where, onSubmit, onClose }: Props) {
   }
 
   function removeOption(index: number) {
-    setOptions((prev) => (prev.length <= OPTIONS_MIN ? prev : prev.filter((_, i) => i !== index)));
+    if (options.length <= OPTIONS_MIN) return;
+    setOptions((prev) => prev.filter((_, i) => i !== index));
+    // Отмеченный правильным сдвигается вместе со списком.
+    setCorrect((c) => (c == null ? c : c === index ? null : c > index ? c - 1 : c));
   }
 
   const filled = options.map((o) => o.trim()).filter(Boolean);
@@ -62,10 +69,19 @@ export function PollDialog({ where, onSubmit, onClose }: Props) {
     e.preventDefault();
     if (!question.trim()) return setError('Напишите вопрос.');
     if (filled.length < OPTIONS_MIN) return setError('Нужно хотя бы два варианта ответа.');
+    if (quiz && (correct == null || !options[correct]?.trim())) return setError('Отметьте правильный ответ викторины.');
     setBusy(true);
     setError(null);
+    // Сервер считает номер правильного среди заполненных вариантов.
+    const correctIndex = quiz && correct != null ? options.slice(0, correct).filter((o) => o.trim()).length : undefined;
     try {
-      await onSubmit({ question: question.trim(), options: filled, multiple, anonymous });
+      await onSubmit({
+        question: question.trim(),
+        options: filled,
+        multiple: quiz ? false : multiple,
+        anonymous,
+        ...(quiz ? { quiz: true, correct: correctIndex, explanation: explanation.trim() || undefined } : {}),
+      });
       dialog.current?.close();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось создать опрос');
@@ -77,7 +93,7 @@ export function PollDialog({ where, onSubmit, onClose }: Props) {
     <dialog className="sheet poll-sheet" ref={dialog} onClick={backdrop} aria-labelledby={`${id}-title`}>
       <form onSubmit={submit}>
         <h2 className="sheet-title" id={`${id}-title`}>
-          Новый опрос
+          {quiz ? 'Новая викторина' : 'Новый опрос'}
         </h2>
         <p className="sheet-subject">{where}</p>
         {error && <p className="error">{error}</p>}
@@ -98,10 +114,22 @@ export function PollDialog({ where, onSubmit, onClose }: Props) {
         <fieldset className="poll-fieldset">
           <legend>
             Варианты ответа — {filled.length} из {OPTIONS_MAX}
+            {quiz && ', отметьте правильный'}
           </legend>
           <ol className="poll-inputs">
             {options.map((o, i) => (
               <li key={i}>
+                {quiz && (
+                  <input
+                    className="poll-correct"
+                    type="radio"
+                    name={`${id}-correct`}
+                    checked={correct === i}
+                    disabled={!o.trim()}
+                    aria-label={`Вариант ${i + 1} — правильный ответ`}
+                    onChange={() => setCorrect(i)}
+                  />
+                )}
                 <input
                   type="text"
                   value={o}
@@ -127,17 +155,35 @@ export function PollDialog({ where, onSubmit, onClose }: Props) {
             Анонимный
           </label>
           <label className="check">
-            <input type="checkbox" checked={multiple} onChange={(e) => setMultiple(e.target.checked)} />
+            <input type="checkbox" checked={multiple && !quiz} disabled={quiz} onChange={(e) => setMultiple(e.target.checked)} />
             Несколько ответов
           </label>
+          <label className="check">
+            <input type="checkbox" checked={quiz} onChange={(e) => setQuiz(e.target.checked)} />
+            Викторина — один правильный ответ
+          </label>
         </fieldset>
+
+        {quiz && (
+          <label className="field" htmlFor={`${id}-explain`}>
+            <span>Пояснение — покажем после ответа (необязательно)</span>
+            <textarea
+              id={`${id}-explain`}
+              rows={2}
+              maxLength={200}
+              value={explanation}
+              placeholder="Например: Gold — цветной негатив, остальные — чёрно-белые."
+              onChange={(e) => setExplanation(e.target.value)}
+            />
+          </label>
+        )}
 
         <div className="sheet-foot">
           <button className="btn ghost" type="button" disabled={busy} onClick={() => dialog.current?.close()}>
             Отмена
           </button>
           <button className="btn" type="submit" disabled={busy}>
-            {busy ? 'Создаю…' : 'Создать опрос'}
+            {busy ? 'Создаю…' : quiz ? 'Создать викторину' : 'Создать опрос'}
           </button>
         </div>
       </form>

@@ -54,6 +54,14 @@ router.put('/:id/vote', (req, res) => {
     return res.status(400).json({ error: 'Варианты — список номеров' });
   }
   const chosen = [...new Set(raw)];
+  if (poll.quiz) {
+    // Ответ в викторине — один и окончательный: иначе, увидев правильный, его
+    // поправили бы задним числом.
+    if (db.prepare('SELECT 1 FROM poll_votes WHERE poll_id = ? AND user_id = ?').get(poll.id, me)) {
+      return res.status(400).json({ error: 'Ответ в викторине не меняют' });
+    }
+    if (chosen.length !== 1) return res.status(400).json({ error: 'В викторине выбирают один ответ' });
+  }
   if (!poll.multiple && chosen.length > 1) {
     return res.status(400).json({ error: 'В этом опросе можно выбрать только один вариант' });
   }
