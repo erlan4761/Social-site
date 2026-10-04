@@ -55,17 +55,22 @@ export const PRESETS: { title: string; types: PrefKind[]; hint: string }[] = [
 
 export const KIND_LABELS: Record<PrefKind, string> = { dm: 'Личные', chat: 'Группы', channel: 'Каналы' };
 
+/** Вкладка списка: папка (id), встроенные «Непрочитанные» или «Все» (null). */
+export type ActiveTab = number | 'unread' | null;
+
 /** Выбранная вкладка — удобство одного браузера, не данные: localStorage. */
 const KEY = 'chronicle-folder';
-export function readActiveFolder(): number | null {
+export function readActiveFolder(): ActiveTab {
   try {
-    const v = Number(localStorage.getItem(KEY));
+    const raw = localStorage.getItem(KEY);
+    if (raw === 'unread') return 'unread';
+    const v = Number(raw);
     return Number.isSafeInteger(v) && v > 0 ? v : null;
   } catch {
     return null;
   }
 }
-export function writeActiveFolder(id: number | null) {
+export function writeActiveFolder(id: ActiveTab) {
   try {
     if (id == null) localStorage.removeItem(KEY);
     else localStorage.setItem(KEY, String(id));
@@ -73,3 +78,13 @@ export function writeActiveFolder(id: number | null) {
     /* хранилище недоступно — вкладка просто не запомнится */
   }
 }
+
+/**
+ * Встроенная вкладка «Непрочитанные», как в Телеграме: чаты, где есть
+ * непрочитанное, включая приглушённые. Открытый сейчас чат остаётся в списке,
+ * пока его читают, — иначе он исчезал бы из-под пальца в момент открытия.
+ */
+export const inUnread = (row: FolderRow, open = false) => row.unread > 0 || open;
+
+/** Счётчик на вкладке «Непрочитанные» — как у папок: чатов, без приглушённых. */
+export const unreadChats = (rows: FolderRow[]) => rows.filter((r) => !r.muted && r.unread > 0).length;

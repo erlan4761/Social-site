@@ -164,6 +164,36 @@ export const dmApi = {
       ? dmApi.sendMessage(target.username, '', null, { forward: source, fwdAlbum: album })
       : chatsApi.sendChatMessage(target.id, '', null, { forward: source, fwdAlbum: album }),
 
+  readAll: () => {
+    const u = requireMe()!;
+    const now = new Date().toISOString();
+    let dms = 0;
+    for (const m of db.messages) {
+      if (m.toId === u.id && !m.readAt) {
+        m.readAt = now;
+        dms += 1;
+      }
+    }
+    let chats = 0;
+    for (const row of db.chatMembers.filter((x) => x.userId === u.id)) {
+      const top = db.chatMessages.filter((m) => m.chatId === row.chatId).reduce((max, m) => Math.max(max, m.id), 0);
+      if (top > row.lastReadId) {
+        row.lastReadId = top;
+        chats += 1;
+      }
+    }
+    let channels = 0;
+    for (const s of db.channelSubs.filter((x) => x.userId === u.id)) {
+      const top = db.channelPosts.filter((p) => p.channelId === s.channelId).reduce((max, p) => Math.max(max, p.id), 0);
+      if (top > s.lastReadId) {
+        s.lastReadId = top;
+        channels += 1;
+      }
+    }
+    for (const kind of ['message', 'chat_message', 'mention'] as const) markNotificationsRead({ userId: u.id, kind });
+    return tick({ ok: true as const, dms, chats, channels });
+  },
+
   markRead: (username: string) => {
     const u = requireMe()!;
     const other = byName(username);

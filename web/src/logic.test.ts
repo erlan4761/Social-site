@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatFolder } from './api';
-import { folderUnread, inFolder, toggleInFolder, type FolderRow } from './folders';
+import { folderUnread, inFolder, inUnread, readActiveFolder, toggleInFolder, unreadChats, writeActiveFolder, type FolderRow } from './folders';
 import { lastSeenLabel, plural } from './time';
 import { callText, mergeLatest, previewText, revealOlder, typingLabel } from './components/chat/format';
 import { groupAlbums, type BubbleItem } from './components/chat/MessageList';
@@ -204,5 +204,30 @@ describe('записи о звонках', () => {
     expect(callText(missed, true)).toBe('Видеозвонок — нет ответа');
     expect(callText(missed, false)).toBe('Пропущенный видеозвонок');
     expect(callText({ video: false, outcome: 'declined', duration: null }, false)).toBe('Отклонённый звонок');
+  });
+});
+
+
+describe('вкладка «Непрочитанные»', () => {
+  const r = (unread: number, muted = false): FolderRow => ({ kind: 'dm', id: unread * 10 + (muted ? 1 : 0), unread, muted });
+
+  it('попадают чаты с непрочитанным, и приглушённые тоже; открытый — остаётся', () => {
+    expect(inUnread(r(2))).toBe(true);
+    expect(inUnread(r(3, true))).toBe(true);
+    expect(inUnread(r(0))).toBe(false);
+    expect(inUnread(r(0), true)).toBe(true);
+  });
+
+  it('счётчик — чатов, без приглушённых', () => {
+    expect(unreadChats([r(2), r(5), r(1, true), r(0)])).toBe(2);
+  });
+
+  it('вкладка запоминается', () => {
+    writeActiveFolder('unread');
+    expect(readActiveFolder()).toBe('unread');
+    writeActiveFolder(7);
+    expect(readActiveFolder()).toBe(7);
+    writeActiveFolder(null);
+    expect(readActiveFolder()).toBeNull();
   });
 });

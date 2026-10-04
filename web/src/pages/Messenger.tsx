@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Outlet, useMatch, useNavigate } from 'react-router-dom';
+import { Outlet, useLocation, useMatch, useNavigate } from 'react-router-dom';
 import { api, ApiError, type Author, type Channel, type ChatFolder } from '../api';
 import { Icon } from '../components/Icon';
 import { Monogram, SavedAvatar } from '../components/Monogram';
@@ -10,7 +10,7 @@ import { ChannelAvatar, ChatRow, ChannelRow, DmRow } from '../components/messeng
 import { FolderTab } from '../components/messenger/FolderTab';
 import { RowMenu } from '../components/messenger/RowMenu';
 import { fold, folderRow, matches, rows, SAVED_TITLE } from '../components/messenger/rows';
-import { folderUnread, inFolder, readActiveFolder, toggleInFolder, writeActiveFolder } from '../folders';
+import { folderUnread, inFolder, inUnread, readActiveFolder, toggleInFolder, unreadChats, writeActiveFolder, type ActiveTab } from '../folders';
 import { useSession } from '../session';
 import { pollEvery, useLive, useLiveConnected } from '../live';
 import { plural } from '../time';
@@ -26,6 +26,10 @@ const SEARCH_DEBOUNCE_MS = 250;
 /** Что получает открытая переписка от мессенджера через `<Outlet context>`. */
 export type MessengerContext = { refreshList: () => void };
 
+
+/** Адрес переписки строки — тот же, куда ведёт сама строка. */
+const rowPath = (row: Row) =>
+  row.kind === 'dm' ? `/messages/${row.item.user.username}` : row.kind === 'chat' ? `/messages/c/${row.item.id}` : `/messages/ch/${row.item.handle}`;
 
 export function Messenger() {
   const { user, refreshBadges } = useSession();
@@ -43,7 +47,9 @@ export function Messenger() {
   const [rowMenu, setRowMenu] = useState<{ row: Row; x: number; y: number } | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [folders, setFolders] = useState<ChatFolder[]>([]);
-  const [activeFolder, setActiveFolder] = useState<number | null>(() => readActiveFolder());
+  const [activeFolder, setActiveFolder] = useState<ActiveTab>(() => readActiveFolder());
+  const [readingAll, setReadingAll] = useState(false);
+  const { pathname } = useLocation();
   const [foldersOpen, setFoldersOpen] = useState<{ editId: number | null } | null>(null);
 
   useEffect(() => {
@@ -51,8 +57,9 @@ export function Messenger() {
   }, []);
 
   // Удалили открытую папку — назад во «Все».
-  const current = activeFolder != null ? folders.find((f) => f.id === activeFolder) ?? null : null;
-  function chooseFolder(id: number | null) {
+  const current = typeof activeFolder === 'number' ? folders.find((f) => f.id === activeFolder) ?? null : null;
+  const unreadTab = activeFolder === 'unread';
+  function chooseFolder(id: ActiveTab) {
     setActiveFolder(id);
     writeActiveFolder(id);
   }
@@ -131,8 +138,21 @@ export function Messenger() {
     if (q) return items.filter((r) => matches(r, q));
     if (archiveOpen) return archived;
     const main = items.filter((r) => !r.item.archived);
+    if (unreadTab) return main.filter((r) => inUnread(folderRow(r), rowPath(r) === pathname));
     return current ? main.filter((r) => inFolder(current, folderRow(r))) : main;
-  }, [items, q, current, archiveOpen, archived]);
+  }, [items, q, current, archiveOpen, archived, unreadTab, pathname]);
+
+  async function readAll() {
+    setReadingAll(true);
+    try {
+      await api.readAll();
+      refreshList();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не получилось');
+    } finally {
+      setReadingAll(false);
+    }
+  }
 
   async function toggleFolder(folder: ChatFolder, row: Row, on: boolean) {
     setRowMenu(null);
@@ -303,9 +323,15 @@ export function Messenger() {
             </div>
           )}
 
-          {folders.length > 0 && !q && !archiveOpen && (
+          {!q && !archiveOpen && items && items.length > 0 && (
             <div className="folder-tabs" role="tablist" aria-label="Папки чатов">
-              <FolderTab label="Все" active={current == null} unread={0} onClick={() => chooseFolder(null)} />
+              <FolderTab label="Все" active={current == null && !unreadTab} unread={0} onClick={() => chooseFolder(null)} />
+              <FolderTab
+                label="Непрочитанные"
+                active={unreadTab}
+                unread={unreadChats(items.filter((r) => !r.item.archived).map(folderRow))}
+                onClick={() => chooseFolder('unread')}
+              />
               {folders.map((f) => (
                 <FolderTab
                   key={f.id}
@@ -346,6 +372,23 @@ export function Messenger() {
                     Уберите сюда чат через его меню — правый клик или долгое нажатие по строке.
                   </p>
                 )}
+                {unreadTab && !q && !archiveOpen && (
+                  shown.length === 0 ? (
+                    <p className="list-note">
+                      <strong>Всё прочитано.</strong>
+                      Новые сообщения появятся здесь, пока вы их не откроете.
+                    </p>
+                  ) : (
+                    <div className="unread-head">
+                      <span>
+                        {shown.length} {plural(shown.length, 'чат', 'чата', 'чатов')} с непрочитанным
+                      </span>
+                      <button className="btn ghost small" type="button" disabled={readingAll} onClick={() => void readAll()}>
+                        {readingAll ? 'Отмечаю…' : 'Прочитать все'}
+                      </button>
+                    </div>
+                  )
+                )}
                 {current && !q && !archiveOpen && shown.length === 0 && (
                   <p className="list-note">
                     <strong>В папке «{current.title}» пусто.</strong>
@@ -356,7 +399,7 @@ export function Messenger() {
                   <p className="list-note">Ничего не нашлось.</p>
                 )}
                 <ul className="dialogs">
-                  {!q && !archiveOpen && current == null && archived.length > 0 && (
+                  {!q && !archiveOpen && current == null && !unreadTab && archived.length > 0 && (
                     <li>
                       <ArchiveRow rows={archived} onOpen={() => setArchiveOpen(true)} />
                     </li>

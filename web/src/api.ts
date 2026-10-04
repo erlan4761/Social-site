@@ -1033,6 +1033,9 @@ const realApi = {
 
   endOtherSessions: () => request<{ ok: true; ended: number }>('/account/sessions', { method: 'DELETE' }),
 
+  /** «Прочитать все»: личные, группы и каналы разом — сколько чего отмечено. */
+  readAll: () => request<{ ok: true; dms: number; chats: number; channels: number }>('/read-all', { method: 'POST' }),
+
   /** Новый срок автозавершения; давно неактивные сеансы закрываются сразу — `ended`. */
   setSessionTtl: (days: number) =>
     request<{ days: number; ended: number }>('/account/session-ttl', { method: 'PUT', body: body({ days }) }),
