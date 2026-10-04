@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db.js';
 import { requireAuth } from '../auth.js';
-import { PIN_LIMIT, PREF_KINDS, pinnedCount, prefsOf, prefFor, setPrefs } from '../prefs.js';
+import { PIN_LIMIT, PREF_KINDS, pinnedCount, prefsOf, prefFor, setPrefs, CHAT_THEMES } from '../prefs.js';
 
 export const router = Router();
 
@@ -49,8 +49,20 @@ router.get('/:kind/:target', (req, res) => {
   const target = resolveTarget(kind, req.params.target, req.user.id);
   if (!target) return res.status(404).json({ error: NOT_FOUND });
   const pref = prefFor(prefsOf(req.user.id, kind), target);
-  res.json({ pinned: Boolean(pref.pinnedAt), muted: pref.muted, archived: pref.archivedAt != null });
+  res.json({ pinned: Boolean(pref.pinnedAt), muted: pref.muted, archived: pref.archivedAt != null, theme: pref.theme });
 });
+
+/** Тема из тела запроса: нет поля — не трогать, null или «default» — «как везде». */
+function themeOf(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === 'default') return null;
+  if (!CHAT_THEMES.includes(value)) {
+    const err = new Error('Такой темы нет');
+    err.status = 400;
+    throw err;
+  }
+  return value;
+}
 
 router.put('/:kind/:target', (req, res, next) => {
   try {
@@ -63,6 +75,7 @@ router.put('/:kind/:target', (req, res, next) => {
     const pinned = flag(req.body?.pinned, 'pinned');
     const muted = flag(req.body?.muted, 'muted');
     const archived = flag(req.body?.archived, 'archived');
+    const theme = themeOf(req.body?.theme);
 
     if (pinned) {
       const already = Boolean(prefFor(prefsOf(me, kind), target).pinnedAt);
@@ -71,8 +84,8 @@ router.put('/:kind/:target', (req, res, next) => {
       }
     }
 
-    const pref = setPrefs(me, kind, target, { pinned, muted, archived });
-    res.json({ pinned: Boolean(pref.pinnedAt), muted: pref.muted, archived: pref.archivedAt != null });
+    const pref = setPrefs(me, kind, target, { pinned, muted, archived, theme });
+    res.json({ pinned: Boolean(pref.pinnedAt), muted: pref.muted, archived: pref.archivedAt != null, theme: pref.theme });
   } catch (err) {
     next(err);
   }

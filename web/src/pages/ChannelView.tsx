@@ -7,6 +7,8 @@ import {
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
+import { ThemePicker } from '../components/chat/ThemePicker';
+import { useChatTheme } from '../chatThemes';
 import { ScheduledBar } from '../components/Scheduled';
 import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
@@ -44,6 +46,8 @@ function ChannelPane({ handle }: { handle: string }) {
   const [gone, setGone] = useState<string | null>(null);
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<Forwarding | null>(null);
+  const [themeOpen, setThemeOpen] = useState(false);
+  const [theme, setTheme] = useChatTheme('channel', (channel?.subscribed || channel?.iAmOwner ? handle : null));
   const [notice, notify] = useNotice();
   const selection = useSelection(posts.map((p) => p.id));
   const [pollOpen, setPollOpen] = useState(false);
@@ -329,7 +333,7 @@ function ChannelPane({ handle }: { handle: string }) {
   }));
 
   return (
-    <div className="pane">
+    <div className="pane" data-chat-theme={theme ?? undefined}>
       <PaneHead
         avatar={channel ? <ChannelAvatar title={channel.title} size="sm" /> : null}
         title={channel?.title ?? ''}
@@ -347,6 +351,16 @@ function ChannelPane({ handle }: { handle: string }) {
             >
               <Icon name="search" />
             </button>
+              <button
+                className={themeOpen ? 'icon-btn on' : 'icon-btn'}
+                type="button"
+                aria-expanded={themeOpen}
+                aria-label="Оформление"
+                title="Оформление"
+                onClick={() => setThemeOpen((v) => !v)}
+              >
+                <Icon name="palette" />
+              </button>
             <button
               className={infoOpen ? 'icon-btn on' : 'icon-btn'}
               type="button"
@@ -361,6 +375,13 @@ function ChannelPane({ handle }: { handle: string }) {
           )
         }
       />
+
+      {themeOpen && (
+        <div className="pane-panel">
+          <ThemePicker value={theme} onChange={(next) => void setTheme(next)} />
+          <p className="settings-note">Тема видна только вам — на всех ваших устройствах.</p>
+        </div>
+      )}
 
       {searchOpen && (
         <ConversationSearch

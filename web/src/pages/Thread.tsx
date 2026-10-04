@@ -6,6 +6,8 @@ import {
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
+import { ThemePicker } from '../components/chat/ThemePicker';
+import { useChatTheme } from '../chatThemes';
 import { ScheduledBar } from '../components/Scheduled';
 import { Icon } from '../components/Icon';
 import { SavedAvatar } from '../components/Monogram';
@@ -44,6 +46,8 @@ function ThreadView({ username }: { username: string }) {
   const [typing, setTyping] = useState(false);
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<Forwarding | null>(null);
+  const [themeOpen, setThemeOpen] = useState(false);
+  const [theme, setTheme] = useChatTheme('dm', username);
   const selection = useSelection(messages.map((m) => m.id));
   const [pins, setPins] = useState<PinnedPreview[]>([]);
   const [autoDelete, setAutoDelete] = useState(0);
@@ -326,7 +330,7 @@ function ThreadView({ username }: { username: string }) {
   const online = !saved && !blocked && isOnline(other?.lastSeenAt);
 
   return (
-    <div className="pane">
+    <div className="pane" data-chat-theme={theme ?? undefined}>
       {other && saved ? (
         <PaneHead
           avatar={<SavedAvatar size="sm" />}
@@ -392,6 +396,16 @@ function ThreadView({ username }: { username: string }) {
                   </button>
                 </>
               )}
+              <button
+                className={themeOpen ? 'icon-btn on' : 'icon-btn'}
+                type="button"
+                aria-expanded={themeOpen}
+                aria-label="Оформление"
+                title="Оформление"
+                onClick={() => setThemeOpen((v) => !v)}
+              >
+                <Icon name="palette" />
+              </button>
               {!blocked && (
                 <button
                   className={timerOpen || autoDelete ? 'icon-btn on' : 'icon-btn'}
@@ -419,6 +433,13 @@ function ThreadView({ username }: { username: string }) {
         />
       ) : (
         <header className="pane-head" />
+      )}
+
+      {themeOpen && (
+        <div className="pane-panel">
+          <ThemePicker value={theme} onChange={(next) => void setTheme(next)} />
+          <p className="settings-note">Тема видна только вам — на всех ваших устройствах.</p>
+        </div>
       )}
 
       {searchOpen && (

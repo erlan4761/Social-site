@@ -147,7 +147,11 @@ export type DbChatMessage = DbExtras & { id: number; chatId: number; authorId: n
 export type DbDraft = { userId: number; kind: PrefKind; targetId: number; body: string; updatedAt: string };
 
 /** `archivedAt` — когда чат убрали в архив, как chat_prefs.archived_at. */
-export type DbPref = { userId: number; kind: PrefKind; targetId: number; pinnedAt: string | null; muted: boolean; archivedAt?: string | null };
+export type DbPref = {
+  userId: number; kind: PrefKind; targetId: number; pinnedAt: string | null; muted: boolean; archivedAt?: string | null;
+  /** Тема переписки — как chat_prefs.theme. */
+  theme?: string | null;
+};
 
 /** Закреплённое сообщение — одно на переписку, как pinned_messages на сервере. */
 export type DbPin = { kind: PrefKind; scope: string; messageId: number };
