@@ -446,6 +446,19 @@ describe('витрина: ответы на комментарии', () => {
   });
 });
 
+describe('витрина: темы переписки', () => {
+  it('тема у каждого своя и не мешает другим настройкам', async () => {
+    expect((await api.getPref('dm', 'oleg_k')).theme).toBeNull();
+    await expect(api.setPref('dm', 'oleg_k', { theme: 'неон' })).rejects.toMatchObject({ status: 400 });
+    expect((await api.setPref('dm', 'oleg_k', { theme: 'sea' })).theme).toBe('sea');
+    expect((await api.setPref('dm', 'oleg_k', { muted: true })).theme).toBe('sea');
+    await loginAs('oleg_k');
+    expect((await api.getPref('dm', 'demo')).theme).toBeNull();
+    await loginAs('demo');
+    expect((await api.setPref('dm', 'oleg_k', { theme: null })).theme).toBeNull();
+  });
+});
+
 describe('витрина: предпросмотр ссылок', () => {
   it('карточка только у заготовленной ссылки', async () => {
     expect((await api.linkPreview('https://github.com/erlan4761/Social-site')).preview?.siteName).toBe('GitHub');

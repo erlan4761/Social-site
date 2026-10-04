@@ -273,6 +273,9 @@ export type Message = MessageExtras & {
 export type ChatPrefs = { pinnedAt: string | null; muted: boolean; archived: boolean };
 export type PrefKind = 'dm' | 'chat' | 'channel';
 
+/** Настройки чата глазами владельца — ответ /api/prefs/:kind/:target. */
+export type PrefState = { pinned: boolean; muted: boolean; archived: boolean; theme: string | null };
+
 /** Предпросмотр ссылки. `image` — адрес на нашем сервере, а не на чужом сайте. */
 export type LinkPreview = { url: string; title: string; description: string | null; siteName: string | null; image: string | null };
 
@@ -1078,9 +1081,13 @@ const realApi = {
   reorderFolders: (ids: number[]) =>
     request<{ folders: ChatFolder[] }>('/folders/order', { method: 'PUT', body: body({ ids }) }),
 
-  /** Закрепить чат или выключить уведомления. target — логин, номер чата или адрес канала. */
-  setPref: (kind: PrefKind, target: string | number, input: { pinned?: boolean; muted?: boolean; archived?: boolean }) =>
-    request<{ pinned: boolean; muted: boolean; archived: boolean }>(`/prefs/${kind}/${encodeURIComponent(String(target))}`, {
+  /** Настройки одного чата — закреплён, приглушён, в архиве, тема. */
+  getPref: (kind: PrefKind, target: string | number) =>
+    request<PrefState>(`/prefs/${kind}/${encodeURIComponent(String(target))}`),
+
+  /** Закрепить чат, выключить уведомления, убрать в архив, сменить тему (`null` — «как везде»). */
+  setPref: (kind: PrefKind, target: string | number, input: { pinned?: boolean; muted?: boolean; archived?: boolean; theme?: string | null }) =>
+    request<PrefState>(`/prefs/${kind}/${encodeURIComponent(String(target))}`, {
       method: 'PUT',
       body: body(input),
     }),

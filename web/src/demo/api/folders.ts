@@ -8,6 +8,17 @@ import { channelBy, subOf } from '../model/channels';
 
 /** Методы витрины: папки чатов и настройки чата в списке. */
 
+/** Имена тем — как CHAT_THEMES на сервере. */
+const DEMO_THEMES = ['gold', 'sea', 'forest', 'dusk', 'rose', 'plain'];
+
+/** Чат настройки глазами человека: нет доступа — null (404). */
+function prefTarget(kind: PrefKind, target: string | number, userId: number): number | null {
+  if (kind === 'dm') return byName(String(target))?.id ?? null;
+  if (kind === 'chat') return memberRow(Number(target), userId) ? Number(target) : null;
+  const c = channelBy(String(target));
+  return c && subOf(c.id, userId) ? c.id : null;
+}
+
 export const foldersApi = {
   // ─ Папки чатов ────────────────────────────────────────────────────────
 
@@ -50,7 +61,15 @@ export const foldersApi = {
     return tick({ folders: myFolders(u.id) });
   },
 
-  setPref: (kind: PrefKind, target: string | number, input: { pinned?: boolean; muted?: boolean; archived?: boolean }) => {
+  getPref: (kind: PrefKind, target: string | number) => {
+    const u = requireMe()!;
+    const targetId = prefTarget(kind, target, u.id);
+    if (targetId == null) fail(404, 'Чат не найден');
+    const pref = prefOf(u.id, kind, targetId!);
+    return tick({ pinned: Boolean(pref?.pinnedAt), muted: Boolean(pref?.muted), archived: pref?.archivedAt != null, theme: pref?.theme ?? null });
+  },
+
+  setPref: (kind: PrefKind, target: string | number, input: { pinned?: boolean; muted?: boolean; archived?: boolean; theme?: string | null }) => {
     const u = requireMe()!;
     let targetId: number | null = null;
     if (kind === 'dm') {
@@ -76,8 +95,11 @@ export const foldersApi = {
       ? current?.archivedAt ?? null
       : input.archived ? new Date().toISOString() : null;
 
+    if (input.theme !== undefined && input.theme !== null && input.theme !== 'default' && !DEMO_THEMES.includes(input.theme)) fail(400, 'Такой темы нет');
+    const theme = input.theme === undefined ? current?.theme ?? null : input.theme === 'default' ? null : input.theme;
+
     db.prefs = db.prefs.filter((x) => x !== current);
-    if (pinnedAt || muted || archivedAt) db.prefs.push({ userId: u.id, kind, targetId: targetId!, pinnedAt, muted, archivedAt });
-    return tick({ pinned: Boolean(pinnedAt), muted, archived: archivedAt != null });
+    if (pinnedAt || muted || archivedAt || theme) db.prefs.push({ userId: u.id, kind, targetId: targetId!, pinnedAt, muted, archivedAt, theme });
+    return tick({ pinned: Boolean(pinnedAt), muted, archived: archivedAt != null, theme });
   },
 };

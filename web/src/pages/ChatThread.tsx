@@ -7,6 +7,8 @@ import {
   type BubbleItem, type ComposerMode, type MessageAction,
 } from '../components/Chat';
 import { ForwardDialog, forwardingOf, type Forwarding } from '../components/ForwardDialog';
+import { ThemePicker } from '../components/chat/ThemePicker';
+import { useChatTheme } from '../chatThemes';
 import { ScheduledBar } from '../components/Scheduled';
 import { PollDialog } from '../components/PollDialog';
 import { Icon } from '../components/Icon';
@@ -67,6 +69,8 @@ function ChatView({ idParam }: { idParam: string }) {
   const [typing, setTyping] = useState<string[]>([]);
   const [mode, setMode] = useState<ComposerMode>(null);
   const [forwarding, setForwarding] = useState<Forwarding | null>(null);
+  const [themeOpen, setThemeOpen] = useState(false);
+  const [theme, setTheme] = useChatTheme('chat', chatId);
   const [notice, notify] = useNotice();
   const selection = useSelection(messages.map((m) => m.id));
   const [pollOpen, setPollOpen] = useState(false);
@@ -486,7 +490,7 @@ function ChatView({ idParam }: { idParam: string }) {
     : '';
 
   return (
-    <div className="pane">
+    <div className="pane" data-chat-theme={theme ?? undefined}>
       <PaneHead
         avatar={chat ? <Monogram username={chat.title} displayName={chat.title} size="sm" /> : null}
         title={chat?.title ?? ''}
@@ -514,6 +518,16 @@ function ChatView({ idParam }: { idParam: string }) {
             >
               <Icon name="search" />
             </button>
+              <button
+                className={themeOpen ? 'icon-btn on' : 'icon-btn'}
+                type="button"
+                aria-expanded={themeOpen}
+                aria-label="Оформление"
+                title="Оформление"
+                onClick={() => setThemeOpen((v) => !v)}
+              >
+                <Icon name="palette" />
+              </button>
             <button
               className={membersOpen ? 'icon-btn on' : 'icon-btn'}
               type="button"
@@ -531,6 +545,13 @@ function ChatView({ idParam }: { idParam: string }) {
           )
         }
       />
+
+      {themeOpen && (
+        <div className="pane-panel">
+          <ThemePicker value={theme} onChange={(next) => void setTheme(next)} />
+          <p className="settings-note">Тема видна только вам — на всех ваших устройствах.</p>
+        </div>
+      )}
 
       {searchOpen && (
         <ConversationSearch
