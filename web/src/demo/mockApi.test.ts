@@ -689,3 +689,19 @@ describe('витрина: хэштеги', () => {
     expect(tags[0]).toMatchObject({ tag: 'пленка', count: 2 });
   });
 });
+
+describe('витрина: закреплённая запись', () => {
+  it('одна, своя; профиль отдаёт её; удалили — закрепления нет', async () => {
+    const { post: first } = await api.createPost('Обо мне');
+    const { post: second } = await api.createPost('Ещё');
+    await api.setPin(first.id, true);
+    expect((await api.profile('demo')).pinnedPost?.id).toBe(first.id);
+    await api.setPin(second.id, true);
+    expect((await api.profile('demo')).pinnedPost?.id).toBe(second.id);
+    expect((await api.post(first.id)).post.pinned).toBe(false);
+    const other = (await api.posts({ author: 'oleg_k' })).posts[0];
+    await expect(api.setPin(other.id, true)).rejects.toMatchObject({ status: 403 });
+    await api.deletePost(second.id);
+    expect((await api.profile('demo')).pinnedPost).toBeNull();
+  });
+});

@@ -1,7 +1,7 @@
 import { type BlockedUser, type ReportReason, type ReportTargetType } from '../../api';
 import { type DbUser, db, tick, fail } from '../store';
 import { byId, byName, requireMe, author, blockedPair, hidden } from '../model/people';
-import { publicUser } from '../model/posts';
+import { publicUser, toPost } from '../model/posts';
 import { notify, dropNotification } from '../model/notifications';
 import { findByPhones, visiblePhone } from '../model/phoneBook';
 
@@ -38,7 +38,11 @@ export const peopleApi = {
     const target = u!;
     // Профиль отдаётся всегда, но с флагами: записей у заблокированного будет
     // ноль, подписаться нельзя, написать нельзя.
+    const pinnedPost = target.pinnedPostId != null && !hidden(target.id)
+      ? db.posts.find((x) => x.id === target.pinnedPostId)
+      : undefined;
     return tick({
+      pinnedPost: pinnedPost ? toPost(pinnedPost) : null,
       user: {
         ...publicUser(target),
         blockedByMe: db.blocks.some((b) => b.blockerId === db.meId && b.blockedId === target.id),

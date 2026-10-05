@@ -122,6 +122,8 @@ export const postsApi = {
     if (original) dropNotification({ userId: original.authorId, actorId: u.id, kind: 'repost', postId: original.id });
     // Репосты уходят вместе с оригиналом — каскад repost_of_id; цитаты остаются.
     const gone = new Set([postId, ...db.posts.filter((x) => x.repostOf === postId).map((x) => x.id)]);
+    // Закрепление снимается само — ON DELETE SET NULL.
+    if (u.pinnedPostId != null && gone.has(u.pinnedPostId)) u.pinnedPostId = null;
     db.posts = db.posts.filter((x) => !gone.has(x.id));
     db.comments = db.comments.filter((c) => !gone.has(c.postId));
     db.likes = db.likes.filter((l) => !gone.has(l.postId));
@@ -155,6 +157,17 @@ export const postsApi = {
     // Подпись — «старшая» строка, как MAX(label) на сервере: написание с «ё» побеждает.
     const label = labels.reduce((best, l) => (l > best ? l : best), labels[0] ?? raw.replace(/^#/, '').toLowerCase());
     return tick({ tag: tag!, label, count: labels.length });
+  },
+
+  setPin: (postId: number, on: boolean) => {
+    const u = requireMe()!;
+    const p = db.posts.find((x) => x.id === postId);
+    if (!p) fail(404, 'Пост не найден');
+    if (p!.authorId !== u.id) fail(403, 'Закрепить можно только свою запись');
+    if (on && p!.repostOf != null) fail(400, 'Репост не закрепить — закрепите свою запись');
+    if (on) u.pinnedPostId = postId;
+    else if (u.pinnedPostId === postId) u.pinnedPostId = null;
+    return tick({ pinned: on });
   },
 
   setRepost: (postId: number, on: boolean) => {

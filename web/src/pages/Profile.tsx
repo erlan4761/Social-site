@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, type ArchiveMonth, type BlockedUser, type User } from '../api';
+import { api, ApiError, type ArchiveMonth, type BlockedUser, type User, type Post } from '../api';
 import { ArchivePanel } from '../components/ArchivePanel';
 import { Monogram } from '../components/Monogram';
 import { FollowListDialog, type FollowSide } from '../components/FollowListDialog';
@@ -22,6 +22,8 @@ export function Profile() {
   const { username = '' } = useParams();
   const { user: me, setUser, refreshBadges } = useSession();
   const [profile, setProfile] = useState<User | null>(null);
+  /** Закреплённая запись — наверху ленты профиля, пока не выбран период. */
+  const [pinned, setPinned] = useState<Post | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [followError, setFollowError] = useState<string | null>(null);
@@ -67,18 +69,41 @@ export function Profile() {
   useEffect(() => {
     let cancelled = false;
     setProfile(null);
+    setPinned(null);
     setError(null);
     setEditing(false);
 
     api
       .profile(username)
-      .then((res) => !cancelled && setProfile(res.user))
+      .then((res) => {
+        if (cancelled) return;
+        setProfile(res.user);
+        setPinned(res.pinnedPost ?? null);
+      })
       .catch((err) => !cancelled && setError(err instanceof ApiError ? err.message : 'Ошибка загрузки'));
 
     return () => {
       cancelled = true;
     };
   }, [username]);
+
+  /**
+   * Правка записи в профиле: та же, что в ленте, плюс закрепление — запись
+   * переезжает наверх (прежняя закреплённая теряет флаг) или возвращается в
+   * общий порядок. Откат неудачного запроса приходит сюда же обратным флагом.
+   */
+  function patchPost(id: number, changes: Partial<Post>) {
+    stream.patch(id, changes);
+    if (changes.pinned === true) {
+      if (pinned && pinned.id !== id) stream.patch(pinned.id, { pinned: false });
+      const base = pinned?.id === id ? pinned : stream.posts.find((x) => x.id === id);
+      if (base) setPinned({ ...base, ...changes });
+    } else if (changes.pinned === false) {
+      if (pinned?.id === id) setPinned(null);
+    } else if (pinned?.id === id) {
+      setPinned({ ...pinned, ...changes });
+    }
+  }
 
   if (error) return <p className="error">{error}</p>;
   if (!profile) return <p className="empty" style={{ marginLeft: 0 }}>Загружаю…</p>;
@@ -98,6 +123,10 @@ export function Profile() {
   const at = steps.indexOf(period);
   const earlier = at >= 0 ? steps[at + 1] : undefined;
   const later = at > 0 ? steps[at - 1] : undefined;
+  // Закреплённая — наверху и только во всей ленте: в выбранном месяце её
+  // место там, где она написана. Ниже, в общем порядке, она не повторяется.
+  const showPinned = pinned != null && !period;
+  const listed = showPinned ? stream.posts.filter((x) => x.id !== pinned.id) : stream.posts;
   const followers = profile.followerCount ?? 0;
   const following = profile.followingCount ?? 0;
 
@@ -352,7 +381,7 @@ export function Profile() {
 
         {stream.loading ? (
           <p className="empty">Загружаю…</p>
-        ) : stream.posts.length === 0 ? (
+        ) : stream.posts.length === 0 && !showPinned ? (
           // Пустая лента у заблокированного — не «постов нет», а «их не видно»:
           // подменять причину значит врать человеку о его же действии.
           profile.blockedByMe || profile.blocksMe ? (
@@ -372,13 +401,15 @@ export function Profile() {
             </p>
           )
         ) : (
-          stream.posts.map((post) => (
+          [...(showPinned ? [pinned] : []), ...listed].map((post) => (
             <PostRow
               key={post.id}
               post={post}
+              pinnedMark={showPinned && post.id === pinned.id}
               canDelete={isMe}
-              onPatch={stream.patch}
+              onPatch={patchPost}
               onDelete={async (id) => {
+                if (pinned?.id === id) setPinned(null);
                 const month = post.createdAt.slice(0, 7);
                 if (!(await stream.remove(id))) return;
                 setProfile((p) => (p ? { ...p, postCount: Math.max(0, (p.postCount ?? 1) - 1) } : p));

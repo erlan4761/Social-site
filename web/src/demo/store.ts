@@ -4,6 +4,8 @@ import { type Attachment, type ChatFolder, type Media, type LastSeenPrivacy, typ
 
 export type DbUser = {
   id: number;
+  /** Закреплённая запись профиля — как users.pinned_post_id. */
+  pinnedPostId?: number | null;
   username: string;
   displayName: string;
   bio: string;
