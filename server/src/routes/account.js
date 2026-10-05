@@ -343,7 +343,10 @@ const paths = (sql, ...params) => db.prepare(sql).all(...params).map((r) => r.p)
 function deleteAccount(me) {
   const files = {
     avatar: paths('SELECT avatar_path AS p FROM users WHERE id = ?', me),
-    media: paths('SELECT media_path AS p FROM posts WHERE author_id = ?', me),
+    media: [
+      ...paths('SELECT media_path AS p FROM posts WHERE author_id = ?', me),
+      ...paths('SELECT pm.path AS p FROM post_media pm JOIN posts po ON po.id = pm.post_id WHERE po.author_id = ?', me),
+    ],
     attachment: [
       ...paths('SELECT attach_path AS p FROM messages WHERE from_id = ? OR to_id = ?', me, me),
       ...paths('SELECT attach_path AS p FROM chat_messages WHERE author_id = ?', me),
@@ -403,7 +406,7 @@ function deleteAccount(me) {
   }
 
   files.avatar.forEach((p) => deleteUpload('avatar', p));
-  files.media.forEach((p) => deleteUpload('media', p));
+  new Set(files.media).forEach((p) => deleteUpload('media', p));
   files.attachment.forEach(dropAttachment);
 }
 

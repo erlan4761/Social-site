@@ -23,7 +23,11 @@ export function exportFor(userId) {
     row.attach_path ? { kind: row.attach_kind, name: row.attach_name ?? null, url: `/api/attachments/${kind}/${row.id}` } : null;
 
   const posts = db.prepare('SELECT id, body, created_at, media_path, media_type FROM posts WHERE author_id = ? ORDER BY id').all(userId)
-    .map((p) => ({ id: p.id, body: p.body, createdAt: p.created_at, media: p.media_path ? { type: p.media_type, url: publicUrl('media', p.media_path) } : null }));
+    .map((p) => ({
+      id: p.id, body: p.body, createdAt: p.created_at,
+      media: db.prepare('SELECT path, type FROM post_media WHERE post_id = ? ORDER BY position').all(p.id)
+        .map((m) => ({ type: m.type, url: publicUrl('media', m.path) })),
+    }));
 
   const comments = db.prepare(`
     SELECT c.id, c.post_id, c.body, c.created_at FROM comments c WHERE c.author_id = ? ORDER BY c.id

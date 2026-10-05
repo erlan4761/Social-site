@@ -13,10 +13,21 @@ export const router = Router();
 const PAGE_SIZE = 20;
 const COMMENT_CAP = 500;
 
+/** До десяти фото и видео в записи — как альбом в Телеграме; аудио — одно и отдельно. */
+export const GALLERY_MAX = 10;
+
 const mediaUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 40 * 1024 * 1024, files: 1 },
+  limits: { fileSize: 40 * 1024 * 1024, files: GALLERY_MAX },
 });
+
+/** Файлы всех снимков записей — до удаления строк: каскад файлов на диске не видит. */
+export const galleryPaths = (postIds) =>
+  postIds.length === 0
+    ? []
+    : db.prepare(`SELECT path FROM post_media WHERE post_id IN (${postIds.map(() => '?').join(', ')})`).all(...postIds).map((r) => r.path);
+
+const mediaOf = (m) => ({ url: publicUrl('media', m.path), type: m.type, mime: m.mime ?? null, name: m.name ?? null });
 
 // Экспортируется вместе с POST_COLUMNS: /api/search/posts отдаёт те же посты,
 // что и лента, и обязан отдавать их той же формы. Скопированная сериализация
@@ -35,6 +46,8 @@ export const serialize = (row) => ({
   media: row.media_path
     ? { url: publicUrl('media', row.media_path), type: row.media_type, mime: row.media_mime, name: row.media_name }
     : null,
+  // Все снимки по порядку; у записи с одним снимком — он же, что и `media`.
+  gallery: JSON.parse(row.gallery_json ?? '[]').map(mediaOf),
   author: {
     id: row.author_id,
     username: row.username,
@@ -81,7 +94,9 @@ export const POST_COLUMNS = `
   (SELECT COUNT(*) FROM comments c
     WHERE c.post_id = p.id AND ${blockPairSql('c.author_id')}) AS comment_count,
   EXISTS(SELECT 1 FROM likes l2 WHERE l2.post_id = p.id AND l2.user_id = :viewerId) AS liked_by_me,
-  EXISTS(SELECT 1 FROM bookmarks bm WHERE bm.post_id = p.id AND bm.user_id = :viewerId) AS bookmarked_by_me
+  EXISTS(SELECT 1 FROM bookmarks bm WHERE bm.post_id = p.id AND bm.user_id = :viewerId) AS bookmarked_by_me,
+  (SELECT json_group_array(json_object('path', g.path, 'type', g.type, 'mime', g.mime, 'name', g.name))
+     FROM (SELECT * FROM post_media pm WHERE pm.post_id = p.id ORDER BY pm.position) g) AS gallery_json
 `;
 
 /** Numeric route param, or null when it is not a usable id. */
@@ -197,10 +212,11 @@ router.get('/:id', (req, res) => {
   res.json({ post: serialize(row) });
 });
 
-router.post('/', requireAuth, mediaUpload.single('media'), async (req, res, next) => {
-  let stored = null;
+router.post('/', requireAuth, mediaUpload.array('media', GALLERY_MAX), async (req, res, next) => {
+  const stored = [];
   try {
-    const hasMedia = Boolean(req.file);
+    const files = req.files ?? [];
+    const hasMedia = files.length > 0;
 
     // A post needs *something* — text or media — but not necessarily both,
     // matching how every mainstream feed treats a photo-only post.
@@ -208,16 +224,19 @@ router.post('/', requireAuth, mediaUpload.single('media'), async (req, res, next
       ? v.str(req.body?.body ?? '', 'текст поста', { max: 500 })
       : v.str(req.body?.body, 'текст поста', { min: 1, max: 500 });
 
-    if (hasMedia) {
-      stored = await storeUpload(req.file.buffer, { allowedKinds: ['image', 'video', 'audio'], into: 'media' });
+    // Несколько файлов — галерея: только фото и видео. Аудио — одно, само по себе.
+    const names = files.map((f) => v.str(fileName(f.originalname), 'имя файла', { max: 200 }));
+    for (const f of files) {
+      stored.push(await storeUpload(f.buffer, { allowedKinds: files.length > 1 ? ['image', 'video'] : ['image', 'video', 'audio'], into: 'media' }));
     }
-
-    const originalName = hasMedia ? v.str(fileName(req.file.originalname), 'имя файла', { max: 200 }) : null;
+    const first = stored[0] ?? null;
 
     const info = db.prepare(`
       INSERT INTO posts (author_id, body, media_path, media_type, media_mime, media_name, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(req.user.id, body, stored?.filename ?? null, stored?.kind ?? null, stored?.mime ?? null, originalName, nowIso());
+    `).run(req.user.id, body, first?.filename ?? null, first?.kind ?? null, first?.mime ?? null, names[0] ?? null, nowIso());
+    const insertMedia = db.prepare('INSERT INTO post_media (post_id, position, path, type, mime, name) VALUES (?, ?, ?, ?, ?, ?)');
+    stored.forEach((s, i) => insertMedia.run(Number(info.lastInsertRowid), i, s.filename, s.kind, s.mime, names[i]));
     notifyPostMentions({ authorId: req.user.id, postId: Number(info.lastInsertRowid), body });
 
     const row = db.prepare(`
@@ -228,8 +247,8 @@ router.post('/', requireAuth, mediaUpload.single('media'), async (req, res, next
 
     res.status(201).json({ post: serialize(row) });
   } catch (err) {
-    // The file made it to disk but the post row didn't — don't leave an orphan.
-    if (stored) deleteUpload('media', stored.filename);
+    // Файлы уже на диске, а записи нет — сирот не оставляем.
+    for (const s of stored) deleteUpload('media', s.filename);
     next(err);
   }
 });
@@ -281,9 +300,11 @@ router.delete('/:id', requireAuth, (req, res) => {
   if (!post) return res.status(404).json({ error: 'Пост не найден' });
   if (post.author_id !== req.user.id) return res.status(403).json({ error: 'Это не ваш пост' });
 
-  // Likes and comments go with it via ON DELETE CASCADE.
+  // Likes, comments and gallery rows go with it via ON DELETE CASCADE; the
+  // files on disk do not — collect them first.
+  const files = galleryPaths([id]);
   db.prepare('DELETE FROM posts WHERE id = ?').run(id);
-  deleteUpload('media', post.media_path);
+  for (const path of new Set([post.media_path, ...files])) deleteUpload('media', path);
   res.json({ ok: true });
 });
 

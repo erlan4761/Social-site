@@ -4760,5 +4760,39 @@ r = await pmA('/posts', { method: 'POST', body: JSON.stringify({ body: pmMany.ma
 const pmManyEvents = legacyDb.prepare(`SELECT COUNT(*) AS n FROM notifications WHERE kind = 'post_mention' AND post_id = ?`).get(r.body.post.id).n;
 check('двенадцать упомянутых — событий десять, запись опубликована', r.status === 201 && pmManyEvents === 10, `${r.status} ${pmManyEvents}`);
 
+console.log('\n— несколько фото в записи —');
+const gaA = makeClient();
+const userGaA = `gala_${stamp}`;
+await legacySignUp(gaA, userGaA, 'Фотограф');
+const galleryForm = (files, fields = {}) => {
+  const fd = new FormData();
+  for (const [buf, name, type] of files) fd.append('media', new Blob([buf], { type }), name);
+  for (const [k, val] of Object.entries(fields)) fd.append(k, String(val));
+  return fd;
+};
+const three = [[PNG, 'первый.png', 'image/png'], [PNG, 'второй.png', 'image/png'], [PNG, 'третий.png', 'image/png']];
+r = await gaA('/posts', { method: 'POST', body: galleryForm(three, { body: 'Три кадра' }) });
+const gaPost = r.body.post;
+check('три снимка — одна запись с галереей по порядку', r.status === 201 && gaPost?.gallery?.length === 3
+  && gaPost.gallery.map((m) => m.name).join() === 'первый.png,второй.png,третий.png' && gaPost.gallery.every((m) => m.type === 'image'),
+  `${r.status} ${JSON.stringify(r.body.post?.gallery ?? r.body)}`);
+check('media — первый снимок, как раньше', gaPost?.media?.url === gaPost?.gallery?.[0].url, JSON.stringify(gaPost?.media));
+r = await guest(`/posts/${gaPost.id}`);
+check('галерея видна и в отдельной записи', r.body.post?.gallery?.length === 3, JSON.stringify(r.body.post?.gallery));
+raw = await fetch(BASE.replace('/api', '') + gaPost.gallery[2].url);
+check('третий снимок отдаётся', raw.status === 200, `${raw.status}`);
+const eleven = Array.from({ length: 11 }, (_, i) => [PNG, `${i}.png`, 'image/png']);
+r = await gaA('/posts', { method: 'POST', body: galleryForm(eleven) });
+check('одиннадцать файлов — 400', r.status === 400 && /не больше десяти/.test(r.body.error ?? ''), `${r.status} ${r.body.error}`);
+r = await gaA('/posts', { method: 'POST', body: galleryForm([[PNG, 'кадр.png', 'image/png'], [MP3_HEAD, 'трек.mp3', 'audio/mpeg']]) });
+check('аудио в галерее — 400: в галерее только фото и видео', r.status === 400, `${r.status}`);
+r = await gaA('/posts', { method: 'POST', body: galleryForm([[MP3_HEAD, 'трек.mp3', 'audio/mpeg']], { body: 'Трек' }) });
+check('одно аудио — по-прежнему можно', r.status === 201 && r.body.post?.gallery?.length === 1 && r.body.post.gallery[0].type === 'audio', `${r.status}`);
+r = await gaA('/posts', { method: 'POST', body: JSON.stringify({ body: 'Только текст' }) });
+check('без файлов — пустая галерея', r.body.post?.gallery?.length === 0 && r.body.post.media === null, JSON.stringify(r.body.post));
+r = await gaA(`/posts/${gaPost.id}`, { method: 'DELETE' });
+raw = await fetch(BASE.replace('/api', '') + gaPost.gallery[2].url);
+check('удалили запись — файлы всех снимков стёрты', r.status === 200 && raw.status === 404, `${r.status} ${raw.status}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

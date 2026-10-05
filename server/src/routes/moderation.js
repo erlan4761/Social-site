@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db, nowIso } from '../db.js';
 import { requireAuth } from '../auth.js';
 import { deleteUpload, publicUrl } from '../media.js';
+import { galleryPaths } from './posts.js';
 import { dropDeadStreams } from '../live.js';
 import * as v from '../validate.js';
 
@@ -109,8 +110,9 @@ router.post('/resolve', (req, res, next) => {
       if (targetType === 'user') return res.status(400).json({ error: 'Человека не удалить — только заблокировать' });
       if (targetType === 'post') {
         const post = db.prepare('SELECT media_path FROM posts WHERE id = ?').get(targetId);
+        const gallery = galleryPaths([targetId]);
         db.prepare('DELETE FROM posts WHERE id = ?').run(targetId);
-        deleteUpload('media', post.media_path);
+        for (const path of new Set([post.media_path, ...gallery])) deleteUpload('media', path);
       } else {
         db.prepare('DELETE FROM comments WHERE id = ?').run(targetId);
       }
