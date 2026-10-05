@@ -4,6 +4,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, type ArchiveMonth, type BlockedUser, type User } from '../api';
 import { ArchivePanel } from '../components/ArchivePanel';
 import { Monogram } from '../components/Monogram';
+import { FollowListDialog, type FollowSide } from '../components/FollowListDialog';
 import { PostRow } from '../components/PostRow';
 import { ReportDialog } from '../components/ReportDialog';
 import { useSession } from '../session';
@@ -25,6 +26,7 @@ export function Profile() {
   const [editing, setEditing] = useState(false);
   const [followError, setFollowError] = useState<string | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
+  const [followList, setFollowList] = useState<FollowSide | null>(null);
   const [blockBusy, setBlockBusy] = useState(false);
   const [blockError, setBlockError] = useState<string | null>(null);
   const [reporting, setReporting] = useState(false);
@@ -99,6 +101,17 @@ export function Profile() {
   const followers = profile.followerCount ?? 0;
   const following = profile.followingCount ?? 0;
 
+  /** Подписались или отписались в списке — у своего профиля меняется «подписки». */
+  async function refreshCounts() {
+    if (!profile) return;
+    try {
+      const res = await api.profile(profile.username);
+      setProfile((p) => (p ? { ...p, followerCount: res.user.followerCount, followingCount: res.user.followingCount, followedByMe: res.user.followedByMe } : p));
+    } catch {
+      // счётчики подтянутся при следующем открытии профиля
+    }
+  }
+
   async function toggleFollow() {
     if (!profile || followBusy) return;
     const next = !profile.followedByMe;
@@ -155,6 +168,15 @@ export function Profile() {
 
   return (
     <>
+      {followList && (
+        <FollowListDialog
+          username={profile.username}
+          side={followList}
+          counts={{ followers, following }}
+          onClose={() => setFollowList(null)}
+          onChanged={() => void refreshCounts()}
+        />
+      )}
       <div className="profile-head">
         {isMe ? (
           <AvatarEditor
@@ -200,12 +222,12 @@ export function Profile() {
                 <span>
                   {count} {plural(count, 'пост', 'поста', 'постов')}
                 </span>
-                <span>
+                <button className="profile-count" type="button" onClick={() => setFollowList('followers')}>
                   {followers} {plural(followers, 'подписчик', 'подписчика', 'подписчиков')}
-                </span>
-                <span>
+                </button>
+                <button className="profile-count" type="button" onClick={() => setFollowList('following')}>
                   {following} {plural(following, 'подписка', 'подписки', 'подписок')}
-                </span>
+                </button>
                 <span>с {joinedOn(profile.createdAt)}</span>
               </p>
 

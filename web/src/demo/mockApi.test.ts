@@ -470,6 +470,19 @@ describe('витрина: правка записи', () => {
   });
 });
 
+describe('витрина: подписчики и подписки', () => {
+  it('свежие сверху, флаг «вы подписаны»', async () => {
+    await api.setFollow('marina', false);
+    await api.setFollow('marina', true);
+    const { users } = await api.following('demo');
+    expect(users[0].username).toBe('marina');
+    expect(users.every((u) => u.followedByMe)).toBe(true);
+    const followers = await api.followers('marina');
+    expect(followers.users.some((u) => u.username === 'demo')).toBe(true);
+    await expect(api.followers('net_takogo')).rejects.toMatchObject({ status: 404 });
+  });
+});
+
 describe('витрина: предпросмотр ссылок', () => {
   it('карточка только у заготовленной ссылки', async () => {
     expect((await api.linkPreview('https://github.com/erlan4761/Social-site')).preview?.siteName).toBe('GitHub');

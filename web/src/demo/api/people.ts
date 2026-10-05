@@ -7,6 +7,30 @@ import { findByPhones, visiblePhone } from '../model/phoneBook';
 
 /** Методы витрины: профиль, аватар, поиск людей, подписки, блокировки, жалобы. */
 
+/** Подписчики или подписки — как followList() в routes/users.js: свежие сверху, по 50, без скрытых. */
+function followListOf(username: string, side: 'followers' | 'following', cursor?: number | null) {
+  const owner = byName(username);
+  if (!owner) fail(404, 'Пользователь не найден');
+  const meId = db.meId;
+  if (meId != null && blockedPair(meId, owner!.id)) return tick({ users: [], nextCursor: null as number | null });
+  // Курсор — номер строки подписки, как rowid на сервере.
+  const rows = db.follows
+    .map((f, seq) => ({ f, seq: seq + 1 }))
+    .filter(({ f }) => (side === 'followers' ? f.followeeId : f.followerId) === owner!.id)
+    .filter(({ seq }) => cursor == null || seq < cursor)
+    .reverse()
+    .map(({ f, seq }) => ({ seq, person: byId(side === 'followers' ? f.followerId : f.followeeId)! }))
+    .filter(({ person }) => person && !hidden(person.id));
+  const page = rows.slice(0, 50);
+  return tick({
+    users: page.map(({ person }) => ({
+      ...author(person), bio: person.bio, createdAt: person.createdAt,
+      followedByMe: db.follows.some((x) => x.followerId === meId && x.followeeId === person.id),
+    })),
+    nextCursor: rows.length > 50 ? page[page.length - 1].seq : null,
+  });
+}
+
 export const peopleApi = {
   profile: (username: string) => {
     const u = byName(username);
@@ -80,6 +104,9 @@ export const peopleApi = {
       })),
     });
   },
+
+  followers: (username: string, cursor?: number | null) => followListOf(username, 'followers', cursor),
+  following: (username: string, cursor?: number | null) => followListOf(username, 'following', cursor),
 
   setFollow: (username: string, following: boolean) => {
     const u = requireMe()!;

@@ -22,6 +22,9 @@ export type User = {
 
 export type Author = { id: number; username: string; displayName: string; avatarUrl: string | null };
 
+/** Человек в списке подписчиков или подписок — с флагом «вы подписаны». */
+export type FollowEntry = Author & { bio: string; createdAt: string; followedByMe: boolean };
+
 /** Человек в переписке: плюс время последнего визита для «в сети». `null` —
  *  не заходил после появления этой отметки или пара в блокировке. */
 /**
@@ -733,6 +736,18 @@ const realApi = {
   /** Люди по номерам (до 50): только номер целиком и только разрешившие. */
   findByPhone: (phones: string[]) =>
     request<{ users: PhoneMatch[] }>('/users/by-phone', { method: 'POST', body: body({ phones }) }),
+
+  /** Подписчики человека — свежие сверху, по 50; `cursor` — из прошлой страницы. */
+  followers: (username: string, cursor?: number | null) =>
+    request<{ users: FollowEntry[]; nextCursor: number | null }>(
+      `/users/${encodeURIComponent(username)}/followers${cursor != null ? `?cursor=${cursor}` : ''}`,
+    ),
+
+  /** На кого подписан человек — так же. */
+  following: (username: string, cursor?: number | null) =>
+    request<{ users: FollowEntry[]; nextCursor: number | null }>(
+      `/users/${encodeURIComponent(username)}/following${cursor != null ? `?cursor=${cursor}` : ''}`,
+    ),
 
   setFollow: (username: string, following: boolean) =>
     request<{ followedByMe: boolean; followerCount: number }>(

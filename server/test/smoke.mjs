@@ -4660,5 +4660,58 @@ check('старше 48 часов — 403', r.status === 403 && /48 часов/.
 r = await patchPost(peA, 999999999, 'Нет такой');
 check('несуществующую — 404', r.status === 404, `${r.status}`);
 
+console.log('\n— подписчики и подписки —');
+const flA = makeClient();
+const flB = makeClient();
+const flC = makeClient();
+const flD = makeClient();
+const userFlA = `fla_${stamp}`;
+const userFlB = `flb_${stamp}`;
+const userFlC = `flc_${stamp}`;
+const userFlD = `fld_${stamp}`;
+await legacySignUp(flA, userFlA, 'Автор');
+await legacySignUp(flB, userFlB, 'Бета');
+await legacySignUp(flC, userFlC, 'Гамма');
+await legacySignUp(flD, userFlD, 'Дельта');
+const flFollow = (client, who) => client(`/users/${who}/follow`, { method: 'PUT' });
+await flFollow(flB, userFlA);
+await flFollow(flC, userFlA);
+await flFollow(flA, userFlD);
+const namesOf = (r) => (r.body.users ?? []).map((u) => u.username).join(',');
+
+r = await guest(`/users/${userFlA}/followers`);
+check('подписчики — и гостю, свежие сверху', r.status === 200 && namesOf(r) === `${userFlC},${userFlB}` && r.body.nextCursor === null, JSON.stringify(r.body));
+check('у человека в списке — профиль без лишнего', typeof r.body.users?.[0]?.displayName === 'string' && !('email' in r.body.users[0]) && !('phone' in r.body.users[0]), JSON.stringify(r.body.users?.[0]));
+r = await guest(`/users/${userFlA}/following`);
+check('подписки', namesOf(r) === userFlD, JSON.stringify(r.body));
+r = await flB(`/users/${userFlA}/followers`);
+check('«вы подписаны» — глазами смотрящего', r.body.users?.find((u) => u.username === userFlC)?.followedByMe === false, JSON.stringify(r.body.users));
+await flFollow(flB, userFlC);
+r = await flB(`/users/${userFlA}/followers`);
+check('подписался — флаг в списке', r.body.users?.find((u) => u.username === userFlC)?.followedByMe === true, JSON.stringify(r.body.users));
+r = await guest(`/users/net_takogo_${stamp}/followers`);
+check('несуществующий — 404', r.status === 404, `${r.status}`);
+await flC(`/users/${userFlB}/block`, { method: 'PUT' });
+r = await flC(`/users/${userFlA}/followers`);
+check('того, с кем в блокировке, в списке нет', namesOf(r) === userFlC, JSON.stringify(r.body));
+await flD(`/users/${userFlA}/block`, { method: 'PUT' });
+r = await flD(`/users/${userFlA}/followers`);
+check('в блокировке с владельцем — списки пусты', r.status === 200 && r.body.users?.length === 0, JSON.stringify(r.body));
+
+// Постранично: ещё пятьдесят подписчиков прямо в базе — свежие сверху, по 50.
+const flOwner = legacyDb.prepare('SELECT id FROM users WHERE username = ?').get(userFlA).id;
+const flInsertUser = legacyDb.prepare(`INSERT INTO users (username, display_name, bio, email, password_hash, created_at) VALUES (?, ?, '', NULL, '', ?)`);
+const flInsertFollow = legacyDb.prepare('INSERT INTO follows (follower_id, followee_id, created_at) VALUES (?, ?, ?)');
+for (let i = 0; i < 50; i++) {
+  const id = Number(flInsertUser.run(`flp${i}_${stamp}`.slice(0, 20), `Подписчик ${i}`, new Date().toISOString()).lastInsertRowid);
+  flInsertFollow.run(id, flOwner, new Date().toISOString());
+}
+r = await guest(`/users/${userFlA}/followers`);
+const flPage1 = r.body;
+check('первая страница — 50 и курсор', flPage1.users?.length === 50 && typeof flPage1.nextCursor === 'number'
+  && flPage1.users[0].username === `flp49_${stamp}`.slice(0, 20), JSON.stringify({ n: flPage1.users?.length, first: flPage1.users?.[0]?.username, c: flPage1.nextCursor }));
+r = await guest(`/users/${userFlA}/followers?cursor=${flPage1.nextCursor}`);
+check('вторая — оставшиеся, без повторов', namesOf(r) === `${userFlC},${userFlB}` && r.body.nextCursor === null, JSON.stringify(r.body));
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
