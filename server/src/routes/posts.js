@@ -32,7 +32,28 @@ const mediaOf = (m) => ({ url: publicUrl('media', m.path), type: m.type, mime: m
 // Экспортируется вместе с POST_COLUMNS: /api/search/posts отдаёт те же посты,
 // что и лента, и обязан отдавать их той же формы. Скопированная сериализация
 // разошлась бы с этой на первом же новом поле.
-export const serialize = (row) => ({
+export const serialize = (row) => serializePost(row, 0);
+
+/**
+ * Чей пост пересказан: у чистого репоста — оригинал целиком (его отметки,
+ * ответы и закладки — его, а не репоста), у цитаты — то, что цитируют.
+ * Оригинал, автор которого с смотрящим в блокировке, или удалённый — `post: null`.
+ * Глубина ограничена: репост цитаты покажет и процитированное, дальше — нет.
+ */
+function sharedOf(row, depth) {
+  const id = row.repost_of_id ?? row.quote_of_id;
+  if (!id) return null;
+  const kind = row.repost_of_id ? 'repost' : 'quote';
+  if (depth >= 2) return { kind, post: null };
+  const original = db.prepare(`
+    SELECT ${POST_COLUMNS}
+    FROM posts p JOIN users u ON u.id = p.author_id
+    WHERE p.id = :id AND ${blockPairSql('p.author_id')}
+  `).get({ id, viewerId: row.viewer_id ?? null });
+  return { kind, post: original ? serializePost(original, depth + 1) : null };
+}
+
+const serializePost = (row, depth) => ({
   id: row.id,
   body: row.body,
   createdAt: row.created_at,
@@ -48,6 +69,10 @@ export const serialize = (row) => ({
     : null,
   // Все снимки по порядку; у записи с одним снимком — он же, что и `media`.
   gallery: JSON.parse(row.gallery_json ?? '[]').map(mediaOf),
+  // Репосты и цитаты вместе: обе — «поделились записью».
+  repostCount: row.repost_count ?? 0,
+  repostedByMe: Boolean(row.reposted_by_me),
+  shared: sharedOf(row, depth),
   author: {
     id: row.author_id,
     username: row.username,
@@ -89,6 +114,7 @@ const serializeComment = (row) => ({
 // (у гостя он NULL, и оба EXISTS честно дают 0).
 export const POST_COLUMNS = `
   p.id, p.body, p.created_at, p.edited_at, p.author_id, p.media_path, p.media_type, p.media_mime, p.media_name,
+  p.repost_of_id, p.quote_of_id, :viewerId AS viewer_id,
   u.username, u.display_name, u.avatar_path AS author_avatar_path,
   (SELECT COUNT(*) FROM likes    l WHERE l.post_id = p.id) AS like_count,
   (SELECT COUNT(*) FROM comments c
@@ -96,8 +122,19 @@ export const POST_COLUMNS = `
   EXISTS(SELECT 1 FROM likes l2 WHERE l2.post_id = p.id AND l2.user_id = :viewerId) AS liked_by_me,
   EXISTS(SELECT 1 FROM bookmarks bm WHERE bm.post_id = p.id AND bm.user_id = :viewerId) AS bookmarked_by_me,
   (SELECT json_group_array(json_object('path', g.path, 'type', g.type, 'mime', g.mime, 'name', g.name))
-     FROM (SELECT * FROM post_media pm WHERE pm.post_id = p.id ORDER BY pm.position) g) AS gallery_json
+     FROM (SELECT * FROM post_media pm WHERE pm.post_id = p.id ORDER BY pm.position) g) AS gallery_json,
+  (SELECT COUNT(*) FROM posts rp WHERE rp.repost_of_id = p.id)
+    + (SELECT COUNT(*) FROM posts qp WHERE qp.quote_of_id = p.id) AS repost_count,
+  EXISTS(SELECT 1 FROM posts rp2 WHERE rp2.repost_of_id = p.id AND rp2.author_id = :viewerId) AS reposted_by_me
 `;
+
+/**
+ * Чистый репост виден, только если виден оригинал: репост записи того, с кем
+ * смотрящий в блокировке, был бы пустой рамкой — его просто нет в ленте.
+ */
+export const REPOST_VISIBLE_SQL = `(p.repost_of_id IS NULL OR EXISTS (
+  SELECT 1 FROM posts o WHERE o.id = p.repost_of_id AND ${blockPairSql('o.author_id')}
+))`;
 
 /** Numeric route param, or null when it is not a usable id. */
 function intParam(value) {
@@ -153,6 +190,7 @@ router.get('/', (req, res, next) => {
       WHERE (:author IS NULL OR u.username = :author)
         AND (:cursor IS NULL OR p.id < :cursor)
         AND ${blockPairSql('p.author_id')}
+        AND ${REPOST_VISIBLE_SQL}
         AND (
           :onlyFollowing = 0
           OR p.author_id = :viewerId
@@ -202,7 +240,7 @@ router.get('/:id', (req, res) => {
   const row = db.prepare(`
     SELECT ${POST_COLUMNS}
     FROM posts p JOIN users u ON u.id = p.author_id
-    WHERE p.id = :id AND ${blockPairSql('p.author_id')}
+    WHERE p.id = :id AND ${blockPairSql('p.author_id')} AND ${REPOST_VISIBLE_SQL}
   `).get({ id, viewerId });
 
   // Пост автора, с которым смотрящий в блокировке, тоже «не найден»:
@@ -224,6 +262,16 @@ router.post('/', requireAuth, mediaUpload.array('media', GALLERY_MAX), async (re
       ? v.str(req.body?.body ?? '', 'текст поста', { max: 500 })
       : v.str(req.body?.body, 'текст поста', { min: 1, max: 500 });
 
+    // Цитата: своя запись со ссылкой на чужую (или свою). Цитата репоста — цитата
+    // оригинала: пересказывать пустую рамку незачем.
+    let quoted = null;
+    if (req.body?.quoteOf != null && req.body.quoteOf !== '') {
+      const quoteId = intParam(String(req.body.quoteOf));
+      quoted = quoteId ? visiblePost(quoteId, req.user.id) : null;
+      if (quoted?.repost_of_id) quoted = visiblePost(quoted.repost_of_id, req.user.id);
+      if (!quoted) return res.status(404).json({ error: 'Цитируемая запись не найдена' });
+    }
+
     // Несколько файлов — галерея: только фото и видео. Аудио — одно, само по себе.
     const names = files.map((f) => v.str(fileName(f.originalname), 'имя файла', { max: 200 }));
     for (const f of files) {
@@ -232,12 +280,16 @@ router.post('/', requireAuth, mediaUpload.array('media', GALLERY_MAX), async (re
     const first = stored[0] ?? null;
 
     const info = db.prepare(`
-      INSERT INTO posts (author_id, body, media_path, media_type, media_mime, media_name, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(req.user.id, body, first?.filename ?? null, first?.kind ?? null, first?.mime ?? null, names[0] ?? null, nowIso());
+      INSERT INTO posts (author_id, body, media_path, media_type, media_mime, media_name, quote_of_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(req.user.id, body, first?.filename ?? null, first?.kind ?? null, first?.mime ?? null, names[0] ?? null, quoted?.id ?? null, nowIso());
     const insertMedia = db.prepare('INSERT INTO post_media (post_id, position, path, type, mime, name) VALUES (?, ?, ?, ?, ?, ?)');
     stored.forEach((s, i) => insertMedia.run(Number(info.lastInsertRowid), i, s.filename, s.kind, s.mime, names[i]));
-    notifyPostMentions({ authorId: req.user.id, postId: Number(info.lastInsertRowid), body });
+    const postId = Number(info.lastInsertRowid);
+    // Процитированному — «процитировал вашу запись»; упоминание его же в тексте
+    // цитаты второго события не даёт.
+    if (quoted) notify({ userId: quoted.author_id, actorId: req.user.id, kind: 'quote', postId });
+    notifyPostMentions({ authorId: req.user.id, postId, body, skip: quoted ? [quoted.author_id] : [] });
 
     const row = db.prepare(`
       SELECT ${POST_COLUMNS}
@@ -265,9 +317,10 @@ router.patch('/:id', requireAuth, (req, res, next) => {
   try {
     const id = intParam(req.params.id);
     if (!id) return res.status(400).json({ error: 'Некорректный id' });
-    const post = db.prepare('SELECT author_id, body, created_at, media_path FROM posts WHERE id = ?').get(id);
+    const post = db.prepare('SELECT author_id, body, created_at, media_path, repost_of_id FROM posts WHERE id = ?').get(id);
     if (!post) return res.status(404).json({ error: 'Пост не найден' });
     if (post.author_id !== req.user.id) return res.status(403).json({ error: 'Изменить можно только свою запись' });
+    if (post.repost_of_id) return res.status(400).json({ error: 'Репост не правится — его можно только отменить' });
     if (Date.now() - Date.parse(post.created_at) > EDIT_WINDOW_MS) {
       return res.status(403).json({ error: 'Запись можно изменить только в течение 48 часов' });
     }
@@ -296,9 +349,13 @@ router.delete('/:id', requireAuth, (req, res) => {
   const id = intParam(req.params.id);
   if (!id) return res.status(400).json({ error: 'Некорректный id' });
 
-  const post = db.prepare('SELECT author_id, media_path FROM posts WHERE id = ?').get(id);
+  const post = db.prepare('SELECT author_id, media_path, repost_of_id FROM posts WHERE id = ?').get(id);
   if (!post) return res.status(404).json({ error: 'Пост не найден' });
   if (post.author_id !== req.user.id) return res.status(403).json({ error: 'Это не ваш пост' });
+  if (post.repost_of_id) {
+    const original = db.prepare('SELECT author_id FROM posts WHERE id = ?').get(post.repost_of_id);
+    if (original) dropNotification({ userId: original.author_id, actorId: req.user.id, kind: 'repost', postId: post.repost_of_id });
+  }
 
   // Likes, comments and gallery rows go with it via ON DELETE CASCADE; the
   // files on disk do not — collect them first.
@@ -306,6 +363,64 @@ router.delete('/:id', requireAuth, (req, res) => {
   db.prepare('DELETE FROM posts WHERE id = ?').run(id);
   for (const path of new Set([post.media_path, ...files])) deleteUpload('media', path);
   res.json({ ok: true });
+});
+
+/* ─ Репосты ────────────────────────────────────────────────────────────── */
+
+/** Запись, которую смотрящий видит: нет её или автор с ним в блокировке — null. */
+function visiblePost(id, viewerId) {
+  return db.prepare(`
+    SELECT p.id, p.author_id, p.repost_of_id FROM posts p
+    WHERE p.id = :id AND ${blockPairSql('p.author_id')}
+  `).get({ id, viewerId }) ?? null;
+}
+
+const repostState = (postId, viewerId) => db.prepare(`
+  SELECT (SELECT COUNT(*) FROM posts WHERE repost_of_id = :postId)
+       + (SELECT COUNT(*) FROM posts WHERE quote_of_id = :postId) AS repostCount,
+         EXISTS(SELECT 1 FROM posts WHERE repost_of_id = :postId AND author_id = :viewerId) AS mine
+`).get({ postId, viewerId });
+
+/**
+ * Репост — переключатель, как отметка: PUT ставит (повторный — не ошибка),
+ * DELETE снимает. Репост репоста — репост оригинала. Отменённый репост уносит
+ * непрочитанное событие о себе, а повторный нового не создаёт.
+ */
+router.put('/:id/repost', requireAuth, (req, res, next) => {
+  try {
+    const id = intParam(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Некорректный id' });
+    let target = visiblePost(id, req.user.id);
+    if (target?.repost_of_id) target = visiblePost(target.repost_of_id, req.user.id);
+    if (!target) return res.status(404).json({ error: 'Пост не найден' });
+
+    db.prepare("INSERT OR IGNORE INTO posts (author_id, body, repost_of_id, created_at) VALUES (?, '', ?, ?)")
+      .run(req.user.id, target.id, nowIso());
+    notify({ userId: target.author_id, actorId: req.user.id, kind: 'repost', postId: target.id });
+
+    const state = repostState(target.id, req.user.id);
+    res.json({ postId: target.id, repostCount: state.repostCount, repostedByMe: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/:id/repost', requireAuth, (req, res, next) => {
+  try {
+    const id = intParam(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Некорректный id' });
+    let target = db.prepare('SELECT id, author_id, repost_of_id FROM posts WHERE id = ?').get(id);
+    if (target?.repost_of_id) target = db.prepare('SELECT id, author_id, repost_of_id FROM posts WHERE id = ?').get(target.repost_of_id);
+    if (!target) return res.status(404).json({ error: 'Пост не найден' });
+
+    db.prepare('DELETE FROM posts WHERE repost_of_id = ? AND author_id = ?').run(target.id, req.user.id);
+    dropNotification({ userId: target.author_id, actorId: req.user.id, kind: 'repost', postId: target.id });
+
+    const state = repostState(target.id, req.user.id);
+    res.json({ postId: target.id, repostCount: state.repostCount, repostedByMe: false });
+  } catch (err) {
+    next(err);
+  }
 });
 
 /* ─ Лайки ──────────────────────────────────────────────────────────────── */

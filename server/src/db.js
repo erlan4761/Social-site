@@ -698,6 +698,20 @@ db.exec(`
   WHERE p.media_path IS NOT NULL AND NOT EXISTS (SELECT 1 FROM post_media pm WHERE pm.post_id = p.id);
 `);
 
+// Репосты и цитаты (routes/posts.js). Чистый репост — запись без текста со
+// ссылкой repost_of_id: она уходит вместе с оригиналом по каскаду, а один
+// человек делает репост одной записи один раз (частичный уникальный индекс).
+// Цитата — запись со своим текстом и quote_of_id без внешнего ключа: удалили
+// оригинал — цитата остаётся и показывает «Запись недоступна». id записей —
+// AUTOINCREMENT и не переиспользуются, так что висячая ссылка не укажет на
+// чужую запись.
+ensureColumn('posts', 'repost_of_id', 'INTEGER REFERENCES posts(id) ON DELETE CASCADE');
+ensureColumn('posts', 'quote_of_id', 'INTEGER');
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_repost ON posts(repost_of_id, author_id) WHERE repost_of_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_posts_quote ON posts(quote_of_id) WHERE quote_of_id IS NOT NULL;
+`);
+
 
 /* ─ Полнотекстовый индекс записей ──────────────────────────────────────────
  *
