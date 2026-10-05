@@ -231,6 +231,44 @@ router.get('/:username', (req, res) => {
   });
 });
 
+/* ─ Подписчики и подписки ───────────────────────────────────────────────
+ * Списки открыты, как и сам профиль: кто на кого подписан, видно любому,
+ * кто зашёл, — так в любой соцсети. Свежие подписки сверху, по 50, курсор —
+ * rowid строки подписки (порядок вставки: без него страницы ехали бы, пока
+ * кто-то подписывается). Люди, с кем смотрящий в блокировке, в списках не
+ * показываются; если в блокировке сам смотрящий и владелец профиля — списки
+ * пусты, как и его лента.
+ */
+const FOLLOW_PAGE = 50;
+
+function followList(req, res, side) {
+  const owner = db.prepare('SELECT id FROM users WHERE username = ?').get(String(req.params.username).toLowerCase());
+  if (!owner) return res.status(404).json({ error: 'Пользователь не найден' });
+  const viewerId = req.user?.id ?? null;
+  if (viewerId != null && isBlockedPair(viewerId, owner.id)) return res.json({ users: [], nextCursor: null });
+
+  const cursor = Number.parseInt(req.query.cursor, 10);
+  // followers: кто подписан на владельца; following: на кого подписан он.
+  const [match, other] = side === 'followers' ? ['f.followee_id', 'f.follower_id'] : ['f.follower_id', 'f.followee_id'];
+  const rows = db.prepare(`
+    SELECT f.rowid AS seq, u.id, u.username, u.display_name, u.bio, u.avatar_path, u.created_at,
+           EXISTS(SELECT 1 FROM follows mine WHERE mine.follower_id = :viewerId AND mine.followee_id = u.id) AS followed_by_me
+    FROM follows f JOIN users u ON u.id = ${other}
+    WHERE ${match} = :ownerId AND (:cursor IS NULL OR f.rowid < :cursor) AND ${blockPairSql('u.id')}
+    ORDER BY f.rowid DESC
+    LIMIT :limit
+  `).all({ ownerId: owner.id, viewerId, cursor: Number.isSafeInteger(cursor) && cursor > 0 ? cursor : null, limit: FOLLOW_PAGE + 1 });
+
+  const page = rows.slice(0, FOLLOW_PAGE);
+  res.json({
+    users: page.map((r) => ({ ...publicUser(r), followedByMe: Boolean(r.followed_by_me) })),
+    nextCursor: rows.length > FOLLOW_PAGE ? page.at(-1).seq : null,
+  });
+}
+
+router.get('/:username/followers', (req, res) => followList(req, res, 'followers'));
+router.get('/:username/following', (req, res) => followList(req, res, 'following'));
+
 router.put('/:username/follow', requireAuth, (req, res, next) => {
   try {
     const uname = String(req.params.username).toLowerCase();
