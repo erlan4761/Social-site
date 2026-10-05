@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Composer } from '../components/Composer';
 import { PostRow } from '../components/PostRow';
+import { SuggestedPeople } from '../components/SuggestedPeople';
 import { useSession } from '../session';
 import { usePostStream } from '../usePostStream';
 
@@ -46,7 +47,7 @@ export function Feed() {
             {tab === 'following' ? (
               <>
                 <strong>В подписках пока пусто.</strong>
-                Загляните во «Все» и найдите тех, за кем интересно следить.
+                Загляните во «Все» или начните с тех, кого предлагаем ниже.
               </>
             ) : (
               <>
@@ -56,18 +57,23 @@ export function Feed() {
             )}
           </p>
         ) : (
-          stream.posts.map((post) => (
-            <PostRow
-              key={post.id}
-              post={post}
-              fresh={post.id === stream.freshId}
-              canDelete={post.author.id === user?.id}
-              onDelete={stream.remove}
-              onPatch={stream.patch}
-              onCreated={stream.prepend}
-            />
+          // «Кого почитать» — после третьей записи общей ленты: сверху он мешал
+          // бы читать, а в самом конце его никто не увидит.
+          stream.posts.map((post, i) => (
+            <Fragment key={post.id}>
+              <PostRow
+                post={post}
+                fresh={post.id === stream.freshId}
+                canDelete={post.author.id === user?.id}
+                onDelete={stream.remove}
+                onPatch={stream.patch}
+                onCreated={stream.prepend}
+              />
+              {tab === 'all' && i === Math.min(2, stream.posts.length - 1) && <SuggestedPeople />}
+            </Fragment>
           ))
         )}
+        {!stream.loading && stream.posts.length === 0 && tab === 'following' && <SuggestedPeople />}
       </div>
 
       {stream.hasMore && (

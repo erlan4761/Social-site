@@ -25,6 +25,9 @@ export type Author = { id: number; username: string; displayName: string; avatar
 /** Человек в списке подписчиков или подписок — с флагом «вы подписаны». */
 export type FollowEntry = Author & { bio: string; createdAt: string; followedByMe: boolean };
 
+/** «Кого почитать»: сколько ваших подписок его читают и одно имя для подписи; у гостя — 0 и null. */
+export type Suggestion = FollowEntry & { followerCount: number; mutualCount: number; mutualName: string | null };
+
 /** Человек в переписке: плюс время последнего визита для «в сети». `null` —
  *  не заходил после появления этой отметки или пара в блокировке. */
 /**
@@ -790,6 +793,9 @@ const realApi = {
     request<{ users: FollowEntry[]; nextCursor: number | null }>(
       `/users/${encodeURIComponent(username)}/following${cursor != null ? `?cursor=${cursor}` : ''}`,
     ),
+
+  /** Пять человек, на которых стоит подписаться, — сперва те, кого читают ваши подписки. */
+  suggestions: () => request<{ users: Suggestion[] }>('/users/suggestions'),
 
   setFollow: (username: string, following: boolean) =>
     request<{ followedByMe: boolean; followerCount: number }>(

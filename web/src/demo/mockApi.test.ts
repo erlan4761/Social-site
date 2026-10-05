@@ -140,10 +140,12 @@ describe('витрина: вход по номеру', () => {
   it('вход — событие «вход в аккаунт», регистрация — без него', async () => {
     await api.logout();
     await loginAs('demo');
+    // Не notifications[0]: таймер ответа персонажа из прошлого сценария на
+    // занятой машине может сработать позже и встать в ленту событий первым.
     const { notifications } = await api.notifications();
-    expect(notifications[0]).toMatchObject({ kind: 'new_login', readAt: null });
-    expect(notifications[0].actor.username).toBe('demo');
-    expect(typeof notifications[0].device).toBe('string');
+    const fresh = notifications.find((n) => n.kind === 'new_login' && n.readAt === null);
+    expect(fresh?.actor.username).toBe('demo');
+    expect(typeof fresh?.device).toBe('string');
 
     await api.logout();
     const sent = await api.phoneStart('+996700998877');
@@ -703,5 +705,19 @@ describe('витрина: закреплённая запись', () => {
     await expect(api.setPin(other.id, true)).rejects.toMatchObject({ status: 403 });
     await api.deletePost(second.id);
     expect((await api.profile('demo')).pinnedPost).toBeNull();
+  });
+});
+
+describe('витрина: кого почитать', () => {
+  it('без себя и подписок; подписались — ушёл из подсказок', async () => {
+    const { users } = await api.suggestions();
+    expect(users.length).toBeLessThanOrEqual(5);
+    expect(users.some((u) => u.username === 'demo')).toBe(false);
+    const mine = (await api.following('demo')).users.map((u) => u.username);
+    expect(users.some((u) => mine.includes(u.username))).toBe(false);
+    if (users[0]) {
+      await api.setFollow(users[0].username, true);
+      expect((await api.suggestions()).users.some((u) => u.id === users[0].id)).toBe(false);
+    }
   });
 });

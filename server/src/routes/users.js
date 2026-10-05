@@ -168,6 +168,60 @@ router.get('/me/blocks', requireAuth, (req, res) => {
  * тоже не спорит — второй сегмент другой, а имени «me» не существует
  * (логин от трёх символов).
  */
+/* ─ Кого почитать ───────────────────────────────────────────────────────
+ * Пять человек, на которых смотрящий ещё не подписан. Сначала — те, кого
+ * читают его подписки (чем больше их, тем выше; одно имя — для подписи
+ * «Читает Нина»), затем — самые читаемые, затем — кто писал недавно. Только
+ * те, кто хоть что-то написал: подсказка вести на пустой профиль не должна.
+ * Себя, заблокированную пару и заблокированных модератором — нет. Гостю — просто
+ * самые читаемые.
+ *
+ * Объявлен раньше `/:username`: иначе «suggestions» искался бы как логин.
+ * Полный проход по людям — честная цена на этом масштабе; на сотнях тысяч
+ * понадобилась бы отдельная таблица рекомендаций.
+ */
+const SUGGESTIONS_MAX = 5;
+
+router.get('/suggestions', (req, res) => {
+  const viewerId = req.user?.id ?? null;
+  const rows = db.prepare(`
+    SELECT u.id, u.username, u.display_name, u.bio, u.avatar_path, u.created_at,
+      (SELECT COUNT(*) FROM follows via
+         JOIN follows mine ON mine.followee_id = via.follower_id AND mine.follower_id = :viewerId
+       WHERE via.followee_id = u.id) AS mutual_count,
+      (SELECT mu.display_name FROM follows via2
+         JOIN follows mine2 ON mine2.followee_id = via2.follower_id AND mine2.follower_id = :viewerId
+         JOIN users mu ON mu.id = via2.follower_id
+       WHERE via2.followee_id = u.id
+       ORDER BY mine2.rowid DESC LIMIT 1) AS mutual_name,
+      (SELECT COUNT(*) FROM follows fc WHERE fc.followee_id = u.id) AS follower_count,
+      (SELECT MAX(lp.id) FROM posts lp WHERE lp.author_id = u.id) AS last_post
+    FROM users u
+    WHERE u.id IS NOT :viewerId
+      AND u.banned_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = :viewerId AND f.followee_id = u.id)
+      AND EXISTS (SELECT 1 FROM posts wp WHERE wp.author_id = u.id)
+      AND ${blockPairSql('u.id')}
+    ORDER BY mutual_count DESC, follower_count DESC, last_post DESC
+    LIMIT :limit
+  `).all({ viewerId, limit: SUGGESTIONS_MAX });
+
+  res.json({
+    users: rows.map((r) => ({
+      id: r.id,
+      username: r.username,
+      displayName: r.display_name,
+      bio: r.bio ?? '',
+      avatarUrl: publicUrl('avatar', r.avatar_path),
+      createdAt: r.created_at,
+      followedByMe: false,
+      followerCount: r.follower_count,
+      mutualCount: r.mutual_count,
+      mutualName: r.mutual_name ?? null,
+    })),
+  });
+});
+
 router.get('/:username/archive', (req, res) => {
   const uname = String(req.params.username).toLowerCase();
   const user = db.prepare('SELECT id FROM users WHERE username = ?').get(uname);
