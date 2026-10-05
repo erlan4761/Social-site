@@ -104,11 +104,21 @@ export function deliverDue(now = new Date()) {
 export function startScheduler() {
   const every = Number(process.env.SCHEDULE_TICK_MS) || 15_000;
   // Тот же такт убирает сообщения с истёкшим автоудалением (autoDelete.js).
+  // Каждый шаг — отдельно: сбой одного (например, база занята дольше
+  // busy_timeout) не должен ни отменять остальные, ни ронять процесс —
+  // исключение из setInterval убило бы сервер целиком. Следующий такт повторит.
+  const step = (name, fn) => {
+    try {
+      fn();
+    } catch (err) {
+      console.error(`Такт планировщика: «${name}» не удался — повторим на следующем.`, err);
+    }
+  };
   const tick = () => {
-    deliverDue();
-    sweepExpired();
+    step('отложенные', deliverDue);
+    step('автоудаление', sweepExpired);
     // И сеансы, которыми не пользовались дольше срока (auth.js).
-    sweepSessions();
+    step('сеансы', sweepSessions);
   };
   const timer = setInterval(tick, every);
   timer.unref();

@@ -77,7 +77,12 @@ export function startCall({ callerId, calleeId, video, sdp, from }) {
   userCall.set(callerId, call.id);
   userCall.set(calleeId, call.id);
   call.timer = setTimeout(() => {
-    if (calls.get(call.id)?.state === 'ringing') endCall(call, 'missed');
+    // Исключение из таймера уронило бы сервер целиком — а тут пишется запись о звонке.
+    try {
+      if (calls.get(call.id)?.state === 'ringing') endCall(call, 'missed');
+    } catch (err) {
+      console.error('Не удалось завершить неотвеченный звонок:', err);
+    }
   }, RING_MS);
   call.timer.unref?.();
   emit([calleeId], { t: 'call', kind: 'ring', id: call.id, video, from, sdp });

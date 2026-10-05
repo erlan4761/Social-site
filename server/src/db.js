@@ -9,6 +9,9 @@ export const db = new DatabaseSync(dbFile);
 
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');
+// Базу пишет и кто-то ещё (резервная копия, sqlite3 в консоли, смоук-тест) —
+// запись ждёт чужую блокировку до пяти секунд, а не падает сразу с «database is locked».
+db.exec('PRAGMA busy_timeout = 5000');
 
 /*
  * Кэш подготовленных запросов. Код пишет `db.prepare(sql).get(...)` прямо в
@@ -446,6 +449,9 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_poll_options ON poll_options(poll_id, position);
   CREATE INDEX IF NOT EXISTS idx_poll_votes   ON poll_votes(poll_id, user_id);
 `);
+// Правка записи в ленте: когда текст меняли в последний раз — для «изменено».
+ensureColumn('posts', 'edited_at', 'TEXT');
+
 // Оформление переписки (prefs.js): тема — фон и цвет своих пузырей, у каждого свои.
 ensureColumn('chat_prefs', 'theme', 'TEXT');
 
