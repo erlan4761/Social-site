@@ -84,6 +84,9 @@ export type Page = { posts: Post[]; nextCursor: number | null };
 /** Строка архива: `2026-09` и число записей, видимых **этому** смотрящему. */
 export type ArchiveMonth = { month: string; count: number };
 
+/** Тег: ключ (нижний регистр, «ё» → «е»), подпись как пишут авторы и число записей. */
+export type TagStat = { tag: string; label: string; count: number };
+
 /** Набор реакций фиксирован — тот же список, что на сервере. */
 export const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'] as const;
 
@@ -600,9 +603,10 @@ const realApi = {
 
   // period — `YYYY` или `YYYY-MM`; мусор сервер отвергает 400, потому что
   // период человек видит в адресе и может исправить, в отличие от курсора.
-  posts: (opts: { author?: string; cursor?: number | null; feed?: 'following'; period?: string } = {}) => {
+  posts: (opts: { author?: string; cursor?: number | null; feed?: 'following'; period?: string; tag?: string } = {}) => {
     const params = new URLSearchParams();
     if (opts.author) params.set('author', opts.author);
+    if (opts.tag) params.set('tag', opts.tag);
     if (opts.cursor != null) params.set('cursor', String(opts.cursor));
     if (opts.feed) params.set('feed', opts.feed);
     if (opts.period) params.set('period', opts.period);
@@ -629,6 +633,12 @@ const realApi = {
   /** Править текст своей записи — двое суток после публикации. */
   updatePost: (id: number, text: string) =>
     request<{ post: Post }>(`/posts/${id}`, { method: 'PATCH', body: body({ body: text }) }),
+
+  /** Популярные теги за неделю — до десяти. */
+  trendingTags: () => request<{ tags: TagStat[] }>('/tags/trending'),
+
+  /** Шапка страницы тега: подпись и сколько всего записей. */
+  tagInfo: (tag: string) => request<TagStat>(`/tags/${encodeURIComponent(tag)}`),
 
   /** Репост — переключатель, как отметка; `postId` — оригинал (репост репоста — репост оригинала). */
   setRepost: (id: number, on: boolean) =>

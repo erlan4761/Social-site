@@ -298,7 +298,7 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
         ) : (
           post.body && (
             <p className="post-body">
-              {highlight?.length ? markTerms(post.body, highlight) : <PostText text={post.body} />}
+              {highlight?.length ? markTerms(post.body, highlight) : <PostText text={post.body} hashtags />}
             </p>
           )
         )}

@@ -6,6 +6,7 @@ import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { deleteUpload, fileName, publicUrl, storeUpload } from '../media.js';
 import { dropNotification, notify } from '../notifications.js';
 import { notifyPostMentions } from '../postMentions.js';
+import { tagFromParam, tagsIn } from '../hashtags.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -179,6 +180,9 @@ router.get('/', (req, res, next) => {
     const cursor = intParam(req.query.cursor);
     const period = periodParam(req.query.period);
     const onlyFollowing = req.query.feed === 'following';
+    // Лента тега: `?tag=плёнка` (или «#Плёнка») — записи, где он стоит.
+    const tag = req.query.tag != null ? tagFromParam(req.query.tag) : null;
+    if (req.query.tag != null && !tag) throw v.bad('Некорректный тег');
 
     if (onlyFollowing && !req.user) {
       return res.status(401).json({ error: 'Войдите, чтобы смотреть подписки' });
@@ -200,12 +204,14 @@ router.get('/', (req, res, next) => {
         -- год («2026») или месяц («2026-09»). created_at — ISO-строка в UTC,
         -- поэтому и границы месяца здесь по UTC (названо в README).
         AND (:period IS NULL OR substr(p.created_at, 1, length(:period)) = :period)
+        AND (:tag IS NULL OR EXISTS (SELECT 1 FROM post_tags pt WHERE pt.post_id = p.id AND pt.tag = :tag))
       ORDER BY p.id DESC
       LIMIT :limit
     `).all({
       author,
       cursor,
       period,
+      tag,
       viewerId: req.user?.id ?? null,
       onlyFollowing: onlyFollowing ? 1 : 0,
       limit: PAGE_SIZE + 1,
@@ -286,6 +292,7 @@ router.post('/', requireAuth, mediaUpload.array('media', GALLERY_MAX), async (re
     const insertMedia = db.prepare('INSERT INTO post_media (post_id, position, path, type, mime, name) VALUES (?, ?, ?, ?, ?, ?)');
     stored.forEach((s, i) => insertMedia.run(Number(info.lastInsertRowid), i, s.filename, s.kind, s.mime, names[i]));
     const postId = Number(info.lastInsertRowid);
+    setPostTags(postId, body);
     // Процитированному — «процитировал вашу запись»; упоминание его же в тексте
     // цитаты второго события не даёт.
     if (quoted) notify({ userId: quoted.author_id, actorId: req.user.id, kind: 'quote', postId });
@@ -331,6 +338,7 @@ router.patch('/:id', requireAuth, (req, res, next) => {
       : v.str(req.body?.body, 'текст поста', { min: 1, max: 500 });
     if (body !== post.body) {
       db.prepare('UPDATE posts SET body = ?, edited_at = ? WHERE id = ?').run(body, nowIso(), id);
+      setPostTags(id, body);
       notifyPostMentions({ authorId: req.user.id, postId: id, body, previousBody: post.body });
     }
 
@@ -364,6 +372,13 @@ router.delete('/:id', requireAuth, (req, res) => {
   for (const path of new Set([post.media_path, ...files])) deleteUpload('media', path);
   res.json({ ok: true });
 });
+
+/** Теги записи — заново целиком: при правке старые уходят, новые встают. */
+function setPostTags(postId, body) {
+  db.prepare('DELETE FROM post_tags WHERE post_id = ?').run(postId);
+  const insert = db.prepare('INSERT OR IGNORE INTO post_tags (post_id, tag, label) VALUES (?, ?, ?)');
+  for (const { tag, label } of tagsIn(body)) insert.run(postId, tag, label);
+}
 
 /* ─ Репосты ────────────────────────────────────────────────────────────── */
 

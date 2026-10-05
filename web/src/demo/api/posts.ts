@@ -1,4 +1,5 @@
-import { type ArchiveMonth, type Page } from '../../api';
+import { type ArchiveMonth, type Page, type TagStat } from '../../api';
+import { tagFromParam, tagsIn } from '../../hashtags';
 import { type DbPost, type DbComment, db, id, tick, fail } from '../store';
 import { byName, me, requireMe, hidden, visiblePosts } from '../model/people';
 import { searchTerms, matchesTerms, visibleComments, toPost, toComment, repostCountOf, PAGE, PERIOD_RE, type SearchPage } from '../model/posts';
@@ -20,9 +21,15 @@ function notifyPostMentions(input: { authorId: number; postId: number; commentId
 }
 
 export const postsApi = {
-  posts: (opts: { author?: string; cursor?: number | null; feed?: 'following'; period?: string } = {}) => {
+  posts: (opts: { author?: string; cursor?: number | null; feed?: 'following'; period?: string; tag?: string } = {}) => {
     // Блокировка — главный фильтр ленты: и общей, и «по подпискам», и профильной.
     let list = visiblePosts().sort((a, b) => b.id - a.id);
+
+    if (opts.tag != null) {
+      const tag = tagFromParam(opts.tag);
+      if (!tag) fail(400, 'Некорректный тег');
+      list = list.filter((p) => tagsIn(p.body).some((x) => x.tag === tag));
+    }
 
     if (opts.period != null) {
       // Мусорный период — 400, в отличие от мусорного курсора: период человек
@@ -122,6 +129,32 @@ export const postsApi = {
     // События о записи ведут туда, где больше ничего нет — каскад, как в схеме.
     db.notifications = db.notifications.filter((n) => n.postId == null || !gone.has(n.postId));
     return tick({ ok: true as const });
+  },
+
+  // Таблицы тегов у витрины нет: теги считаются из текста на лету — записей мало.
+  trendingTags: () => {
+    const since = Date.now() - 7 * 24 * 60 * 60_000;
+    const stats = new Map<string, TagStat>();
+    for (const p of visiblePosts()) {
+      if (Date.parse(p.createdAt) < since) continue;
+      for (const { tag, label } of tagsIn(p.body)) {
+        const s = stats.get(tag) ?? { tag, label, count: 0 };
+        s.count += 1;
+        if (label > s.label) s.label = label;
+        stats.set(tag, s);
+      }
+    }
+    const tags = [...stats.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag)).slice(0, 10);
+    return tick({ tags });
+  },
+
+  tagInfo: (raw: string) => {
+    const tag = tagFromParam(raw);
+    if (!tag) fail(400, 'Некорректный тег');
+    const labels = visiblePosts().flatMap((p) => tagsIn(p.body).filter((x) => x.tag === tag).map((x) => x.label));
+    // Подпись — «старшая» строка, как MAX(label) на сервере: написание с «ё» побеждает.
+    const label = labels.reduce((best, l) => (l > best ? l : best), labels[0] ?? raw.replace(/^#/, '').toLowerCase());
+    return tick({ tag: tag!, label, count: labels.length });
   },
 
   setRepost: (postId: number, on: boolean) => {

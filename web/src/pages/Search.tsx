@@ -3,6 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError, type Author, type PhoneMatch, type Post } from '../api';
 import { Monogram } from '../components/Monogram';
 import { PostRow } from '../components/PostRow';
+import { TrendingTags } from '../components/TrendingTags';
+import { tagFromParam, tagPath } from '../hashtags';
 import { canPickContacts, pickContactPhones } from '../contacts';
 import { searchTerms } from '../highlight';
 import { dialOf, formatPhone, looksLikePhone } from '../phone';
@@ -144,6 +146,9 @@ export function Search() {
     }
   }, [posts]);
 
+  // «#плёнка» в строке поиска — скорее всего, тег: ссылка на его ленту сверху.
+  const queryTag = query.trim().startsWith('#') ? tagFromParam(query) : null;
+
   return (
     <>
       <div className="events-top">
@@ -185,6 +190,16 @@ export function Search() {
           )}
         </section>
       )}
+
+      {queryTag && (
+        <p className="search-lede">
+          <Link className="tag-link" to={tagPath(queryTag)}>
+            Все записи с тегом #{queryTag}
+          </Link>
+        </p>
+      )}
+
+      {!query && <TrendingTags />}
 
       {!query && user && canPickContacts() && <FromContacts />}
 

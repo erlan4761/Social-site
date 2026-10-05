@@ -16,6 +16,7 @@ import { ForgotPassword } from './pages/ForgotPassword';
 import { Messenger, MessengerEmpty } from './pages/Messenger';
 import { Notifications } from './pages/Notifications';
 import { PostPage } from './pages/PostPage';
+import { TagPage } from './pages/TagPage';
 import { Profile } from './pages/Profile';
 import { ResetPassword } from './pages/ResetPassword';
 import { Search } from './pages/Search';
@@ -74,6 +75,7 @@ export function App() {
             <Route path="settings" element={<Settings />} />
             <Route path="u/:username" element={<Profile />} />
             <Route path="p/:id" element={<PostPage />} />
+            <Route path="tag/:tag" element={<TagPage />} />
             <Route path="notifications" element={<Notifications />} />
             <Route path="join/:token" element={<Join />} />
             <Route path="moderation" element={<Moderation />} />
