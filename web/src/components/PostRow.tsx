@@ -9,6 +9,7 @@ import { PostText } from './PostText';
 import { PostGallery } from './PostGallery';
 import { QuoteCard, QuoteDialog, Repeat, RepostMenu } from './PostShare';
 import { Monogram } from './Monogram';
+import { Icon } from './Icon';
 import { ReportDialog } from './ReportDialog';
 
 /** Править запись можно двое суток — как и сообщение. */
@@ -31,6 +32,8 @@ type Props = {
 };
 
 type CardProps = Props & {
+  /** Наверху профиля: над записью — «Закреплённая запись». */
+  pinnedMark?: boolean;
   /** Строка — чужой (или свой) репост: над оригиналом — «Репост: имя». */
   repostedBy?: Author;
   /** Свой репост в ленте: отмена — это удаление строки целиком. */
@@ -98,7 +101,7 @@ function PostMedia({ media }: { media: NonNullable<Post['media']> }) {
  * Запись ленты. Чистый репост рисуется как оригинал с пометкой «Репост: имя»:
  * отметки, ответы и закладки — у оригинала, а не у пустой рамки репоста.
  */
-export function PostRow(props: Props) {
+export function PostRow(props: Props & { pinnedMark?: boolean }) {
   const { post, onPatch, onDelete } = props;
   const { user } = useSession();
   if (post.shared?.kind !== 'repost') return <PostCard {...props} />;
@@ -117,7 +120,7 @@ export function PostRow(props: Props) {
   );
 }
 
-function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDelete, onPatch, onCreated, repostedBy, onUnrepost }: CardProps) {
+function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDelete, onPatch, onCreated, repostedBy, onUnrepost, pinnedMark }: CardProps) {
   const { user } = useSession();
   const [open, setOpen] = useState(openThread);
   const [likeError, setLikeError] = useState<string | null>(null);
@@ -133,6 +136,9 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
   /** id опубликованной цитаты — когда ленты, куда её положить, рядом нет. */
   const [quoted, setQuoted] = useState<number | null>(null);
   const [shareError, setShareError] = useState<string | null>(null);
+  const [pinError, setPinError] = useState<string | null>(null);
+  // Закрепить можно свою запись; репост сюда не попадает — он рисуется оригиналом.
+  const canPin = user?.id === post.author.id;
   const { author } = post;
   const repostCount = post.repostCount ?? 0;
   const canEdit = user?.id === author.id && Date.now() - Date.parse(post.createdAt) <= POST_EDIT_WINDOW_MS;
@@ -199,6 +205,18 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
     }
   }
 
+  async function togglePin() {
+    const next = !post.pinned;
+    onPatch(post.id, { pinned: next });
+    setPinError(null);
+    try {
+      await api.setPin(post.id, next);
+    } catch (err) {
+      onPatch(post.id, { pinned: !next });
+      setPinError(err instanceof ApiError ? err.message : 'Не удалось закрепить');
+    }
+  }
+
   async function saveEdit() {
     if (draft == null || saving) return;
     const text = draft.trim();
@@ -218,6 +236,12 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
 
   return (
     <article className={fresh ? 'rail-row fresh' : 'rail-row'}>
+      {pinnedMark && (
+        <p className="post-reposted post-pinned">
+          <Icon name="pin" size={15} />
+          Закреплённая запись
+        </p>
+      )}
       {repostedBy && (
         <p className="post-reposted">
           <Repeat />
@@ -375,6 +399,17 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
               </button>
             )}
 
+            {canPin && (
+              <button
+                className="post-delete"
+                type="button"
+                title={post.pinned ? undefined : 'Запись встанет наверху профиля; прежняя закреплённая открепится'}
+                onClick={() => void togglePin()}
+              >
+                {post.pinned ? 'Открепить' : 'Закрепить'}
+              </button>
+            )}
+
             {canDelete && (
               <button className="post-delete" type="button" onClick={() => onDelete(post.id)}>
                 Удалить
@@ -433,6 +468,7 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
         )}
 
         {shareError && <p className="error">{shareError}</p>}
+        {pinError && <p className="error">{pinError}</p>}
         {likeError && <p className="error">{likeError}</p>}
         {bookmarkError && <p className="error">{bookmarkError}</p>}
 

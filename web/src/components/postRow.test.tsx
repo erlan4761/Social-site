@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import { api, type Post } from '../api';
+import { api, ApiError, type Post } from '../api';
 import { PostRow } from './PostRow';
 
 vi.mock('../session', () => ({
@@ -141,5 +141,42 @@ describe('репосты и цитаты', () => {
     cleanup();
     mount(post({ id: 32, body: 'Смотрите', shared: { kind: 'quote', post: null } }));
     expect(screen.getByText(/Запись недоступна/)).toBeInTheDocument();
+  });
+});
+
+describe('закреплённая запись', () => {
+  it('своя — «Закрепить»: запрос и флаг; закреплённая — «Открепить»', async () => {
+    const pin = vi.spyOn(api, 'setPin').mockResolvedValue({ pinned: true });
+    const onPatch = show(post());
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Закрепить' }));
+    });
+    expect(pin).toHaveBeenCalledWith(5, true);
+    expect(onPatch).toHaveBeenCalledWith(5, { pinned: true });
+    cleanup();
+    show(post({ pinned: true }));
+    expect(screen.getByRole('button', { name: 'Открепить' })).toBeInTheDocument();
+  });
+
+  it('отказ сервера — флаг возвращается, ошибка видна', async () => {
+    vi.spyOn(api, 'setPin').mockRejectedValue(new ApiError(400, 'Репост не закрепить — закрепите свою запись'));
+    const onPatch = show(post());
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Закрепить' }));
+    });
+    expect(onPatch).toHaveBeenLastCalledWith(5, { pinned: false });
+    expect(screen.getByText(/Репост не закрепить/)).toBeInTheDocument();
+  });
+
+  it('чужая — без «Закрепить»; наверху профиля — пометка', () => {
+    show(post({ author: { id: 2, username: 'nina', displayName: 'Нина', avatarUrl: null } }));
+    expect(screen.queryByRole('button', { name: 'Закрепить' })).toBeNull();
+    cleanup();
+    render(
+      <MemoryRouter>
+        <PostRow post={post({ pinned: true })} pinnedMark canDelete onDelete={() => undefined} onPatch={() => undefined} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Закреплённая запись')).toBeInTheDocument();
   });
 });

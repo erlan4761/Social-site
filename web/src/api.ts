@@ -62,6 +62,8 @@ export type Post = {
   repostCount?: number;
   /** Смотрящий сделал репост этой записи. */
   repostedByMe?: boolean;
+  /** Закреплена автором наверху профиля. */
+  pinned?: boolean;
   /** Чистый репост — оригинал целиком; цитата — то, что цитируют. `post: null` — оригинал удалён или скрыт. */
   shared?: SharedPost | null;
   author: Author;
@@ -595,8 +597,9 @@ const realApi = {
   resetPassword: (token: string, password: string) =>
     request<{ ok: true }>('/auth/reset-password', { method: 'POST', body: body({ token, password }) }),
 
+  /** Профиль и его закреплённая запись (null — нет или она скрыта блокировкой). */
   profile: (username: string) =>
-    request<{ user: User }>(`/users/${encodeURIComponent(username)}`),
+    request<{ user: User; pinnedPost?: Post | null }>(`/users/${encodeURIComponent(username)}`),
 
   updateProfile: (input: { displayName: string; bio: string }) =>
     request<{ user: User }>('/users/me', { method: 'PATCH', body: body(input) }),
@@ -633,6 +636,10 @@ const realApi = {
   /** Править текст своей записи — двое суток после публикации. */
   updatePost: (id: number, text: string) =>
     request<{ post: Post }>(`/posts/${id}`, { method: 'PATCH', body: body({ body: text }) }),
+
+  /** Закрепить свою запись наверху профиля (одна; новая заменяет прежнюю) или снять. */
+  setPin: (id: number, on: boolean) =>
+    request<{ pinned: boolean }>(`/posts/${id}/pin`, { method: on ? 'PUT' : 'DELETE' }),
 
   /** Популярные теги за неделю — до десяти. */
   trendingTags: () => request<{ tags: TagStat[] }>('/tags/trending'),

@@ -5,7 +5,7 @@ import { requireAuth, publicUser } from '../auth.js';
 import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { deleteUpload, publicUrl, storeUpload } from '../media.js';
 import { dropNotification, notify } from '../notifications.js';
-import { REPOST_VISIBLE_SQL } from './posts.js';
+import { POST_COLUMNS, REPOST_VISIBLE_SQL, serialize } from './posts.js';
 import { findByPhones, LOOKUP_MAX, visiblePhone } from '../phoneBook.js';
 import * as v from '../validate.js';
 
@@ -215,7 +215,18 @@ router.get('/:username', (req, res) => {
     ? Boolean(db.prepare('SELECT 1 FROM blocks WHERE blocker_id = ? AND blocked_id = ?').get(user.id, req.user.id))
     : false;
 
+  // Закреплённая запись — наверху профиля; у заблокированной пары её не
+  // видно, как и остальной ленты.
+  const pinnedRow = user.pinned_post_id
+    ? db.prepare(`
+        SELECT ${POST_COLUMNS}
+        FROM posts p JOIN users u ON u.id = p.author_id
+        WHERE p.id = :id AND ${blockPairSql('p.author_id')}
+      `).get({ id: user.pinned_post_id, viewerId })
+    : null;
+
   res.json({
+    pinnedPost: pinnedRow ? serialize(pinnedRow) : null,
     user: {
       ...publicUser(user),
       postCount: count,

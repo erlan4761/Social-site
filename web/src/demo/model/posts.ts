@@ -80,6 +80,7 @@ const postAt = (p: DbPost, depth: number): Post => ({
   gallery: p.gallery ?? (p.media ? [p.media] : []),
   repostCount: repostCountOf(p.id),
   repostedByMe: db.posts.some((x) => x.repostOf === p.id && x.authorId === db.meId),
+  pinned: byId(p.authorId)?.pinnedPostId === p.id,
   shared: sharedOf(p, depth),
   author: author(byId(p.authorId)!),
 });
