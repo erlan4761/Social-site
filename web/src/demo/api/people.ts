@@ -112,6 +112,30 @@ export const peopleApi = {
   followers: (username: string, cursor?: number | null) => followListOf(username, 'followers', cursor),
   following: (username: string, cursor?: number | null) => followListOf(username, 'following', cursor),
 
+  // Тот же порядок, что /users/suggestions: кого читают ваши подписки, затем
+  // самые читаемые, затем кто писал недавно; только те, кто что-то написал.
+  suggestions: () => {
+    const meId = db.meId;
+    const mine = db.follows.filter((f) => f.followerId === meId).map((f) => f.followeeId);
+    const users = db.users
+      .filter((u) => u.id !== meId && !u.bannedAt && !hidden(u.id))
+      .filter((u) => !mine.includes(u.id) && db.posts.some((p) => p.authorId === u.id))
+      .map((u) => {
+        const via = db.follows.filter((f) => f.followeeId === u.id && mine.includes(f.followerId));
+        const name = via.length ? byId(via.at(-1)!.followerId)?.displayName ?? null : null;
+        return {
+          ...author(u), bio: u.bio, createdAt: u.createdAt, followedByMe: false,
+          followerCount: db.follows.filter((f) => f.followeeId === u.id).length,
+          mutualCount: via.length, mutualName: name,
+          lastPost: Math.max(...db.posts.filter((p) => p.authorId === u.id).map((p) => p.id)),
+        };
+      })
+      .sort((a, b) => b.mutualCount - a.mutualCount || b.followerCount - a.followerCount || b.lastPost - a.lastPost)
+      .slice(0, 5)
+      .map(({ lastPost: _, ...rest }) => rest);
+    return tick({ users });
+  },
+
   setFollow: (username: string, following: boolean) => {
     const u = requireMe()!;
     const target = byName(username);

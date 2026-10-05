@@ -4,6 +4,7 @@ import { api, ApiError, type Author, type PhoneMatch, type Post } from '../api';
 import { Monogram } from '../components/Monogram';
 import { PostRow } from '../components/PostRow';
 import { TrendingTags } from '../components/TrendingTags';
+import { SuggestedPeople } from '../components/SuggestedPeople';
 import { tagFromParam, tagPath } from '../hashtags';
 import { canPickContacts, pickContactPhones } from '../contacts';
 import { searchTerms } from '../highlight';
@@ -200,6 +201,7 @@ export function Search() {
       )}
 
       {!query && <TrendingTags />}
+      {!query && user && <SuggestedPeople variant="plain" />}
 
       {!query && user && canPickContacts() && <FromContacts />}
 
