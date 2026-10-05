@@ -24,6 +24,7 @@ export const serialize = (row) => ({
   id: row.id,
   body: row.body,
   createdAt: row.created_at,
+  editedAt: row.edited_at ?? null,
   likeCount: row.like_count,
   commentCount: row.comment_count,
   likedByMe: Boolean(row.liked_by_me),
@@ -73,7 +74,7 @@ const serializeComment = (row) => ({
 // параметр :viewerId в каждом запросе, который подставляет POST_COLUMNS
 // (у гостя он NULL, и оба EXISTS честно дают 0).
 export const POST_COLUMNS = `
-  p.id, p.body, p.created_at, p.author_id, p.media_path, p.media_type, p.media_mime, p.media_name,
+  p.id, p.body, p.created_at, p.edited_at, p.author_id, p.media_path, p.media_type, p.media_mime, p.media_name,
   u.username, u.display_name, u.avatar_path AS author_avatar_path,
   (SELECT COUNT(*) FROM likes    l WHERE l.post_id = p.id) AS like_count,
   (SELECT COUNT(*) FROM comments c
@@ -227,6 +228,44 @@ router.post('/', requireAuth, mediaUpload.single('media'), async (req, res, next
   } catch (err) {
     // The file made it to disk but the post row didn't — don't leave an orphan.
     if (stored) deleteUpload('media', stored.filename);
+    next(err);
+  }
+});
+
+/**
+ * Правка записи — только текста и только своей, двое суток, как у сообщений:
+ * поправить опечатку можно, а переписать то, что неделю обсуждали в
+ * комментариях, — уже подмена. Тот же текст пометку «изменено» не ставит.
+ * Медиа не меняется: другой снимок — это другая запись.
+ */
+const EDIT_WINDOW_MS = 48 * 60 * 60_000;
+
+router.patch('/:id', requireAuth, (req, res, next) => {
+  try {
+    const id = intParam(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Некорректный id' });
+    const post = db.prepare('SELECT author_id, body, created_at, media_path FROM posts WHERE id = ?').get(id);
+    if (!post) return res.status(404).json({ error: 'Пост не найден' });
+    if (post.author_id !== req.user.id) return res.status(403).json({ error: 'Изменить можно только свою запись' });
+    if (Date.now() - Date.parse(post.created_at) > EDIT_WINDOW_MS) {
+      return res.status(403).json({ error: 'Запись можно изменить только в течение 48 часов' });
+    }
+
+    // Те же правила, что при создании: запись со снимком может остаться без текста.
+    const body = post.media_path
+      ? v.str(req.body?.body ?? '', 'текст поста', { max: 500 })
+      : v.str(req.body?.body, 'текст поста', { min: 1, max: 500 });
+    if (body !== post.body) {
+      db.prepare('UPDATE posts SET body = ?, edited_at = ? WHERE id = ?').run(body, nowIso(), id);
+    }
+
+    const row = db.prepare(`
+      SELECT ${POST_COLUMNS}
+      FROM posts p JOIN users u ON u.id = p.author_id
+      WHERE p.id = :id
+    `).get({ id, viewerId: req.user.id });
+    res.json({ post: serialize(row) });
+  } catch (err) {
     next(err);
   }
 });
