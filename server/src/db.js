@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { tagsIn } from './hashtags.js';
 import { join } from 'node:path';
 import { dataDir } from './dataDir.js';
 
@@ -711,6 +712,29 @@ db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_repost ON posts(repost_of_id, author_id) WHERE repost_of_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_posts_quote ON posts(quote_of_id) WHERE quote_of_id IS NOT NULL;
 `);
+
+// Хэштеги записей (hashtags.js): ключ — для поиска, подпись — как написал автор.
+// Записи, опубликованные до хэштегов, размечаются при запуске; запись с «#» без
+// настоящего тега просто перечитывается — это дешевле отдельной отметки.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS post_tags (
+    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    tag     TEXT NOT NULL,
+    label   TEXT NOT NULL,
+    PRIMARY KEY (tag, post_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_post_tags_post ON post_tags(post_id);
+`);
+{
+  const insertTag = db.prepare('INSERT OR IGNORE INTO post_tags (post_id, tag, label) VALUES (?, ?, ?)');
+  const untagged = db.prepare(`
+    SELECT p.id, p.body FROM posts p
+    WHERE p.body LIKE '%#%' AND NOT EXISTS (SELECT 1 FROM post_tags t WHERE t.post_id = p.id)
+  `).all();
+  for (const post of untagged) {
+    for (const { tag, label } of tagsIn(post.body)) insertTag.run(post.id, tag, label);
+  }
+}
 
 
 /* ─ Полнотекстовый индекс записей ──────────────────────────────────────────

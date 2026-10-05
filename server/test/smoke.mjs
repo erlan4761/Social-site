@@ -4888,5 +4888,62 @@ raw = await rpB.raw('/api/account/export');
 const rpDump = JSON.parse(await raw.text());
 check('выгрузка: у цитаты — ссылка на оригинал', rpDump.posts?.some((x) => x.quoteOf === rpOrig.id && x.repostOf === null), JSON.stringify(rpDump.posts?.slice(0, 3)));
 
+console.log('\n— хэштеги —');
+const htA = makeClient();
+const htB = makeClient();
+const userHtA = `hta_${stamp}`;
+const userHtB = `htb_${stamp}`;
+await legacySignUp(htA, userHtA, 'Тегирующий');
+await legacySignUp(htB, userHtB, 'Блокирующий');
+// Тег уникален для прогона: популярные за неделю копятся от прогона к прогону.
+const htTag = `плёнка${stamp}`;
+const htKey = htTag.replace(/ё/g, 'е');
+r = await htA('/posts', { method: 'POST', body: JSON.stringify({ body: `Проявил #${htTag.toUpperCase()} и #ночь${stamp}, а ещё a#b${stamp}, #1 и site.ru/#якорь${stamp}` }) });
+const htPost = r.body.post;
+r = await guest(`/posts?tag=${encodeURIComponent(htKey)}`);
+check('лента тега — запись есть, регистр и «ё» не важны', r.status === 200 && r.body.posts.length === 1 && r.body.posts[0].id === htPost.id, `${r.status} ${JSON.stringify(r.body.posts?.map((x) => x.id))}`);
+r = await guest(`/posts?tag=${encodeURIComponent('#' + htTag.toUpperCase())}`);
+check('тег с решёткой и заглавными — тот же', r.body.posts?.length === 1, JSON.stringify(r.body));
+r = await guest(`/posts?tag=${encodeURIComponent('ночь' + stamp)}`);
+check('второй тег записи', r.body.posts?.length === 1, JSON.stringify(r.body));
+r = await guest(`/posts?tag=${encodeURIComponent('b' + stamp)}`);
+check('a#b — не тег', r.body.posts?.length === 0, JSON.stringify(r.body));
+r = await guest(`/posts?tag=${encodeURIComponent('якорь' + stamp)}`);
+check('якорь адреса — не тег', r.body.posts?.length === 0, JSON.stringify(r.body));
+r = await guest('/posts?tag=1');
+check('«#1» — номер, не тег: 400', r.status === 400, `${r.status}`);
+r = await guest(`/tags/${encodeURIComponent(htKey)}`);
+check('шапка тега: подпись с «ё» и число записей', r.status === 200 && r.body.label === htTag && r.body.count === 1 && r.body.tag === htKey, JSON.stringify(r.body));
+r = await guest('/tags/trending');
+check('популярные за неделю — тег есть', r.status === 200 && r.body.tags.some((x) => x.tag === htKey && x.label === htTag && x.count === 1), JSON.stringify(r.body.tags?.slice(0, 3)));
+
+r = await htA(`/posts/${htPost.id}`, { method: 'PATCH', body: JSON.stringify({ body: `Проявил #${htTag}` }) });
+r = await guest(`/posts?tag=${encodeURIComponent('ночь' + stamp)}`);
+check('правка убрала тег — записи в нём нет', r.body.posts?.length === 0, JSON.stringify(r.body));
+r = await guest(`/posts?tag=${encodeURIComponent(htKey)}`);
+check('оставшийся тег на месте', r.body.posts?.length === 1, JSON.stringify(r.body));
+
+const manyTags = Array.from({ length: 12 }, (_, i) => `#т${i}x${stamp}`).join(' ');
+await htA('/posts', { method: 'POST', body: JSON.stringify({ body: manyTags }) });
+r = await guest(`/posts?tag=${encodeURIComponent('т9x' + stamp)}`);
+const tenth = r.body.posts?.length;
+r = await guest(`/posts?tag=${encodeURIComponent('т10x' + stamp)}`);
+check('тегов у записи — не больше десяти', tenth === 1 && r.body.posts?.length === 0, `${tenth} ${r.body.posts?.length}`);
+
+await htB(`/users/${userHtA}/block`, { method: 'PUT' });
+r = await htB(`/posts?tag=${encodeURIComponent(htKey)}`);
+check('заблокированный автор — в ленте тега его записей нет', r.body.posts?.length === 0, JSON.stringify(r.body));
+r = await htB(`/tags/${encodeURIComponent(htKey)}`);
+check('и в числе записей тега — тоже', r.body.count === 0, JSON.stringify(r.body));
+r = await htB('/tags/trending');
+check('и в популярных', !r.body.tags.some((x) => x.tag === htKey), JSON.stringify(r.body.tags?.slice(0, 3)));
+await htB(`/users/${userHtA}/block`, { method: 'DELETE' });
+
+await htA(`/posts/${htPost.id}`, { method: 'DELETE' });
+r = await guest(`/tags/${encodeURIComponent(htKey)}`);
+check('удалили запись — тег пуст', r.body.count === 0, JSON.stringify(r.body));
+r = await guest('/tags/' + encodeURIComponent('#!'));
+check('мусор вместо тега — 400', r.status === 400, `${r.status}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

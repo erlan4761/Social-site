@@ -18,6 +18,7 @@ import { router as notificationRoutes, badgesRouter } from './routes/notificatio
 import { router as reportRoutes } from './routes/reports.js';
 import { router as searchRoutes } from './routes/search.js';
 import { router as bookmarkRoutes } from './routes/bookmarks.js';
+import { router as tagRoutes } from './routes/tags.js';
 import { router as attachmentRoutes } from './routes/attachments.js';
 import { router as channelRoutes } from './routes/channels.js';
 import { router as prefRoutes } from './routes/prefs.js';
@@ -202,6 +203,7 @@ app.use('/api/badges', badgesRouter);
 app.use('/api/reports', reportRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/bookmarks', bookmarkRoutes);
+app.use('/api/tags', tagRoutes);
 app.use('/api/attachments', attachmentRoutes);
 app.use('/api/channels', channelRoutes);
 app.use('/api/prefs', prefRoutes);
