@@ -8,6 +8,10 @@ import { CommentThread } from './CommentThread';
 import { Monogram } from './Monogram';
 import { ReportDialog } from './ReportDialog';
 
+/** Править запись можно двое суток — как и сообщение. */
+export const POST_EDIT_WINDOW_MS = 48 * 60 * 60_000;
+const POST_LIMIT = 500;
+
 type Props = {
   post: Post;
   fresh?: boolean;
@@ -84,7 +88,12 @@ export function PostRow({ post, fresh, canDelete, openThread = false, highlight,
   const [likeError, setLikeError] = useState<string | null>(null);
   const [bookmarkError, setBookmarkError] = useState<string | null>(null);
   const [reporting, setReporting] = useState(false);
+  /** Текст правки, пока запись редактируется; null — не редактируется. */
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const { author } = post;
+  const canEdit = user?.id === author.id && Date.now() - Date.parse(post.createdAt) <= POST_EDIT_WINDOW_MS;
   const profile = `/u/${author.username}`;
   // На свою запись жаловаться некому: сервер такую жалобу и не примет.
   const canReport = Boolean(user) && user?.id !== author.id;
@@ -129,6 +138,23 @@ export function PostRow({ post, fresh, canDelete, openThread = false, highlight,
     }
   }
 
+  async function saveEdit() {
+    if (draft == null || saving) return;
+    const text = draft.trim();
+    if ((!text && !post.media) || text.length > POST_LIMIT) return;
+    setSaving(true);
+    setEditError(null);
+    try {
+      const res = await api.updatePost(post.id, text);
+      onPatch(post.id, { body: res.post.body, editedAt: res.post.editedAt ?? null });
+      setDraft(null);
+    } catch (err) {
+      setEditError(err instanceof ApiError ? err.message : 'Не удалось сохранить');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <article className={fresh ? 'rail-row fresh' : 'rail-row'}>
       <Link className="avatar-link" to={profile} aria-label={`Профиль ${author.displayName}`}>
@@ -144,62 +170,132 @@ export function PostRow({ post, fresh, canDelete, openThread = false, highlight,
           <time className="post-time" dateTime={post.createdAt} title={fullDate(post.createdAt)}>
             {timeAgo(post.createdAt)}
           </time>
+          {post.editedAt && (
+            <span className="post-edited" title={`Изменено ${fullDate(post.editedAt)}`}>
+              изменено
+            </span>
+          )}
         </header>
 
-        {post.body && (
-          <p className="post-body">
-            {highlight?.length ? markTerms(post.body, highlight) : post.body}
-          </p>
+        {draft != null ? (
+          <form
+            className="post-edit"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveEdit();
+            }}
+          >
+            <label className="sr-only" htmlFor={`edit-${post.id}`}>
+              Текст записи
+            </label>
+            <textarea
+              id={`edit-${post.id}`}
+              value={draft}
+              rows={3}
+              autoFocus
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  e.preventDefault();
+                  void saveEdit();
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setDraft(null);
+                }
+              }}
+            />
+            <div className="post-edit-foot">
+              {POST_LIMIT - draft.length <= 60 && (
+                <span className={draft.length > POST_LIMIT ? 'counter over' : 'counter'}>{POST_LIMIT - draft.length}</span>
+              )}
+              <button className="btn ghost small" type="button" disabled={saving} onClick={() => setDraft(null)}>
+                Отмена
+              </button>
+              <button
+                className="btn small"
+                type="submit"
+                disabled={saving || draft.length > POST_LIMIT || (!draft.trim() && !post.media)}
+              >
+                {saving ? 'Сохраняю…' : 'Сохранить'}
+              </button>
+            </div>
+            {editError && <p className="error">{editError}</p>}
+          </form>
+        ) : (
+          post.body && (
+            <p className="post-body">
+              {highlight?.length ? markTerms(post.body, highlight) : post.body}
+            </p>
+          )
         )}
 
         {post.media && <PostMedia media={post.media} />}
 
-        <div className="post-actions">
-          <button
-            className={post.likedByMe ? 'act liked' : 'act'}
-            type="button"
-            onClick={() => void toggleLike()}
-            disabled={!user}
-            aria-pressed={post.likedByMe}
-            title={user ? undefined : 'Войдите, чтобы отмечать записи'}
-          >
-            <Heart filled={post.likedByMe} />
-            {post.likeCount > 0 && <span>{post.likeCount}</span>}
-            <span className="sr-only">
-              {post.likedByMe ? 'Снять отметку' : 'Отметить запись'}
-            </span>
-          </button>
-
-          <button className={open ? 'act open' : 'act'} type="button" onClick={() => setOpen(!open)}>
-            {post.commentCount === 0
-              ? 'Ответить'
-              : `${post.commentCount} ${plural(post.commentCount, 'ответ', 'ответа', 'ответов')}`}
-          </button>
-
-          <button
-            className={post.bookmarkedByMe ? 'act saved' : 'act'}
-            type="button"
-            onClick={() => void toggleBookmark()}
-            disabled={!user}
-            aria-pressed={post.bookmarkedByMe}
-            title={user ? undefined : 'Войдите, чтобы сохранять записи'}
-          >
-            <Flag filled={post.bookmarkedByMe} />
-            <span>{post.bookmarkedByMe ? 'Сохранено' : 'Сохранить'}</span>
-          </button>
-
-          {canDelete && (
-            <button className="post-delete" type="button" onClick={() => onDelete(post.id)}>
-              Удалить
+        {/* Пока запись правится, ряд действий убран: «Сохранить» правку не должно
+            соседствовать с «Сохранить» закладки. */}
+        {draft == null && (
+          <div className="post-actions">
+            <button
+              className={post.likedByMe ? 'act liked' : 'act'}
+              type="button"
+              onClick={() => void toggleLike()}
+              disabled={!user}
+              aria-pressed={post.likedByMe}
+              title={user ? undefined : 'Войдите, чтобы отмечать записи'}
+            >
+              <Heart filled={post.likedByMe} />
+              {post.likeCount > 0 && <span>{post.likeCount}</span>}
+              <span className="sr-only">
+                {post.likedByMe ? 'Снять отметку' : 'Отметить запись'}
+              </span>
             </button>
-          )}
 
-          {canReport && (
-            <button className="act-danger" type="button" onClick={() => setReporting(true)}>
-              Пожаловаться
+            <button className={open ? 'act open' : 'act'} type="button" onClick={() => setOpen(!open)}>
+              {post.commentCount === 0
+                ? 'Ответить'
+                : `${post.commentCount} ${plural(post.commentCount, 'ответ', 'ответа', 'ответов')}`}
             </button>
-          )}
-        </div>
+
+            <button
+              className={post.bookmarkedByMe ? 'act saved' : 'act'}
+              type="button"
+              onClick={() => void toggleBookmark()}
+              disabled={!user}
+              aria-pressed={post.bookmarkedByMe}
+              title={user ? undefined : 'Войдите, чтобы сохранять записи'}
+            >
+              <Flag filled={post.bookmarkedByMe} />
+              <span>{post.bookmarkedByMe ? 'Сохранено' : 'Сохранить'}</span>
+            </button>
+
+            {canEdit && (
+              <button
+                className="post-delete"
+                type="button"
+                title="Править можно двое суток после публикации"
+                onClick={() => {
+                  setEditError(null);
+                  setDraft(post.body);
+                }}
+              >
+                Изменить
+              </button>
+            )}
+
+            {canDelete && (
+              <button className="post-delete" type="button" onClick={() => onDelete(post.id)}>
+                Удалить
+              </button>
+            )}
+
+            {canReport && (
+              <button className="act-danger" type="button" onClick={() => setReporting(true)}>
+                Пожаловаться
+              </button>
+            )}
+          </div>
+        )}
 
         {reporting && (
           <ReportDialog

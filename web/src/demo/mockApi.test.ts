@@ -459,6 +459,17 @@ describe('витрина: темы переписки', () => {
   });
 });
 
+describe('витрина: правка записи', () => {
+  it('своя — правится с пометкой, чужая — 403', async () => {
+    const { post } = await api.createPost('Опечатко');
+    const res = await api.updatePost(post.id, 'Опечатка исправлена');
+    expect(res.post.body).toBe('Опечатка исправлена');
+    expect(res.post.editedAt).toBeTruthy();
+    const other = (await api.posts({ author: 'oleg_k' })).posts[0];
+    await expect(api.updatePost(other.id, 'Чужое')).rejects.toMatchObject({ status: 403 });
+  });
+});
+
 describe('витрина: предпросмотр ссылок', () => {
   it('карточка только у заготовленной ссылки', async () => {
     expect((await api.linkPreview('https://github.com/erlan4761/Social-site')).preview?.siteName).toBe('GitHub');

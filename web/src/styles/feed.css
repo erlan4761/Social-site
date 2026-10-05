@@ -371,3 +371,26 @@
   color: var(--ink-2);
 }
 .comment-replying .icon-btn { width: 1.75rem; height: 1.75rem; font-size: 1.125rem; }
+
+/* ─ Правка записи ──────────────────────────────────────────────────────
+   На месте текста — поле той же гарнитуры, что и сама запись: правка
+   выглядит как запись, а не как форма. «изменено» — у времени, как у
+   сообщений. */
+.post-edited { font-size: var(--t-micro); color: var(--ink-3); white-space: nowrap; }
+.post-edit textarea {
+  width: 100%;
+  margin: var(--s-1) 0 0;
+  padding: var(--s-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--read);
+  font-size: var(--t-read);
+  line-height: var(--lh-read);
+  resize: vertical;
+  field-sizing: content;
+  min-height: 4.5rem;
+}
+.post-edit textarea:focus { outline: none; border-color: var(--accent); }
+.post-edit-foot { display: flex; align-items: center; justify-content: flex-end; gap: var(--s-2); margin: var(--s-2) 0; }

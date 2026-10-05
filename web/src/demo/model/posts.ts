@@ -53,6 +53,7 @@ export const toPost = (p: DbPost): Post => ({
   id: p.id,
   body: p.body,
   createdAt: p.createdAt,
+  editedAt: p.editedAt ?? null,
   likeCount: db.likes.filter((l) => l.postId === p.id).length,
   // Комментарии фильтруются блокировкой, значит и счётчик под записью — тоже,
   // иначе он разошёлся бы с длиной видимой ветки. Лайки не фильтруем: это
