@@ -73,6 +73,8 @@ const serializePost = (row, depth) => ({
   // Репосты и цитаты вместе: обе — «поделились записью».
   repostCount: row.repost_count ?? 0,
   repostedByMe: Boolean(row.reposted_by_me),
+  // Закреплена автором в профиле.
+  pinned: Boolean(row.pinned),
   shared: sharedOf(row, depth),
   author: {
     id: row.author_id,
@@ -116,7 +118,7 @@ const serializeComment = (row) => ({
 export const POST_COLUMNS = `
   p.id, p.body, p.created_at, p.edited_at, p.author_id, p.media_path, p.media_type, p.media_mime, p.media_name,
   p.repost_of_id, p.quote_of_id, :viewerId AS viewer_id,
-  u.username, u.display_name, u.avatar_path AS author_avatar_path,
+  u.username, u.display_name, u.avatar_path AS author_avatar_path, u.pinned_post_id IS p.id AS pinned,
   (SELECT COUNT(*) FROM likes    l WHERE l.post_id = p.id) AS like_count,
   (SELECT COUNT(*) FROM comments c
     WHERE c.post_id = p.id AND ${blockPairSql('c.author_id')}) AS comment_count,
@@ -379,6 +381,31 @@ function setPostTags(postId, body) {
   const insert = db.prepare('INSERT OR IGNORE INTO post_tags (post_id, tag, label) VALUES (?, ?, ?)');
   for (const { tag, label } of tagsIn(body)) insert.run(postId, tag, label);
 }
+
+/* ─ Закреплённая запись ────────────────────────────────────────────────── */
+
+/**
+ * Закрепить в профиле: одна запись, своя и не репост — пустая рамка наверху
+ * профиля ничего не скажет о человеке. Новое закрепление заменяет старое;
+ * повторное — не ошибка. Снять можно только то, что закреплено.
+ */
+router.put('/:id/pin', requireAuth, (req, res) => {
+  const id = intParam(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Некорректный id' });
+  const post = db.prepare('SELECT author_id, repost_of_id FROM posts WHERE id = ?').get(id);
+  if (!post) return res.status(404).json({ error: 'Пост не найден' });
+  if (post.author_id !== req.user.id) return res.status(403).json({ error: 'Закрепить можно только свою запись' });
+  if (post.repost_of_id) return res.status(400).json({ error: 'Репост не закрепить — закрепите свою запись' });
+  db.prepare('UPDATE users SET pinned_post_id = ? WHERE id = ?').run(id, req.user.id);
+  res.json({ pinned: true });
+});
+
+router.delete('/:id/pin', requireAuth, (req, res) => {
+  const id = intParam(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Некорректный id' });
+  db.prepare('UPDATE users SET pinned_post_id = NULL WHERE id = ? AND pinned_post_id = ?').run(req.user.id, id);
+  res.json({ pinned: false });
+});
 
 /* ─ Репосты ────────────────────────────────────────────────────────────── */
 

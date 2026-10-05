@@ -713,6 +713,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_posts_quote ON posts(quote_of_id) WHERE quote_of_id IS NOT NULL;
 `);
 
+// Закреплённая запись профиля — одна, своя, не репост (routes/posts.js).
+// Удалили запись — закрепление снимается само.
+ensureColumn('users', 'pinned_post_id', 'INTEGER REFERENCES posts(id) ON DELETE SET NULL');
+
 // Хэштеги записей (hashtags.js): ключ — для поиска, подпись — как написал автор.
 // Записи, опубликованные до хэштегов, размечаются при запуске; запись с «#» без
 // настоящего тега просто перечитывается — это дешевле отдельной отметки.

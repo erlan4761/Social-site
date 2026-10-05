@@ -83,6 +83,7 @@ export function exportFor(userId) {
       phone: u.phone ?? null,
       createdAt: u.created_at,
       avatar: publicUrl('avatar', u.avatar_path),
+      pinnedPostId: u.pinned_post_id ?? null,
     },
     privacy: { lastSeen: u.last_seen_privacy, phoneFind: u.phone_find, phoneShow: u.phone_show },
     posts,
