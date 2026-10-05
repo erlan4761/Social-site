@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError, type Post } from '../api';
+import { api, ApiError, type Author, type Post } from '../api';
 import { useSession } from '../session';
 import { highlight as markTerms } from '../highlight';
 import { fullDate, plural, timeAgo } from '../time';
 import { CommentThread } from './CommentThread';
 import { PostText } from './PostText';
 import { PostGallery } from './PostGallery';
+import { QuoteCard, QuoteDialog, Repeat, RepostMenu } from './PostShare';
 import { Monogram } from './Monogram';
 import { ReportDialog } from './ReportDialog';
 
@@ -25,6 +26,15 @@ type Props = {
   highlight?: string[];
   onDelete: (id: number) => void;
   onPatch: (id: number, changes: Partial<Post>) => void;
+  /** Новая запись, родившаяся из этой (цитата), — лента кладёт её наверх. Без него — ссылка «Открыть». */
+  onCreated?: (post: Post) => void;
+};
+
+type CardProps = Props & {
+  /** Строка — чужой (или свой) репост: над оригиналом — «Репост: имя». */
+  repostedBy?: Author;
+  /** Свой репост в ленте: отмена — это удаление строки целиком. */
+  onUnrepost?: () => void;
 };
 
 function Heart({ filled }: { filled: boolean }) {
@@ -84,7 +94,30 @@ function PostMedia({ media }: { media: NonNullable<Post['media']> }) {
   );
 }
 
-export function PostRow({ post, fresh, canDelete, openThread = false, highlight, onDelete, onPatch }: Props) {
+/**
+ * Запись ленты. Чистый репост рисуется как оригинал с пометкой «Репост: имя»:
+ * отметки, ответы и закладки — у оригинала, а не у пустой рамки репоста.
+ */
+export function PostRow(props: Props) {
+  const { post, onPatch, onDelete } = props;
+  const { user } = useSession();
+  if (post.shared?.kind !== 'repost') return <PostCard {...props} />;
+  const original = post.shared.post;
+  if (!original) return null;
+  return (
+    <PostCard
+      {...props}
+      post={original}
+      canDelete={false}
+      repostedBy={post.author}
+      onDelete={() => undefined}
+      onPatch={(_, changes) => onPatch(post.id, { shared: { kind: 'repost', post: { ...original, ...changes } } })}
+      onUnrepost={user?.id === post.author.id ? () => onDelete(post.id) : undefined}
+    />
+  );
+}
+
+function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDelete, onPatch, onCreated, repostedBy, onUnrepost }: CardProps) {
   const { user } = useSession();
   const [open, setOpen] = useState(openThread);
   const [likeError, setLikeError] = useState<string | null>(null);
@@ -94,7 +127,14 @@ export function PostRow({ post, fresh, canDelete, openThread = false, highlight,
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  /** Меню «репост / цитировать» — где открыть; null — закрыто. */
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [quoting, setQuoting] = useState(false);
+  /** id опубликованной цитаты — когда ленты, куда её положить, рядом нет. */
+  const [quoted, setQuoted] = useState<number | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
   const { author } = post;
+  const repostCount = post.repostCount ?? 0;
   const canEdit = user?.id === author.id && Date.now() - Date.parse(post.createdAt) <= POST_EDIT_WINDOW_MS;
   const profile = `/u/${author.username}`;
   // На свою запись жаловаться некому: сервер такую жалобу и не примет.
@@ -140,6 +180,25 @@ export function PostRow({ post, fresh, canDelete, openThread = false, highlight,
     }
   }
 
+  async function toggleRepost() {
+    if (!user) return;
+    const next = !post.repostedByMe;
+    // Своя строка-репост: отменить — значит убрать её из ленты.
+    if (!next && onUnrepost) {
+      onUnrepost();
+      return;
+    }
+    onPatch(post.id, { repostedByMe: next, repostCount: Math.max(0, repostCount + (next ? 1 : -1)) });
+    setShareError(null);
+    try {
+      const res = await api.setRepost(post.id, next);
+      onPatch(post.id, { repostedByMe: res.repostedByMe, repostCount: res.repostCount });
+    } catch (err) {
+      onPatch(post.id, { repostedByMe: post.repostedByMe, repostCount });
+      setShareError(err instanceof ApiError ? err.message : 'Не удалось сделать репост');
+    }
+  }
+
   async function saveEdit() {
     if (draft == null || saving) return;
     const text = draft.trim();
@@ -159,6 +218,18 @@ export function PostRow({ post, fresh, canDelete, openThread = false, highlight,
 
   return (
     <article className={fresh ? 'rail-row fresh' : 'rail-row'}>
+      {repostedBy && (
+        <p className="post-reposted">
+          <Repeat />
+          {repostedBy.id === user?.id ? (
+            'Ваш репост'
+          ) : (
+            <>
+              Репост: <Link to={`/u/${repostedBy.username}`}>{repostedBy.displayName}</Link>
+            </>
+          )}
+        </p>
+      )}
       <Link className="avatar-link" to={profile} aria-label={`Профиль ${author.displayName}`}>
         <Monogram username={author.username} displayName={author.displayName} avatarUrl={author.avatarUrl} />
       </Link>
@@ -234,6 +305,8 @@ export function PostRow({ post, fresh, canDelete, openThread = false, highlight,
 
         {post.gallery && post.gallery.length > 1 ? <PostGallery items={post.gallery} /> : post.media && <PostMedia media={post.media} />}
 
+        {post.shared?.kind === 'quote' && <QuoteCard post={post.shared.post} />}
+
         {/* Пока запись правится, ряд действий убран: «Сохранить» правку не должно
             соседствовать с «Сохранить» закладки. */}
         {draft == null && (
@@ -251,6 +324,23 @@ export function PostRow({ post, fresh, canDelete, openThread = false, highlight,
               <span className="sr-only">
                 {post.likedByMe ? 'Снять отметку' : 'Отметить запись'}
               </span>
+            </button>
+
+            <button
+              className={post.repostedByMe ? 'act reposted' : 'act'}
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={menu != null}
+              disabled={!user}
+              title={user ? undefined : 'Войдите, чтобы делиться записями'}
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                setMenu(menu ? null : { x: r.left, y: r.bottom + 4 });
+              }}
+            >
+              <Repeat />
+              {repostCount > 0 && <span>{repostCount}</span>}
+              <span className="sr-only">{post.repostedByMe ? 'Вы сделали репост' : 'Поделиться'}</span>
             </button>
 
             <button className={open ? 'act open' : 'act'} type="button" onClick={() => setOpen(!open)}>
@@ -308,6 +398,41 @@ export function PostRow({ post, fresh, canDelete, openThread = false, highlight,
           />
         )}
 
+        {menu && (
+          <RepostMenu
+            at={menu}
+            reposted={Boolean(post.repostedByMe)}
+            onClose={() => setMenu(null)}
+            onRepost={() => {
+              setMenu(null);
+              void toggleRepost();
+            }}
+            onQuote={() => {
+              setMenu(null);
+              setQuoting(true);
+            }}
+          />
+        )}
+
+        {quoting && (
+          <QuoteDialog
+            post={post}
+            onClose={() => setQuoting(false)}
+            onPublished={(quote) => {
+              onPatch(post.id, { repostCount: repostCount + 1 });
+              if (onCreated) onCreated(quote);
+              else setQuoted(quote.id);
+            }}
+          />
+        )}
+
+        {quoted != null && (
+          <p className="post-note" role="status">
+            Цитата опубликована. <Link to={`/p/${quoted}`}>Открыть</Link>
+          </p>
+        )}
+
+        {shareError && <p className="error">{shareError}</p>}
         {likeError && <p className="error">{likeError}</p>}
         {bookmarkError && <p className="error">{bookmarkError}</p>}
 

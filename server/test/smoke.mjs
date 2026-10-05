@@ -4794,5 +4794,99 @@ r = await gaA(`/posts/${gaPost.id}`, { method: 'DELETE' });
 raw = await fetch(BASE.replace('/api', '') + gaPost.gallery[2].url);
 check('удалили запись — файлы всех снимков стёрты', r.status === 200 && raw.status === 404, `${r.status} ${raw.status}`);
 
+console.log('\n— репосты и цитаты —');
+const rpA = makeClient();
+const rpB = makeClient();
+const rpC = makeClient();
+const userRpA = `rpa_${stamp}`;
+const userRpB = `rpb_${stamp}`;
+const userRpC = `rpc_${stamp}`;
+await legacySignUp(rpA, userRpA, 'Автор');
+await legacySignUp(rpB, userRpB, 'Репостящий');
+await legacySignUp(rpC, userRpC, 'Третий');
+r = await rpA('/posts', { method: 'POST', body: JSON.stringify({ body: 'Проявил первую плёнку' }) });
+const rpOrig = r.body.post;
+check('новая запись — без репостов', rpOrig.repostCount === 0 && rpOrig.repostedByMe === false && rpOrig.shared === null, JSON.stringify(rpOrig));
+
+r = await guest(`/posts/${rpOrig.id}/repost`, { method: 'PUT' });
+check('репост — гостю 401', r.status === 401, `${r.status}`);
+r = await rpB(`/posts/${rpOrig.id}/repost`, { method: 'PUT' });
+check('репост: счётчик 1, «вы сделали репост»', r.status === 200 && r.body.repostCount === 1 && r.body.repostedByMe === true && r.body.postId === rpOrig.id, JSON.stringify(r.body));
+r = await rpB(`/posts/${rpOrig.id}/repost`, { method: 'PUT' });
+check('повторный репост — не ошибка и не второй', r.status === 200 && r.body.repostCount === 1, JSON.stringify(r.body));
+r = await rpB(`/posts?author=${userRpB}`);
+const rpRow = r.body.posts?.[0];
+check('репост — в ленте репостящего, с оригиналом внутри', rpRow?.shared?.kind === 'repost' && rpRow.shared.post?.id === rpOrig.id
+  && rpRow.shared.post.body === 'Проявил первую плёнку' && rpRow.shared.post.repostedByMe === true && rpRow.body === '', JSON.stringify(rpRow));
+r = await rpB(`/posts/${rpRow.id}/repost`, { method: 'PUT' });
+check('репост репоста — репост оригинала', r.status === 200 && r.body.postId === rpOrig.id && r.body.repostCount === 1, JSON.stringify(r.body));
+r = await rpB(`/posts/${rpRow.id}`, { method: 'PATCH', body: JSON.stringify({ body: 'Допишу' }) });
+check('репост не правится — 400', r.status === 400, `${r.status}`);
+r = await rpA('/notifications');
+let rpEvents = r.body.notifications.filter((x) => x.kind === 'repost');
+check('автору — одно событие о репосте', rpEvents.length === 1 && rpEvents[0].post?.id === rpOrig.id && rpEvents[0].actor.username === userRpB, JSON.stringify(rpEvents));
+
+r = await rpB('/posts', { method: 'POST', body: JSON.stringify({ body: `Согласен, @${userRpA}`, quoteOf: rpOrig.id }) });
+const rpQuote = r.body.post;
+check('цитата — своя запись с оригиналом', r.status === 201 && rpQuote.shared?.kind === 'quote' && rpQuote.shared.post?.id === rpOrig.id, JSON.stringify(r.body));
+r = await rpA('/notifications');
+const quoteEvents = r.body.notifications.filter((x) => x.kind === 'quote');
+check('процитированному — событие с текстом цитаты, без второго «упомянул»', quoteEvents.length === 1 && quoteEvents[0].post?.id === rpQuote.id
+  && !r.body.notifications.some((x) => x.kind === 'post_mention' && x.post?.id === rpQuote.id), JSON.stringify(r.body.notifications.slice(0, 3)));
+r = await guest(`/posts/${rpOrig.id}`);
+check('счётчик — репост и цитата вместе', r.body.post?.repostCount === 2 && r.body.post.repostedByMe === false, JSON.stringify(r.body.post));
+r = await rpB('/posts', { method: 'POST', body: JSON.stringify({ body: 'Через репост', quoteOf: rpRow.id }) });
+check('цитата репоста — цитата оригинала', r.status === 201 && r.body.post?.shared?.post?.id === rpOrig.id, JSON.stringify(r.body.post?.shared));
+r = await rpB('/posts', { method: 'POST', body: JSON.stringify({ body: 'В пустоту', quoteOf: 99999999 }) });
+check('цитата несуществующей — 404', r.status === 404, `${r.status}`);
+r = await rpB('/posts', { method: 'POST', body: JSON.stringify({ body: '', quoteOf: rpOrig.id }) });
+check('пустая цитата — 400', r.status === 400, `${r.status}`);
+
+r = await rpB(`/posts/${rpOrig.id}/repost`, { method: 'DELETE' });
+check('отмена репоста: репоста нет, цитаты остались', r.status === 200 && r.body.repostedByMe === false && r.body.repostCount === 2, JSON.stringify(r.body));
+r = await guest(`/posts/${rpRow.id}`);
+check('отменённый репост — 404', r.status === 404, `${r.status}`);
+r = await rpA('/notifications');
+check('отмена уносит непрочитанное событие', !r.body.notifications.some((x) => x.kind === 'repost'), JSON.stringify(r.body.notifications.map((x) => x.kind)));
+r = await rpB(`/posts/${rpOrig.id}/repost`, { method: 'PUT' });
+const rpAgain = (await rpB(`/posts?author=${userRpB}`)).body.posts.find((x) => x.shared?.kind === 'repost');
+r = await rpB(`/posts/${rpAgain.id}`, { method: 'DELETE' });
+check('удалить свой репост как запись — тоже отмена', r.status === 200, `${r.status}`);
+r = await guest(`/posts/${rpOrig.id}`);
+check('после удаления репоста счётчик честный', r.body.post?.repostCount === 2, JSON.stringify(r.body.post?.repostCount));
+
+// Блокировка: репост записи того, с кем смотрящий в блокировке, не виден.
+r = await rpC('/posts', { method: 'POST', body: JSON.stringify({ body: 'Запись третьего' }) });
+const rpCPost = r.body.post;
+await rpB(`/posts/${rpCPost.id}/repost`, { method: 'PUT' });
+await rpB('/posts', { method: 'POST', body: JSON.stringify({ body: 'Цитирую третьего', quoteOf: rpCPost.id }) });
+await rpA(`/users/${userRpC}/block`, { method: 'PUT' });
+r = await rpA(`/posts?author=${userRpB}`);
+check('заблокировал автора — его репоста в чужой ленте нет', !r.body.posts.some((x) => x.shared?.kind === 'repost' && x.shared.post?.id === rpCPost.id)
+  && !r.body.posts.some((x) => x.shared?.kind === 'repost' && x.shared.post === null), JSON.stringify(r.body.posts.map((x) => x.shared?.kind ?? x.body)));
+const quoteOfBlocked = r.body.posts.find((x) => x.body === 'Цитирую третьего');
+check('цитата заблокированного — «запись недоступна»', quoteOfBlocked?.shared?.kind === 'quote' && quoteOfBlocked.shared.post === null, JSON.stringify(quoteOfBlocked?.shared));
+r = await rpB(`/users/${userRpB}`);
+const rpBCountSelf = r.body.user?.postCount ?? r.body.postCount;
+r = await rpA(`/users/${userRpB}`);
+const rpBCountForA = r.body.user?.postCount ?? r.body.postCount;
+check('счётчик записей профиля — без скрытого репоста', rpBCountSelf - rpBCountForA === 1, `${rpBCountSelf} ${rpBCountForA}`);
+r = await rpA(`/posts/${rpCPost.id}/repost`, { method: 'PUT' });
+check('репост записи заблокированного — 404', r.status === 404, `${r.status}`);
+await rpA(`/users/${userRpC}/block`, { method: 'DELETE' });
+
+// Удалили оригинал: репосты ушли каскадом, цитаты остались без него.
+await rpB(`/posts/${rpOrig.id}/repost`, { method: 'PUT' });
+const rpLast = (await rpB(`/posts?author=${userRpB}`)).body.posts.find((x) => x.shared?.kind === 'repost' && x.shared.post?.id === rpOrig.id);
+r = await rpA(`/posts/${rpOrig.id}`, { method: 'DELETE' });
+check('автор удалил оригинал', r.status === 200, `${r.status}`);
+r = await guest(`/posts/${rpLast.id}`);
+check('репост удалённой записи исчез', r.status === 404, `${r.status}`);
+r = await guest(`/posts/${rpQuote.id}`);
+check('цитата удалённой — осталась, «запись недоступна»', r.status === 200 && r.body.post?.shared?.kind === 'quote' && r.body.post.shared.post === null, JSON.stringify(r.body.post?.shared));
+raw = await rpB.raw('/api/account/export');
+const rpDump = JSON.parse(await raw.text());
+check('выгрузка: у цитаты — ссылка на оригинал', rpDump.posts?.some((x) => x.quoteOf === rpOrig.id && x.repostOf === null), JSON.stringify(rpDump.posts?.slice(0, 3)));
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

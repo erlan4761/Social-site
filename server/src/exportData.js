@@ -22,9 +22,11 @@ export function exportFor(userId) {
   const attachment = (kind, row) =>
     row.attach_path ? { kind: row.attach_kind, name: row.attach_name ?? null, url: `/api/attachments/${kind}/${row.id}` } : null;
 
-  const posts = db.prepare('SELECT id, body, created_at, media_path, media_type FROM posts WHERE author_id = ? ORDER BY id').all(userId)
+  const posts = db.prepare('SELECT id, body, created_at, repost_of_id, quote_of_id FROM posts WHERE author_id = ? ORDER BY id').all(userId)
     .map((p) => ({
       id: p.id, body: p.body, createdAt: p.created_at,
+      // Репост и цитата — ссылкой на запись: чужой текст в свою выгрузку не кладём.
+      repostOf: p.repost_of_id ?? null, quoteOf: p.quote_of_id ?? null,
       media: db.prepare('SELECT path, type FROM post_media WHERE post_id = ? ORDER BY position').all(p.id)
         .map((m) => ({ type: m.type, url: publicUrl('media', m.path) })),
     }));

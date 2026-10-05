@@ -49,7 +49,22 @@ export const publicUser = (u: DbUser): User => ({
   followedByMe: db.follows.some((f) => f.followerId === db.meId && f.followeeId === u.id),
 });
 
-export const toPost = (p: DbPost): Post => ({
+/** Репосты и цитаты вместе — как repost_count на сервере. */
+export const repostCountOf = (postId: number) => db.posts.filter((x) => x.repostOf === postId || x.quoteOf === postId).length;
+
+export const toPost = (p: DbPost): Post => postAt(p, 0);
+
+/** Оригинал репоста или цитаты; глубже второго уровня не идём — как sharedOf() на сервере. */
+function sharedOf(p: DbPost, depth: number): Post['shared'] {
+  const target = p.repostOf ?? p.quoteOf;
+  if (target == null) return null;
+  const kind = p.repostOf != null ? 'repost' : 'quote';
+  const original = db.posts.find((x) => x.id === target);
+  if (depth >= 2 || !original || hidden(original.authorId)) return { kind, post: null };
+  return { kind, post: postAt(original, depth + 1) };
+}
+
+const postAt = (p: DbPost, depth: number): Post => ({
   id: p.id,
   body: p.body,
   createdAt: p.createdAt,
@@ -63,6 +78,9 @@ export const toPost = (p: DbPost): Post => ({
   bookmarkedByMe: db.bookmarks.some((b) => b.postId === p.id && b.userId === db.meId),
   media: p.media,
   gallery: p.gallery ?? (p.media ? [p.media] : []),
+  repostCount: repostCountOf(p.id),
+  repostedByMe: db.posts.some((x) => x.repostOf === p.id && x.authorId === db.meId),
+  shared: sharedOf(p, depth),
   author: author(byId(p.authorId)!),
 });
 

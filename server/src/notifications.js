@@ -6,13 +6,13 @@ import { touchBadges } from './live.js';
 import { pushNotification } from './push.js';
 import { deviceLabel } from './device.js';
 
-export const NOTIFICATION_KINDS = ['like', 'comment', 'comment_reply', 'post_mention', 'follow', 'message', 'chat_message', 'chat_invite', 'mention', 'new_login'];
+export const NOTIFICATION_KINDS = ['like', 'comment', 'comment_reply', 'post_mention', 'repost', 'quote', 'follow', 'message', 'chat_message', 'chat_invite', 'mention', 'new_login'];
 
 // Лайк и подписка — переключатели: их можно снять и поставить заново сколько
 // угодно раз. Если каждое включение порождало бы событие, это был бы готовый
 // способ дёргать человека бесконечно, поэтому на пару (получатель, актор,
 // объект) приходится максимум одно уведомление.
-const IDEMPOTENT_KINDS = new Set(['like', 'follow']);
+const IDEMPOTENT_KINDS = new Set(['like', 'follow', 'repost']);
 
 // Переписка схлопывается: на диалог (или на чат) — максимум одно непрочитанное
 // уведомление. Иначе лента событий превратилась бы в дубль переписки.

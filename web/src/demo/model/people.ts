@@ -54,4 +54,5 @@ export const blockedPair = (aId: number, bId: number) =>
 /** Скрыт ли автор от того, кто сейчас смотрит. Для гостя — никогда. */
 export const hidden = (authorId: number) => db.meId != null && blockedPair(db.meId, authorId);
 
-export const visiblePosts = () => db.posts.filter((p) => !hidden(p.authorId));
+export const visiblePosts = () =>
+  db.posts.filter((p) => !hidden(p.authorId) && (p.repostOf == null || db.posts.some((o) => o.id === p.repostOf && !hidden(o.authorId))));

@@ -106,6 +106,10 @@ function describe(n) {
       return { title: `${who} ответил(а) на ваш комментарий`, body: cut(n.comment_body ?? ''), url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
     case 'like':
       return { title: 'Хроника', body: `${who} отметил(а) вашу запись`, url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
+    case 'repost':
+      return { title: 'Хроника', body: `${who} сделал(а) репост вашей записи`, url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
+    case 'quote':
+      return { title: `${who} процитировал(а) вашу запись`, body: cut(n.post_body ?? ''), url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
     case 'follow':
       return { title: 'Хроника', body: `${who} подписался(ась) на вас`, url: `/u/${n.actor_username}`, tag: `follow-${n.actor_id}` };
     case 'new_login': {

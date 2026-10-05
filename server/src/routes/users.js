@@ -5,6 +5,7 @@ import { requireAuth, publicUser } from '../auth.js';
 import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { deleteUpload, publicUrl, storeUpload } from '../media.js';
 import { dropNotification, notify } from '../notifications.js';
+import { REPOST_VISIBLE_SQL } from './posts.js';
 import { findByPhones, LOOKUP_MAX, visiblePhone } from '../phoneBook.js';
 import * as v from '../validate.js';
 
@@ -177,7 +178,7 @@ router.get('/:username/archive', (req, res) => {
   const months = db.prepare(`
     SELECT substr(p.created_at, 1, 7) AS month, COUNT(*) AS count
     FROM posts p
-    WHERE p.author_id = :authorId AND ${blockPairSql('p.author_id')}
+    WHERE p.author_id = :authorId AND ${blockPairSql('p.author_id')} AND ${REPOST_VISIBLE_SQL}
     GROUP BY month
     ORDER BY month DESC
   `).all({ authorId: user.id, viewerId: req.user?.id ?? null });
@@ -200,7 +201,7 @@ router.get('/:username', (req, res) => {
   // пуста: «12 записей» над пустым списком выглядели бы как поломка.
   const { count } = db.prepare(`
     SELECT COUNT(*) AS count FROM posts p
-    WHERE p.author_id = :authorId AND ${blockPairSql('p.author_id')}
+    WHERE p.author_id = :authorId AND ${blockPairSql('p.author_id')} AND ${REPOST_VISIBLE_SQL}
   `).get({ authorId: user.id, viewerId });
 
   const followedByMe = req.user
