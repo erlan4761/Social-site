@@ -5,6 +5,7 @@ import { requireAuth } from '../auth.js';
 import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { deleteUpload, fileName, publicUrl, storeUpload } from '../media.js';
 import { dropNotification, notify } from '../notifications.js';
+import { notifyPostMentions } from '../postMentions.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -217,6 +218,7 @@ router.post('/', requireAuth, mediaUpload.single('media'), async (req, res, next
       INSERT INTO posts (author_id, body, media_path, media_type, media_mime, media_name, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(req.user.id, body, stored?.filename ?? null, stored?.kind ?? null, stored?.mime ?? null, originalName, nowIso());
+    notifyPostMentions({ authorId: req.user.id, postId: Number(info.lastInsertRowid), body });
 
     const row = db.prepare(`
       SELECT ${POST_COLUMNS}
@@ -257,6 +259,7 @@ router.patch('/:id', requireAuth, (req, res, next) => {
       : v.str(req.body?.body, 'текст поста', { min: 1, max: 500 });
     if (body !== post.body) {
       db.prepare('UPDATE posts SET body = ?, edited_at = ? WHERE id = ?').run(body, nowIso(), id);
+      notifyPostMentions({ authorId: req.user.id, postId: id, body, previousBody: post.body });
     }
 
     const row = db.prepare(`
@@ -478,6 +481,13 @@ router.post('/:id/comments', requireAuth, (req, res, next) => {
         commentId: Number(info.lastInsertRowid),
       });
     }
+    notifyPostMentions({
+      authorId: req.user.id,
+      postId: id,
+      commentId: Number(info.lastInsertRowid),
+      body,
+      skip: [post.author_id, replied?.author_id].filter((x) => x != null),
+    });
 
     const row = db.prepare(`
       SELECT c.id, c.post_id, c.body, c.created_at, c.author_id, c.reply_to_id,

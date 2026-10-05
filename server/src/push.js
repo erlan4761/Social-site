@@ -100,6 +100,8 @@ function describe(n) {
       return { title: 'Хроника', body: `${who} добавил(а) вас в чат «${n.chat_title ?? ''}»`, url: `/messages/c/${n.chat_id}`, tag: `chat-${n.chat_id}` };
     case 'comment':
       return { title: `${who} ответил(а) вам`, body: cut(n.comment_body ?? ''), url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
+    case 'post_mention':
+      return { title: `${who} упомянул(а) вас`, body: cut(n.comment_body ?? n.post_body ?? ''), url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
     case 'comment_reply':
       return { title: `${who} ответил(а) на ваш комментарий`, body: cut(n.comment_body ?? ''), url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
     case 'like':
@@ -154,8 +156,9 @@ async function deliver(sub, payload) {
 export function pushNotification(notificationId, { evenIfLive = false, silent = false } = {}) {
   const n = db.prepare(`
     SELECT n.*, a.display_name AS actor_name, a.username AS actor_username,
-           g.title AS chat_title, m.body AS message_body, c.body AS comment_body
+           g.title AS chat_title, m.body AS message_body, c.body AS comment_body, pp.body AS post_body
     FROM notifications n
+    LEFT JOIN posts pp ON pp.id = n.post_id
     JOIN users a ON a.id = n.actor_id
     LEFT JOIN chats g ON g.id = n.chat_id
     LEFT JOIN chat_messages m ON m.id = n.message_id

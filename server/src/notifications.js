@@ -6,7 +6,7 @@ import { touchBadges } from './live.js';
 import { pushNotification } from './push.js';
 import { deviceLabel } from './device.js';
 
-export const NOTIFICATION_KINDS = ['like', 'comment', 'comment_reply', 'follow', 'message', 'chat_message', 'chat_invite', 'mention', 'new_login'];
+export const NOTIFICATION_KINDS = ['like', 'comment', 'comment_reply', 'post_mention', 'follow', 'message', 'chat_message', 'chat_invite', 'mention', 'new_login'];
 
 // Лайк и подписка — переключатели: их можно снять и поставить заново сколько
 // угодно раз. Если каждое включение порождало бы событие, это был бы готовый
