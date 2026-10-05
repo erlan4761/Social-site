@@ -679,6 +679,26 @@ ensureColumn('posts', 'media_type', 'TEXT');
 ensureColumn('posts', 'media_mime', 'TEXT');
 ensureColumn('posts', 'media_name', 'TEXT');
 
+// Снимки записи по порядку — до десяти (routes/posts.js). Колонки posts.media_*
+// по-прежнему хранят первый: на них опираются модерация, выгрузка и старые
+// клиенты. Записи, опубликованные до галерей, переносятся сюда один раз.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS post_media (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id  INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    path     TEXT NOT NULL,
+    type     TEXT NOT NULL,
+    mime     TEXT,
+    name     TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_post_media ON post_media(post_id, position);
+  INSERT INTO post_media (post_id, position, path, type, mime, name)
+  SELECT p.id, 0, p.media_path, p.media_type, p.media_mime, p.media_name FROM posts p
+  WHERE p.media_path IS NOT NULL AND NOT EXISTS (SELECT 1 FROM post_media pm WHERE pm.post_id = p.id);
+`);
+
+
 /* ─ Полнотекстовый индекс записей ──────────────────────────────────────────
  *
  * Поиск людей в этом проекте пришлось писать на JS, потому что SQLite `LIKE`

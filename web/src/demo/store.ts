@@ -47,6 +47,8 @@ export type DbPost = {
   createdAt: string;
   /** Когда правили текст — как posts.edited_at. */
   editedAt?: string | null;
+  /** Все снимки по порядку — как post_media. */
+  gallery?: Media[];
   media: Media | null;
 };
 

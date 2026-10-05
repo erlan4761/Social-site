@@ -635,3 +635,19 @@ describe('витрина: выгрузка данных', () => {
     expect(JSON.stringify(data)).not.toContain('parol12345');
   });
 });
+
+describe('витрина: несколько фото в записи', () => {
+  it('галерея по порядку, первый снимок — media; аудио только одно', async () => {
+    const shot = (name: string, type = 'image/png') => new File(['x'], name, { type });
+    const { post } = await api.createPost('Три кадра', [shot('a.png'), shot('b.png'), shot('c.mp4', 'video/mp4')]);
+    expect(post.gallery?.map((m) => m.name)).toEqual(['a.png', 'b.png', 'c.mp4']);
+    expect(post.gallery?.[2].type).toBe('video');
+    expect(post.media?.name).toBe('a.png');
+    expect((await api.post(post.id)).post.gallery).toHaveLength(3);
+    await expect(api.createPost('', [shot('a.png'), shot('t.mp3', 'audio/mpeg')])).rejects.toMatchObject({ status: 400 });
+    await expect(api.createPost('', Array.from({ length: 11 }, (_, i) => shot(`${i}.png`)))).rejects.toMatchObject({ status: 400 });
+    expect((await api.createPost('Трек', shot('t.mp3', 'audio/mpeg'))).post.gallery?.[0].type).toBe('audio');
+    const old = (await api.posts({ author: 'oleg_k' })).posts.find((p) => p.media);
+    if (old) expect(old.gallery).toEqual([old.media]);
+  });
+});

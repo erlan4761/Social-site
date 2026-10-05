@@ -232,6 +232,7 @@ app.use((err, _req, res, _next) => {
     const messages = {
       LIMIT_FILE_SIZE: 'Файл слишком большой',
       LIMIT_UNEXPECTED_FILE: 'Лишнее поле файла в запросе',
+      LIMIT_FILE_COUNT: 'Слишком много файлов — в записи не больше десяти',
     };
     return res.status(400).json({ error: messages[err.code] ?? 'Не удалось загрузить файл' });
   }

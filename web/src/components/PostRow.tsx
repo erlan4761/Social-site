@@ -6,6 +6,7 @@ import { highlight as markTerms } from '../highlight';
 import { fullDate, plural, timeAgo } from '../time';
 import { CommentThread } from './CommentThread';
 import { PostText } from './PostText';
+import { PostGallery } from './PostGallery';
 import { Monogram } from './Monogram';
 import { ReportDialog } from './ReportDialog';
 
@@ -231,7 +232,7 @@ export function PostRow({ post, fresh, canDelete, openThread = false, highlight,
           )
         )}
 
-        {post.media && <PostMedia media={post.media} />}
+        {post.gallery && post.gallery.length > 1 ? <PostGallery items={post.gallery} /> : post.media && <PostMedia media={post.media} />}
 
         {/* Пока запись правится, ряд действий убран: «Сохранить» правку не должно
             соседствовать с «Сохранить» закладки. */}

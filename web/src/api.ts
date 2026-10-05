@@ -56,6 +56,8 @@ export type Post = {
    *  уведомления по ней нет — этим она и отличается от отметки. */
   bookmarkedByMe: boolean;
   media: Media | null;
+  /** Все снимки записи по порядку (до десяти); у записи с одним — он же, что `media`. */
+  gallery?: Media[];
   author: Author;
 };
 
@@ -597,13 +599,15 @@ const realApi = {
   },
 
   /** Text-only posts stay JSON; a file forces multipart. */
-  createPost: (text: string, media?: File | null) => {
-    if (!media) {
+  /** Запись: текст и до десяти фото и видео (или одно аудио). */
+  createPost: (text: string, media?: File | File[] | null) => {
+    const files = media == null ? [] : Array.isArray(media) ? media : [media];
+    if (files.length === 0) {
       return request<{ post: Post }>('/posts', { method: 'POST', body: body({ body: text }) });
     }
     const form = new FormData();
     form.set('body', text);
-    form.set('media', media);
+    for (const file of files) form.append('media', file);
     return request<{ post: Post }>('/posts', { method: 'POST', body: form });
   },
 

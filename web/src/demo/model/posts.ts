@@ -62,6 +62,7 @@ export const toPost = (p: DbPost): Post => ({
   likedByMe: db.likes.some((l) => l.postId === p.id && l.userId === db.meId),
   bookmarkedByMe: db.bookmarks.some((b) => b.postId === p.id && b.userId === db.meId),
   media: p.media,
+  gallery: p.gallery ?? (p.media ? [p.media] : []),
   author: author(byId(p.authorId)!),
 });
 

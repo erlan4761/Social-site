@@ -394,3 +394,95 @@
 }
 .post-edit textarea:focus { outline: none; border-color: var(--accent); }
 .post-edit-foot { display: flex; align-items: center; justify-content: flex-end; gap: var(--s-2); margin: var(--s-2) 0; }
+
+/* ─ Галерея записи ─────────────────────────────────────────────────────
+   Два снимка — пополам, три — один большой слева и два справа, четыре —
+   квадратом, больше — в три колонки. Ячейки обрезаются по кадру (cover):
+   целиком снимок виден в просмотре по нажатию. */
+.post-gallery {
+  display: grid;
+  gap: 2px;
+  margin: var(--s-3) 0 0;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+.post-gallery.n2 { grid-template-columns: 1fr 1fr; aspect-ratio: 2 / 1; }
+.post-gallery.n3 { grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; aspect-ratio: 3 / 2; }
+.post-gallery.n3 .post-gallery-cell:first-child { grid-row: span 2; }
+.post-gallery.n4 { grid-template-columns: 1fr 1fr; aspect-ratio: 1 / 1; }
+.post-gallery.many { grid-template-columns: repeat(3, 1fr); }
+.post-gallery.many .post-gallery-cell { aspect-ratio: 1 / 1; }
+.post-gallery-cell {
+  position: relative;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: var(--surface-2);
+  cursor: zoom-in;
+}
+.post-gallery-cell img,
+.post-gallery-cell video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.post-gallery-cell:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+.post-gallery-play {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 2.5rem;
+  height: 2.5rem;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: var(--overlay-ink);
+}
+.post-gallery-play::after {
+  content: '';
+  position: absolute;
+  inset: 50% auto auto 54%;
+  translate: -50% -50%;
+  border-style: solid;
+  border-width: 0.5rem 0 0.5rem 0.8rem;
+  border-color: transparent transparent transparent #fff;
+}
+
+/* Просмотр галереи — тот же, что у фото в переписке, плюс листание. */
+.gallery-viewer { cursor: default; }
+.gallery-viewer video { max-width: 100%; max-height: calc(100dvh - 5rem); border-radius: var(--r-sm); }
+.viewer-nav {
+  position: fixed;
+  top: 50%;
+  translate: 0 -50%;
+  width: 3rem;
+  height: 3rem;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.14);
+  color: #fff;
+  font-size: 2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.viewer-nav:hover { background: rgb(255 255 255 / 0.24); }
+.viewer-nav:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.viewer-nav.prev { left: var(--s-4); }
+.viewer-nav.next { right: var(--s-4); }
+.viewer-count { position: fixed; bottom: var(--s-4); left: 50%; translate: -50% 0; margin: 0; color: #fff; font-size: var(--t-meta); opacity: 0.85; }
+
+/* Выбранные для галереи файлы — миниатюрами, у каждой — «убрать». */
+.attach-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(4.5rem, 1fr)); gap: var(--s-2); }
+.attach-grid li { position: relative; aspect-ratio: 1 / 1; border-radius: var(--r-xs); overflow: hidden; background: var(--surface-2); }
+.attach-grid img,
+.attach-grid video { width: 100%; height: 100%; object-fit: cover; max-height: none; border-radius: 0; }
+.attach-remove {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 0;
+  border-radius: 50%;
+  background: var(--overlay-ink);
+  color: #fff;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
