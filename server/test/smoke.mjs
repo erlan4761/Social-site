@@ -4993,5 +4993,42 @@ await pnA(`/posts/${pnFirst.id}`, { method: 'DELETE' });
 r = await guest(`/users/${userPnA}`);
 check('удалили закреплённую — закрепление снято', r.status === 200 && r.body.pinnedPost === null, JSON.stringify(r.body.pinnedPost));
 
+console.log('\n— кого почитать —');
+const sgMe = makeClient();
+const sgVia = makeClient();
+const sgTarget = makeClient();
+const sgSilent = makeClient();
+const sgBlocked = makeClient();
+const userSgMe = `sgme_${stamp}`;
+const userSgVia = `sgvia_${stamp}`;
+const userSgTarget = `sgtg_${stamp}`;
+const userSgSilent = `sgsl_${stamp}`;
+const userSgBlocked = `sgbl_${stamp}`;
+await legacySignUp(sgMe, userSgMe, 'Смотрящий');
+await legacySignUp(sgVia, userSgVia, 'Посредник');
+await legacySignUp(sgTarget, userSgTarget, 'Интересный');
+await legacySignUp(sgSilent, userSgSilent, 'Молчун');
+await legacySignUp(sgBlocked, userSgBlocked, 'Неприятный');
+await sgVia('/posts', { method: 'POST', body: JSON.stringify({ body: 'Пишу иногда' }) });
+await sgTarget('/posts', { method: 'POST', body: JSON.stringify({ body: 'Пишу интересное' }) });
+await sgBlocked('/posts', { method: 'POST', body: JSON.stringify({ body: 'Пишу неприятное' }) });
+await sgMe(`/users/${userSgVia}/follow`, { method: 'PUT' });
+await sgVia(`/users/${userSgTarget}/follow`, { method: 'PUT' });
+await sgVia(`/users/${userSgSilent}/follow`, { method: 'PUT' });
+await sgVia(`/users/${userSgBlocked}/follow`, { method: 'PUT' });
+await sgMe(`/users/${userSgBlocked}/block`, { method: 'PUT' });
+r = await sgMe('/users/suggestions');
+const sgNames = (r.body.users ?? []).map((x) => x.username);
+check('кого почитать: первым — кого читают ваши подписки, с подписью', r.status === 200 && r.body.users[0]?.username === userSgTarget
+  && r.body.users[0].mutualCount === 1 && r.body.users[0].mutualName === 'Посредник' && r.body.users[0].followedByMe === false, JSON.stringify(r.body.users?.[0]));
+check('не больше пяти; без себя и тех, на кого уже подписаны', sgNames.length <= 5 && !sgNames.includes(userSgMe) && !sgNames.includes(userSgVia), JSON.stringify(sgNames));
+check('без тех, кто ничего не писал, и без заблокированных', !sgNames.includes(userSgSilent) && !sgNames.includes(userSgBlocked), JSON.stringify(sgNames));
+await sgMe(`/users/${userSgTarget}/follow`, { method: 'PUT' });
+r = await sgMe('/users/suggestions');
+check('подписались — из подсказок ушёл', !r.body.users.some((x) => x.username === userSgTarget), JSON.stringify(r.body.users.map((x) => x.username)));
+r = await guest('/users/suggestions');
+check('гостю — самые читаемые, без «читают ваши подписки»', r.status === 200 && r.body.users.length > 0 && r.body.users.length <= 5
+  && r.body.users.every((x) => x.mutualCount === 0 && x.mutualName === null), JSON.stringify(r.body.users?.slice(0, 2)));
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);
