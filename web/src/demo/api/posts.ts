@@ -51,23 +51,26 @@ export const postsApi = {
     return tick(result);
   },
 
-  createPost: (text: string, media?: File | null) => {
+  createPost: (text: string, media?: File | File[] | null) => {
     const u = requireMe()!;
+    const files = media == null ? [] : Array.isArray(media) ? media : [media];
     const body = text.trim();
-    if (!body && !media) fail(400, '«текст поста»: минимум 1 символов');
+    if (!body && files.length === 0) fail(400, '«текст поста»: минимум 1 символов');
     if (body.length > 500) fail(400, '«текст поста»: максимум 500 символов');
+    if (files.length > 10) fail(400, 'Слишком много файлов — в записи не больше десяти');
+    if (files.length > 1 && files.some((f) => f.type.startsWith('audio/'))) fail(400, 'В галерее — только фото и видео');
 
+    // objectURL живёт, пока открыта вкладка — ровно столько же, сколько демо.
+    const gallery = files.map((f) => ({
+      url: URL.createObjectURL(f),
+      type: (f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : 'image') as 'image' | 'video' | 'audio',
+      mime: f.type,
+      name: f.name,
+    }));
     const p: DbPost = {
       id: id(), authorId: u.id, body, createdAt: new Date().toISOString(),
-      media: media
-        ? {
-            // objectURL живёт, пока открыта вкладка — ровно столько же, сколько демо.
-            url: URL.createObjectURL(media),
-            type: media.type.startsWith('video/') ? 'video' : media.type.startsWith('audio/') ? 'audio' : 'image',
-            mime: media.type,
-            name: media.name,
-          }
-        : null,
+      media: gallery[0] ?? null,
+      gallery,
     };
     db.posts.push(p);
     notifyPostMentions({ authorId: u.id, postId: p.id, body });
