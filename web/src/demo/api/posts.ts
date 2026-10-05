@@ -60,6 +60,22 @@ export const postsApi = {
     return tick({ post: toPost(p) });
   },
 
+  updatePost: (postId: number, text: string) => {
+    const u = requireMe()!;
+    const p = db.posts.find((x) => x.id === postId);
+    if (!p) fail(404, 'Пост не найден');
+    if (p!.authorId !== u.id) fail(403, 'Изменить можно только свою запись');
+    if (Date.now() - Date.parse(p!.createdAt) > 48 * 60 * 60_000) fail(403, 'Запись можно изменить только в течение 48 часов');
+    const body = text.trim();
+    if (!body && !p!.media) fail(400, '«текст поста»: минимум 1 символов');
+    if (body.length > 500) fail(400, '«текст поста»: максимум 500 символов');
+    if (body !== p!.body) {
+      p!.body = body;
+      p!.editedAt = new Date().toISOString();
+    }
+    return tick({ post: toPost(p!) });
+  },
+
   deletePost: (postId: number) => {
     const u = requireMe()!;
     const p = db.posts.find((x) => x.id === postId);

@@ -45,6 +45,8 @@ export type DbPost = {
   authorId: number;
   body: string;
   createdAt: string;
+  /** Когда правили текст — как posts.edited_at. */
+  editedAt?: string | null;
   media: Media | null;
 };
 

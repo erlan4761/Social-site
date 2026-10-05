@@ -44,6 +44,8 @@ export type Post = {
   id: number;
   body: string;
   createdAt: string;
+  /** Когда текст правили в последний раз; null — не правили. */
+  editedAt?: string | null;
   likeCount: number;
   commentCount: number;
   likedByMe: boolean;
@@ -601,6 +603,10 @@ const realApi = {
   },
 
   deletePost: (id: number) => request<{ ok: true }>(`/posts/${id}`, { method: 'DELETE' }),
+
+  /** Править текст своей записи — двое суток после публикации. */
+  updatePost: (id: number, text: string) =>
+    request<{ post: Post }>(`/posts/${id}`, { method: 'PATCH', body: body({ body: text }) }),
 
   setLike: (id: number, liked: boolean) =>
     request<{ likeCount: number; likedByMe: boolean }>(`/posts/${id}/like`, {
