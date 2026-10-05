@@ -6,6 +6,8 @@ type StreamSource = {
   feed?: 'following';
   /** `YYYY` или `YYYY-MM` — месяц архива, выбранный в профиле. */
   period?: string;
+  /** Ключ хэштега — лента страницы тега. */
+  tag?: string;
   /** Другой источник записей вместо `/posts`. Пока он один — свои закладки. */
   source?: 'bookmarks';
   /** Смена числа перезагружает ленту тем же запросом. Нужна там, где выдача
@@ -15,7 +17,7 @@ type StreamSource = {
 };
 
 /** Loads a paginated stream of posts — the whole feed, one author's, the viewer's subscriptions, or their bookmarks. */
-export function usePostStream({ author, feed, period, source, reloadKey }: StreamSource = {}) {
+export function usePostStream({ author, feed, period, tag, source, reloadKey }: StreamSource = {}) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -31,8 +33,8 @@ export function usePostStream({ author, feed, period, source, reloadKey }: Strea
   const fetchPage = useCallback(
     (cursor?: number | null) => (source === 'bookmarks'
       ? api.bookmarks(cursor)
-      : api.posts({ author, feed, period, cursor })),
-    [author, feed, period, source],
+      : api.posts({ author, feed, period, tag, cursor })),
+    [author, feed, period, tag, source],
   );
 
   useEffect(() => {

@@ -676,3 +676,16 @@ describe('витрина: репосты и цитаты', () => {
     expect((await api.post(quote.id)).post.shared).toEqual({ kind: 'quote', post: null });
   });
 });
+
+describe('витрина: хэштеги', () => {
+  it('лента тега, шапка и популярные — как на сервере', async () => {
+    await api.createPost('Проявил #Плёнка и #ночь');
+    await api.createPost('Ещё про #пленка');
+    expect((await api.posts({ tag: '#ПЛЕНКА' })).posts).toHaveLength(2);
+    expect((await api.posts({ tag: 'ночь' })).posts).toHaveLength(1);
+    await expect(api.posts({ tag: '1' })).rejects.toMatchObject({ status: 400 });
+    expect(await api.tagInfo('пленка')).toEqual({ tag: 'пленка', label: 'плёнка', count: 2 });
+    const { tags } = await api.trendingTags();
+    expect(tags[0]).toMatchObject({ tag: 'пленка', count: 2 });
+  });
+});

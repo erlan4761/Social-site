@@ -29,3 +29,27 @@ describe('текст записи', () => {
     expect(container.textContent).toContain('**не жирный**');
   });
 });
+
+describe('хэштеги в тексте', () => {
+  it('#тег в записи — ссылка на ленту тега; «#1», a#b и якорь — нет', () => {
+    render(
+      <MemoryRouter>
+        <p>
+          <PostText text="Проявил #Плёнка и #ночь_2, но не #1, a#b и https://x.ru/#якорь" hashtags />
+        </p>
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('link', { name: '#Плёнка' })).toHaveAttribute('href', `/tag/${encodeURIComponent('пленка')}`);
+    expect(screen.getByRole('link', { name: '#ночь_2' })).toHaveClass('tag-link');
+    expect(screen.queryByRole('link', { name: '#1' })).toBeNull();
+    expect(screen.queryByRole('link', { name: '#b' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'https://x.ru/#якорь' })).toBeInTheDocument();
+  });
+
+  it('без hashtags (комментарии) — теги просто текст', () => {
+    const { container } = show('Смотрите #плёнка и @nina');
+    expect(screen.queryByRole('link', { name: '#плёнка' })).toBeNull();
+    expect(screen.getByRole('link', { name: '@nina' })).toBeInTheDocument();
+    expect(container.textContent).toBe('Смотрите #плёнка и @nina');
+  });
+});
