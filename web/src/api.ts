@@ -373,6 +373,8 @@ export type NotificationKind =
   | 'comment'
   /** Ответили на ваш комментарий в чужой записи. */
   | 'comment_reply'
+  /** Упомянули через @ в записи или комментарии. */
+  | 'post_mention'
   | 'follow'
   | 'message'
   | 'chat_message'

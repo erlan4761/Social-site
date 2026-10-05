@@ -6,6 +6,19 @@ import { notify, dropNotification } from '../model/notifications';
 
 /** Методы витрины: лента, записи, комментарии, поиск, архив, закладки. */
 
+/** Упоминания в ленте — как notifyPostMentions() на сервере: новые, не больше десяти, без уже уведомлённых. */
+const NAMES_RE = /(^|[^\p{L}\p{N}_@])@([a-z0-9_]{3,20})(?![a-z0-9_])/giu;
+const namesIn = (text: string) => new Set([...text.matchAll(NAMES_RE)].map((m) => m[2].toLowerCase()));
+function notifyPostMentions(input: { authorId: number; postId: number; commentId?: number; body: string; previousBody?: string; skip?: (number | undefined)[] }) {
+  const before = input.previousBody == null ? new Set<string>() : namesIn(input.previousBody);
+  const names = [...namesIn(input.body)].filter((n) => !before.has(n)).slice(0, 10);
+  for (const name of names) {
+    const target = byName(name);
+    if (!target || input.skip?.includes(target.id)) continue;
+    notify({ userId: target.id, actorId: input.authorId, kind: 'post_mention', postId: input.postId, commentId: input.commentId });
+  }
+}
+
 export const postsApi = {
   posts: (opts: { author?: string; cursor?: number | null; feed?: 'following'; period?: string } = {}) => {
     // Блокировка — главный фильтр ленты: и общей, и «по подпискам», и профильной.
@@ -57,10 +70,12 @@ export const postsApi = {
         : null,
     };
     db.posts.push(p);
+    notifyPostMentions({ authorId: u.id, postId: p.id, body });
     return tick({ post: toPost(p) });
   },
 
   updatePost: (postId: number, text: string) => {
+    const before = db.posts.find((x) => x.id === postId)?.body ?? '';
     const u = requireMe()!;
     const p = db.posts.find((x) => x.id === postId);
     if (!p) fail(404, 'Пост не найден');
@@ -72,6 +87,7 @@ export const postsApi = {
     if (body !== p!.body) {
       p!.body = body;
       p!.editedAt = new Date().toISOString();
+      notifyPostMentions({ authorId: u.id, postId, body, previousBody: before });
     }
     return tick({ post: toPost(p!) });
   },
@@ -131,6 +147,7 @@ export const postsApi = {
     if (replied && p && replied.authorId !== p.authorId) {
       notify({ userId: replied.authorId, actorId: u.id, kind: 'comment_reply', postId, commentId: c.id });
     }
+    notifyPostMentions({ authorId: u.id, postId, commentId: c.id, body, skip: [p?.authorId, replied?.authorId] });
     return tick({ comment: toComment(c) });
   },
 

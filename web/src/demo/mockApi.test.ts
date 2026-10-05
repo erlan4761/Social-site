@@ -483,6 +483,18 @@ describe('витрина: подписчики и подписки', () => {
   });
 });
 
+describe('витрина: упоминания в ленте', () => {
+  it('упомянутому — событие; при правке — только новому', async () => {
+    const { post } = await api.createPost('Проявляли с @nina');
+    await api.updatePost(post.id, 'Проявляли с @nina и @marina');
+    await loginAs('nina');
+    expect((await api.notifications()).notifications.filter((n) => n.kind === 'post_mention')).toHaveLength(1);
+    await loginAs('marina');
+    const events = (await api.notifications()).notifications.filter((n) => n.kind === 'post_mention');
+    expect(events.map((n) => n.post?.id)).toEqual([post.id]);
+  });
+});
+
 describe('витрина: предпросмотр ссылок', () => {
   it('карточка только у заготовленной ссылки', async () => {
     expect((await api.linkPreview('https://github.com/erlan4761/Social-site')).preview?.siteName).toBe('GitHub');
