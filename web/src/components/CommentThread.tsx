@@ -5,6 +5,7 @@ import { api, ApiError, type Comment } from '../api';
 import { useSession } from '../session';
 import { timeAgo, fullDate } from '../time';
 import { Monogram } from './Monogram';
+import { PostText } from './PostText';
 import { ReportDialog } from './ReportDialog';
 
 const LIMIT = 300;
@@ -118,7 +119,9 @@ export function CommentThread({ postId, postAuthorId, onCountChange }: Props) {
         {c.replyTo && c.replyTo.id !== root?.id && (
           <p className="comment-reply-to">в ответ: {c.replyTo.author.displayName}</p>
         )}
-        <p className="comment-body">{c.body}</p>
+        <p className="comment-body">
+        <PostText text={c.body} />
+      </p>
 
         {user && (
           <div className="comment-actions">

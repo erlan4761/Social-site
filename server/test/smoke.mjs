@@ -4713,5 +4713,52 @@ check('первая страница — 50 и курсор', flPage1.users?.len
 r = await guest(`/users/${userFlA}/followers?cursor=${flPage1.nextCursor}`);
 check('вторая — оставшиеся, без повторов', namesOf(r) === `${userFlC},${userFlB}` && r.body.nextCursor === null, JSON.stringify(r.body));
 
+console.log('\n— упоминания в ленте —');
+const pmA = makeClient();
+const pmB = makeClient();
+const pmC = makeClient();
+const pmD = makeClient();
+const userPmA = `pma_${stamp}`;
+const userPmB = `pmb_${stamp}`;
+const userPmC = `pmc_${stamp}`;
+const userPmD = `pmd_${stamp}`;
+await legacySignUp(pmA, userPmA, 'Автор');
+await legacySignUp(pmB, userPmB, 'Бета');
+await legacySignUp(pmC, userPmC, 'Гамма');
+await legacySignUp(pmD, userPmD, 'Дельта');
+const pmEvents = async (client) => (await client('/notifications')).body.notifications?.filter((n) => n.kind === 'post_mention') ?? [];
+
+r = await pmA('/posts', { method: 'POST', body: JSON.stringify({ body: `Проявляли с @${userPmB} и @${userPmC.toUpperCase()}. Пишите на a@${userPmD}.ru, @${userPmA} и @nobody_${stamp}` }) });
+const pmPost = r.body.post;
+let pmEv = await pmEvents(pmB);
+check('упомянутому — событие с цитатой записи', pmEv.length === 1 && pmEv[0].actor.username === userPmA && pmEv[0].post?.id === pmPost.id
+  && pmEv[0].post.excerpt.startsWith('Проявляли') && pmEv[0].comment === null, JSON.stringify(pmEv));
+check('логин в любом регистре', (await pmEvents(pmC)).length === 1, '');
+check('адрес почты и сам автор — не упоминание', (await pmEvents(pmD)).length === 0 && (await pmEvents(pmA)).length === 0, '');
+await pmA(`/posts/${pmPost.id}`, { method: 'PATCH', body: JSON.stringify({ body: `Проявляли с @${userPmB}, @${userPmC} и @${userPmD}` }) });
+check('правка — событие только новому', (await pmEvents(pmD)).length === 1 && (await pmEvents(pmB)).length === 1, '');
+
+r = await pmB(`/posts/${pmPost.id}/comments`, { method: 'POST', body: JSON.stringify({ body: `@${userPmA}, а @${userPmC} был?` }) });
+const pmComment = r.body.comment;
+check('автору записи — только «ответил вам», без второго события', (await pmEvents(pmA)).length === 0
+  && (await pmA('/notifications')).body.notifications?.some((n) => n.kind === 'comment' && n.comment?.id === pmComment.id), '');
+pmEv = await pmEvents(pmC);
+check('упомянутому в комментарии — событие с цитатой комментария', pmEv.length === 2 && pmEv[0].comment?.id === pmComment.id
+  && pmEv[0].comment.excerpt.includes('был?'), JSON.stringify(pmEv[0]));
+r = await pmC(`/posts/${pmPost.id}/comments`, { method: 'POST', body: JSON.stringify({ body: `@${userPmB} да`, replyTo: pmComment.id }) });
+check('тому, кому ответили, — только «ответил на ваш комментарий»', (await pmEvents(pmB)).length === 1, '');
+await pmC(`/users/${userPmA}/block`, { method: 'PUT' });
+// Блокировка сама гасит прежние непрочитанные события от заблокированного — считаем от неё.
+const pmAfterBlock = (await pmEvents(pmC)).length;
+await pmA('/posts', { method: 'POST', body: JSON.stringify({ body: `Снова @${userPmC}` }) });
+check('заблокировавшему упоминание не приходит', (await pmEvents(pmC)).length === pmAfterBlock, `${pmAfterBlock}`);
+// Двенадцать упомянутых — событие получают первые десять: упоминание не рассылка.
+const pmMany = Array.from({ length: 12 }, (_, i) => `pmm${i}_${stamp}`);
+const pmInsert = legacyDb.prepare(`INSERT INTO users (username, display_name, bio, email, password_hash, created_at) VALUES (?, ?, '', NULL, '', ?)`);
+for (const name of pmMany) pmInsert.run(name, name, new Date().toISOString());
+r = await pmA('/posts', { method: 'POST', body: JSON.stringify({ body: pmMany.map((n) => '@' + n).join(' ') }) });
+const pmManyEvents = legacyDb.prepare(`SELECT COUNT(*) AS n FROM notifications WHERE kind = 'post_mention' AND post_id = ?`).get(r.body.post.id).n;
+check('двенадцать упомянутых — событий десять, запись опубликована', r.status === 201 && pmManyEvents === 10, `${r.status} ${pmManyEvents}`);
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

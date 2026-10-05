@@ -5,6 +5,7 @@ import { useSession } from '../session';
 import { highlight as markTerms } from '../highlight';
 import { fullDate, plural, timeAgo } from '../time';
 import { CommentThread } from './CommentThread';
+import { PostText } from './PostText';
 import { Monogram } from './Monogram';
 import { ReportDialog } from './ReportDialog';
 
@@ -225,7 +226,7 @@ export function PostRow({ post, fresh, canDelete, openThread = false, highlight,
         ) : (
           post.body && (
             <p className="post-body">
-              {highlight?.length ? markTerms(post.body, highlight) : post.body}
+              {highlight?.length ? markTerms(post.body, highlight) : <PostText text={post.body} />}
             </p>
           )
         )}
