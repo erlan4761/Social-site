@@ -64,6 +64,7 @@ export function Feed() {
               canDelete={post.author.id === user?.id}
               onDelete={stream.remove}
               onPatch={stream.patch}
+              onCreated={stream.prepend}
             />
           ))
         )}

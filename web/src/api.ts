@@ -58,8 +58,16 @@ export type Post = {
   media: Media | null;
   /** Все снимки записи по порядку (до десяти); у записи с одним — он же, что `media`. */
   gallery?: Media[];
+  /** Сколько раз записью поделились — репостами и цитатами вместе. */
+  repostCount?: number;
+  /** Смотрящий сделал репост этой записи. */
+  repostedByMe?: boolean;
+  /** Чистый репост — оригинал целиком; цитата — то, что цитируют. `post: null` — оригинал удалён или скрыт. */
+  shared?: SharedPost | null;
   author: Author;
 };
+
+export type SharedPost = { kind: 'repost' | 'quote'; post: Post | null };
 
 export type Comment = {
   id: number;
@@ -377,6 +385,10 @@ export type NotificationKind =
   | 'comment_reply'
   /** Упомянули через @ в записи или комментарии. */
   | 'post_mention'
+  /** Сделали репост вашей записи. */
+  | 'repost'
+  /** Процитировали вашу запись; `post` — сама цитата. */
+  | 'quote'
   | 'follow'
   | 'message'
   | 'chat_message'
@@ -599,14 +611,15 @@ const realApi = {
   },
 
   /** Text-only posts stay JSON; a file forces multipart. */
-  /** Запись: текст и до десяти фото и видео (или одно аудио). */
-  createPost: (text: string, media?: File | File[] | null) => {
+  /** Запись: текст и до десяти фото и видео (или одно аудио); `quoteOf` — цитата чужой записи. */
+  createPost: (text: string, media?: File | File[] | null, quoteOf?: number | null) => {
     const files = media == null ? [] : Array.isArray(media) ? media : [media];
     if (files.length === 0) {
-      return request<{ post: Post }>('/posts', { method: 'POST', body: body({ body: text }) });
+      return request<{ post: Post }>('/posts', { method: 'POST', body: body(quoteOf ? { body: text, quoteOf } : { body: text }) });
     }
     const form = new FormData();
     form.set('body', text);
+    if (quoteOf) form.set('quoteOf', String(quoteOf));
     for (const file of files) form.append('media', file);
     return request<{ post: Post }>('/posts', { method: 'POST', body: form });
   },
@@ -616,6 +629,12 @@ const realApi = {
   /** Править текст своей записи — двое суток после публикации. */
   updatePost: (id: number, text: string) =>
     request<{ post: Post }>(`/posts/${id}`, { method: 'PATCH', body: body({ body: text }) }),
+
+  /** Репост — переключатель, как отметка; `postId` — оригинал (репост репоста — репост оригинала). */
+  setRepost: (id: number, on: boolean) =>
+    request<{ postId: number; repostCount: number; repostedByMe: boolean }>(`/posts/${id}/repost`, {
+      method: on ? 'PUT' : 'DELETE',
+    }),
 
   setLike: (id: number, liked: boolean) =>
     request<{ likeCount: number; likedByMe: boolean }>(`/posts/${id}/like`, {

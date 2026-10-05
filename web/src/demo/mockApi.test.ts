@@ -651,3 +651,28 @@ describe('витрина: несколько фото в записи', () => {
     if (old) expect(old.gallery).toEqual([old.media]);
   });
 });
+
+describe('витрина: репосты и цитаты', () => {
+  it('репост — переключатель; цитата — своя запись; удалённый оригинал уносит репосты', async () => {
+    const { post: original } = await api.createPost('Ночная съёмка');
+    await loginAs('nina');
+    expect((await api.setRepost(original.id, true)).repostCount).toBe(1);
+    expect((await api.setRepost(original.id, true)).repostCount).toBe(1);
+    const row = (await api.posts({ author: 'nina' })).posts[0];
+    expect(row.shared?.kind).toBe('repost');
+    expect(row.shared?.post?.id).toBe(original.id);
+    expect((await api.setRepost(row.id, true)).postId).toBe(original.id);
+    await expect(api.updatePost(row.id, 'Допишу')).rejects.toMatchObject({ status: 400 });
+    const { post: quote } = await api.createPost('Красиво', null, original.id);
+    expect(quote.shared).toMatchObject({ kind: 'quote', post: { id: original.id } });
+    await expect(api.createPost('В пустоту', null, 999999)).rejects.toMatchObject({ status: 404 });
+    await loginAs('demo');
+    const kinds = (await api.notifications()).notifications.map((n) => n.kind);
+    expect(kinds.filter((k) => k === 'repost')).toHaveLength(1);
+    expect(kinds.filter((k) => k === 'quote')).toHaveLength(1);
+    expect((await api.post(original.id)).post.repostCount).toBe(2);
+    await api.deletePost(original.id);
+    await expect(api.post(row.id)).rejects.toMatchObject({ status: 404 });
+    expect((await api.post(quote.id)).post.shared).toEqual({ kind: 'quote', post: null });
+  });
+});

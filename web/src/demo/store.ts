@@ -49,6 +49,10 @@ export type DbPost = {
   editedAt?: string | null;
   /** Все снимки по порядку — как post_media. */
   gallery?: Media[];
+  /** Чистый репост — как posts.repost_of_id (уходит вместе с оригиналом). */
+  repostOf?: number | null;
+  /** Цитата — как posts.quote_of_id (остаётся, когда оригинала нет). */
+  quoteOf?: number | null;
   media: Media | null;
 };
 

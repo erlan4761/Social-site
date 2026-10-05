@@ -1,7 +1,7 @@
 import { type ArchiveMonth, type Page } from '../../api';
 import { type DbPost, type DbComment, db, id, tick, fail } from '../store';
 import { byName, me, requireMe, hidden, visiblePosts } from '../model/people';
-import { searchTerms, matchesTerms, visibleComments, toPost, toComment, PAGE, PERIOD_RE, type SearchPage } from '../model/posts';
+import { searchTerms, matchesTerms, visibleComments, toPost, toComment, repostCountOf, PAGE, PERIOD_RE, type SearchPage } from '../model/posts';
 import { notify, dropNotification } from '../model/notifications';
 
 /** Методы витрины: лента, записи, комментарии, поиск, архив, закладки. */
@@ -51,8 +51,15 @@ export const postsApi = {
     return tick(result);
   },
 
-  createPost: (text: string, media?: File | File[] | null) => {
+  createPost: (text: string, media?: File | File[] | null, quoteOf?: number | null) => {
     const u = requireMe()!;
+    // Цитата репоста — цитата оригинала, как на сервере.
+    let quoted: DbPost | undefined;
+    if (quoteOf != null) {
+      quoted = db.posts.find((x) => x.id === quoteOf);
+      if (quoted?.repostOf != null) quoted = db.posts.find((x) => x.id === quoted!.repostOf);
+      if (!quoted || hidden(quoted.authorId)) fail(404, 'Цитируемая запись не найдена');
+    }
     const files = media == null ? [] : Array.isArray(media) ? media : [media];
     const body = text.trim();
     if (!body && files.length === 0) fail(400, '«текст поста»: минимум 1 символов');
@@ -71,9 +78,11 @@ export const postsApi = {
       id: id(), authorId: u.id, body, createdAt: new Date().toISOString(),
       media: gallery[0] ?? null,
       gallery,
+      quoteOf: quoted?.id ?? null,
     };
     db.posts.push(p);
-    notifyPostMentions({ authorId: u.id, postId: p.id, body });
+    if (quoted) notify({ userId: quoted.authorId, actorId: u.id, kind: 'quote', postId: p.id });
+    notifyPostMentions({ authorId: u.id, postId: p.id, body, skip: quoted ? [quoted.authorId] : [] });
     return tick({ post: toPost(p) });
   },
 
@@ -83,6 +92,7 @@ export const postsApi = {
     const p = db.posts.find((x) => x.id === postId);
     if (!p) fail(404, 'Пост не найден');
     if (p!.authorId !== u.id) fail(403, 'Изменить можно только свою запись');
+    if (p!.repostOf != null) fail(400, 'Репост не правится — его можно только отменить');
     if (Date.now() - Date.parse(p!.createdAt) > 48 * 60 * 60_000) fail(403, 'Запись можно изменить только в течение 48 часов');
     const body = text.trim();
     if (!body && !p!.media) fail(400, '«текст поста»: минимум 1 символов');
@@ -100,13 +110,36 @@ export const postsApi = {
     const p = db.posts.find((x) => x.id === postId);
     if (!p) fail(404, 'Пост не найден');
     if (p!.authorId !== u.id) fail(403, 'Это не ваш пост');
-    db.posts = db.posts.filter((x) => x.id !== postId);
-    db.comments = db.comments.filter((c) => c.postId !== postId);
-    db.likes = db.likes.filter((l) => l.postId !== postId);
-    db.bookmarks = db.bookmarks.filter((b) => b.postId !== postId);
+    // Удалённый свой репост уносит непрочитанное событие о себе.
+    const original = p!.repostOf != null ? db.posts.find((x) => x.id === p!.repostOf) : undefined;
+    if (original) dropNotification({ userId: original.authorId, actorId: u.id, kind: 'repost', postId: original.id });
+    // Репосты уходят вместе с оригиналом — каскад repost_of_id; цитаты остаются.
+    const gone = new Set([postId, ...db.posts.filter((x) => x.repostOf === postId).map((x) => x.id)]);
+    db.posts = db.posts.filter((x) => !gone.has(x.id));
+    db.comments = db.comments.filter((c) => !gone.has(c.postId));
+    db.likes = db.likes.filter((l) => !gone.has(l.postId));
+    db.bookmarks = db.bookmarks.filter((b) => !gone.has(b.postId));
     // События о записи ведут туда, где больше ничего нет — каскад, как в схеме.
-    db.notifications = db.notifications.filter((n) => n.postId !== postId);
+    db.notifications = db.notifications.filter((n) => n.postId == null || !gone.has(n.postId));
     return tick({ ok: true as const });
+  },
+
+  setRepost: (postId: number, on: boolean) => {
+    const u = requireMe()!;
+    let target = db.posts.find((x) => x.id === postId);
+    if (target?.repostOf != null) target = db.posts.find((x) => x.id === target!.repostOf);
+    if (!target || (on && hidden(target.authorId))) fail(404, 'Пост не найден');
+    const original = target!;
+    const existing = db.posts.find((x) => x.repostOf === original.id && x.authorId === u.id);
+    const event = { userId: original.authorId, actorId: u.id, kind: 'repost' as const, postId: original.id };
+    if (on) {
+      if (!existing) db.posts.push({ id: id(), authorId: u.id, body: '', createdAt: new Date().toISOString(), media: null, repostOf: original.id });
+      notify(event);
+    } else {
+      if (existing) db.posts = db.posts.filter((x) => x !== existing);
+      dropNotification(event);
+    }
+    return tick({ postId: original.id, repostCount: repostCountOf(original.id), repostedByMe: on });
   },
 
   setLike: (postId: number, liked: boolean) => {
@@ -166,7 +199,7 @@ export const postsApi = {
   },
 
   post: (postId: number) => {
-    const p = db.posts.find((x) => x.id === postId);
+    const p = visiblePosts().find((x) => x.id === postId);
     // Мусорный id, удалённая запись и запись заблокированного — одно и то же
     // «не найдено»: страница /p/<что угодно> показывает обычное пустое место.
     if (!p || hidden(p.authorId)) fail(404, 'Пост не найден');
