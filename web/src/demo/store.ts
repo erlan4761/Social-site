@@ -6,6 +6,8 @@ export type DbUser = {
   id: number;
   /** Закреплённая запись профиля — как users.pinned_post_id. */
   pinnedPostId?: number | null;
+  /** Закрытый профиль — как users.private. */
+  private?: boolean;
   username: string;
   displayName: string;
   bio: string;
@@ -193,6 +195,8 @@ export const db = {
   comments: [] as DbComment[],
   likes: [] as { userId: number; postId: number }[],
   follows: [] as { followerId: number; followeeId: number }[],
+  /** Заявки на подписку на закрытый профиль — как follow_requests. */
+  followRequests: [] as { requesterId: number; targetId: number; createdAt: string }[],
   messages: [] as DbMessage[],
   resets: [] as { token: string; userId: number; expiresAt: number; usedAt: number | null }[],
   notifications: [] as DbNotification[],

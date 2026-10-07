@@ -1,6 +1,6 @@
 import { type BlockedUser, type ReportReason, type ReportTargetType } from '../../api';
 import { type DbUser, db, tick, fail } from '../store';
-import { byId, byName, requireMe, author, blockedPair, hidden } from '../model/people';
+import { byId, byName, requireMe, author, blockedPair, hidden, canSeeAuthor } from '../model/people';
 import { publicUser, toPost } from '../model/posts';
 import { notify, dropNotification } from '../model/notifications';
 import { findByPhones, visiblePhone } from '../model/phoneBook';
@@ -38,7 +38,7 @@ export const peopleApi = {
     const target = u!;
     // Профиль отдаётся всегда, но с флагами: записей у заблокированного будет
     // ноль, подписаться нельзя, написать нельзя.
-    const pinnedPost = target.pinnedPostId != null && !hidden(target.id)
+    const pinnedPost = target.pinnedPostId != null && !hidden(target.id) && canSeeAuthor(db.meId, target.id)
       ? db.posts.find((x) => x.id === target.pinnedPostId)
       : undefined;
     return tick({
@@ -48,6 +48,9 @@ export const peopleApi = {
         blockedByMe: db.blocks.some((b) => b.blockerId === db.meId && b.blockedId === target.id),
         blocksMe: db.blocks.some((b) => b.blockerId === target.id && b.blockedId === db.meId),
         phone: visiblePhone(target, db.meId),
+        private: Boolean(target.private),
+        canSeePosts: canSeeAuthor(db.meId, target.id),
+        requestedByMe: db.followRequests.some((r) => r.requesterId === db.meId && r.targetId === target.id),
       },
     });
   },
@@ -143,6 +146,24 @@ export const peopleApi = {
     if (target!.id === u.id) fail(400, 'Нельзя подписаться на себя');
     if (blockedPair(u.id, target!.id)) fail(400, 'Действие с этим пользователем недоступно');
 
+    // Закрытый профиль: не подписка, а заявка — как на сервере.
+    const already = db.follows.some((f) => f.followerId === u.id && f.followeeId === target!.id);
+    if (following && target!.private && !already) {
+      if (!db.followRequests.some((r) => r.requesterId === u.id && r.targetId === target!.id)) {
+        db.followRequests.push({ requesterId: u.id, targetId: target!.id, createdAt: new Date().toISOString() });
+      }
+      notify({ userId: target!.id, actorId: u.id, kind: 'follow_request' });
+      return tick({
+        followedByMe: false,
+        requested: true,
+        followerCount: db.follows.filter((f) => f.followeeId === target!.id).length,
+      });
+    }
+    if (!following) {
+      db.followRequests = db.followRequests.filter((r) => !(r.requesterId === u.id && r.targetId === target!.id));
+      dropNotification({ userId: target!.id, actorId: u.id, kind: 'follow_request' });
+    }
+
     db.follows = db.follows.filter((f) => !(f.followerId === u.id && f.followeeId === target!.id));
     if (following) db.follows.push({ followerId: u.id, followeeId: target!.id });
 
@@ -152,8 +173,60 @@ export const peopleApi = {
 
     return tick({
       followedByMe: following,
+      requested: false,
       followerCount: db.follows.filter((f) => f.followeeId === target!.id).length,
     });
+  },
+
+  // ─ Закрытый профиль и заявки — как routes/users.js и account.js ─────────
+
+  followRequests: () => {
+    const u = requireMe()!;
+    const users = db.followRequests
+      .filter((r) => r.targetId === u.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((r) => {
+        const who = byId(r.requesterId)!;
+        return { ...author(who), bio: who.bio, createdAt: who.createdAt, requestedAt: r.createdAt };
+      });
+    return tick({ users });
+  },
+
+  acceptFollowRequest: (username: string) => {
+    const u = requireMe()!;
+    const who = byName(username);
+    if (!who || !db.followRequests.some((r) => r.requesterId === who.id && r.targetId === u.id)) fail(404, 'Заявки нет');
+    acceptRequest(who!.id, u.id);
+    return tick({ ok: true as const, followerCount: db.follows.filter((f) => f.followeeId === u.id).length });
+  },
+
+  declineFollowRequest: (username: string) => {
+    const u = requireMe()!;
+    const who = byName(username);
+    if (!who || !db.followRequests.some((r) => r.requesterId === who.id && r.targetId === u.id)) fail(404, 'Заявки нет');
+    db.followRequests = db.followRequests.filter((r) => !(r.requesterId === who!.id && r.targetId === u.id));
+    dropNotification({ userId: u.id, actorId: who!.id, kind: 'follow_request' });
+    return tick({ ok: true as const });
+  },
+
+  removeFollower: (username: string) => {
+    const u = requireMe()!;
+    const who = byName(username);
+    if (!who) fail(404, 'Пользователь не найден');
+    db.follows = db.follows.filter((f) => !(f.followerId === who!.id && f.followeeId === u.id));
+    return tick({ ok: true as const, followerCount: db.follows.filter((f) => f.followeeId === u.id).length });
+  },
+
+  setPrivateProfile: (on: boolean) => {
+    const u = requireMe()!;
+    u.private = on;
+    let accepted = 0;
+    if (!on) {
+      const pending = db.followRequests.filter((r) => r.targetId === u.id);
+      for (const r of pending) acceptRequest(r.requesterId, u.id);
+      accepted = pending.length;
+    }
+    return tick({ privateProfile: on, accepted });
   },
 
   // ─ Блокировки и жалобы ────────────────────────────────────────────────
@@ -175,6 +248,9 @@ export const peopleApi = {
       db.follows = db.follows.filter(
         (f) => !((f.followerId === u.id && f.followeeId === other.id)
           || (f.followerId === other.id && f.followeeId === u.id)),
+      );
+      db.followRequests = db.followRequests.filter(
+        (r) => !((r.requesterId === u.id && r.targetId === other.id) || (r.requesterId === other.id && r.targetId === u.id)),
       );
       db.notifications = db.notifications.filter(
         (n) => n.readAt !== null
@@ -250,3 +326,12 @@ export const peopleApi = {
     return tick({ ok: true as const, alreadyReported: already });
   },
 };
+
+/** Заявка принята: подписка и событие заявителю. */
+function acceptRequest(requesterId: number, targetId: number) {
+  if (!db.follows.some((f) => f.followerId === requesterId && f.followeeId === targetId)) {
+    db.follows.push({ followerId: requesterId, followeeId: targetId });
+  }
+  db.followRequests = db.followRequests.filter((r) => !(r.requesterId === requesterId && r.targetId === targetId));
+  notify({ userId: requesterId, actorId: targetId, kind: 'follow_accept' });
+}

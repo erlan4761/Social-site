@@ -1,7 +1,7 @@
 import { type ArchiveMonth, type Page, type TagStat } from '../../api';
 import { tagFromParam, tagsIn } from '../../hashtags';
 import { type DbPost, type DbComment, db, id, tick, fail } from '../store';
-import { byName, me, requireMe, hidden, visiblePosts } from '../model/people';
+import { byId, byName, me, requireMe, hidden, postHidden, canSeeAuthor, visiblePosts } from '../model/people';
 import { searchTerms, matchesTerms, visibleComments, toPost, toComment, repostCountOf, PAGE, PERIOD_RE, type SearchPage } from '../model/posts';
 import { notify, dropNotification } from '../model/notifications';
 
@@ -16,6 +16,8 @@ function notifyPostMentions(input: { authorId: number; postId: number; commentId
   for (const name of names) {
     const target = byName(name);
     if (!target || input.skip?.includes(target.id)) continue;
+    const postAuthor = db.posts.find((x) => x.id === input.postId)?.authorId ?? input.authorId;
+    if (!canSeeAuthor(target.id, postAuthor)) continue;
     notify({ userId: target.id, actorId: input.authorId, kind: 'post_mention', postId: input.postId, commentId: input.commentId });
   }
 }
@@ -65,7 +67,8 @@ export const postsApi = {
     if (quoteOf != null) {
       quoted = db.posts.find((x) => x.id === quoteOf);
       if (quoted?.repostOf != null) quoted = db.posts.find((x) => x.id === quoted!.repostOf);
-      if (!quoted || hidden(quoted.authorId)) fail(404, 'Цитируемая запись не найдена');
+      if (!quoted || postHidden(quoted)) fail(404, 'Цитируемая запись не найдена');
+      if (byId(quoted!.authorId)?.private) fail(403, 'Записи закрытого профиля нельзя репостить и цитировать');
     }
     const files = media == null ? [] : Array.isArray(media) ? media : [media];
     const body = text.trim();
@@ -174,8 +177,9 @@ export const postsApi = {
     const u = requireMe()!;
     let target = db.posts.find((x) => x.id === postId);
     if (target?.repostOf != null) target = db.posts.find((x) => x.id === target!.repostOf);
-    if (!target || (on && hidden(target.authorId))) fail(404, 'Пост не найден');
+    if (!target || (on && postHidden(target))) fail(404, 'Пост не найден');
     const original = target!;
+    if (on && byId(original.authorId)?.private) fail(403, 'Записи закрытого профиля нельзя репостить и цитировать');
     const existing = db.posts.find((x) => x.repostOf === original.id && x.authorId === u.id);
     const event = { userId: original.authorId, actorId: u.id, kind: 'repost' as const, postId: original.id };
     if (on) {
@@ -190,6 +194,8 @@ export const postsApi = {
 
   setLike: (postId: number, liked: boolean) => {
     const u = requireMe()!;
+    const liked0 = db.posts.find((x) => x.id === postId);
+    if (!liked0 || !canSeeAuthor(u.id, liked0.authorId)) fail(404, 'Пост не найден');
     db.likes = db.likes.filter((l) => !(l.postId === postId && l.userId === u.id));
     if (liked) db.likes.push({ userId: u.id, postId });
 
@@ -206,7 +212,7 @@ export const postsApi = {
   comments: (postId: number) => {
     // Ветка под скрытой записью была бы дверью к ней самой.
     const p = db.posts.find((x) => x.id === postId);
-    if (p && hidden(p.authorId)) fail(404, 'Пост не найден');
+    if (p && postHidden(p)) fail(404, 'Пост не найден');
     return tick({ comments: visibleComments(postId).sort((a, b) => a.id - b.id).map(toComment) });
   },
 
@@ -217,6 +223,7 @@ export const postsApi = {
     if (body.length > 300) fail(400, '«текст комментария»: максимум 300 символов');
 
     const p = db.posts.find((x) => x.id === postId);
+    if (p && !canSeeAuthor(u.id, p.authorId)) fail(404, 'Пост не найден');
     if (p && hidden(p.authorId)) fail(403, 'Комментировать этот пост нельзя');
 
     const replied = replyTo != null ? db.comments.find((x) => x.id === replyTo && x.postId === postId) : undefined;
@@ -318,7 +325,7 @@ export const postsApi = {
     // блокировки стоит на чтении, строка закладки остаётся, и требуй мы
     // видимости на удалении — такая закладка застряла бы навсегда.
     // Сверено с BE-03 (`.team/inbox/to-frontend.md`).
-    if (on && hidden(p!.authorId)) fail(404, 'Пост не найден');
+    if (on && postHidden(p!)) fail(404, 'Пост не найден');
 
     const saved = db.bookmarks.find((b) => b.userId === u.id && b.postId === postId);
     // Идемпотентно: повтор не создаёт вторую строку и не поднимает закладку
@@ -343,7 +350,7 @@ export const postsApi = {
       .filter((b) => b.userId === u.id)
       .filter((b) => {
         const post = db.posts.find((x) => x.id === b.postId);
-        return post != null && !hidden(post.authorId);
+        return post != null && !postHidden(post);
       })
       .sort((a, b) => b.id - a.id);
 

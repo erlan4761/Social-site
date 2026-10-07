@@ -378,3 +378,9 @@
 .follow-who .follow-bio { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .follow-person:hover strong { text-decoration: underline; text-underline-offset: 2px; }
 .follow-more { margin: var(--s-3) auto 0; display: block; }
+
+/* Закрытый профиль: замок рядом с именем — тихо, цветом второго плана. */
+.profile-lock { display: inline-flex; vertical-align: middle; margin-left: 0.5rem; color: var(--ink-3); }
+
+/* Заявки на подписку: «Принять» и «Отклонить» в одной строке с человеком. */
+.follow-people.requests li { flex-wrap: wrap; }

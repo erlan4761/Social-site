@@ -180,3 +180,12 @@ describe('закреплённая запись', () => {
     expect(screen.getByText('Закреплённая запись')).toBeInTheDocument();
   });
 });
+
+describe('запись закрытого профиля', () => {
+  it('поделиться нельзя — кнопка неактивна с объяснением', () => {
+    show(post({ author: { id: 2, username: 'nina', displayName: 'Нина', avatarUrl: null, private: true } }));
+    const share = screen.getByRole('button', { name: 'Поделиться' });
+    expect(share).toBeDisabled();
+    expect(share).toHaveAttribute('title', 'Записи закрытого профиля не репостят');
+  });
+});

@@ -54,5 +54,14 @@ export const blockedPair = (aId: number, bId: number) =>
 /** Скрыт ли автор от того, кто сейчас смотрит. Для гостя — никогда. */
 export const hidden = (authorId: number) => db.meId != null && blockedPair(db.meId, authorId);
 
+/** Закрытый профиль: записи видят автор и одобренные подписчики — как privacy.js. */
+export const canSeeAuthor = (viewerId: number | null, authorId: number) => {
+  if (!byId(authorId)?.private || viewerId === authorId) return true;
+  return viewerId != null && db.follows.some((f) => f.followerId === viewerId && f.followeeId === authorId);
+};
+
+/** Скрыта ли запись от смотрящего: блокировка или закрытый от него автор. */
+export const postHidden = (p: { authorId: number }) => hidden(p.authorId) || !canSeeAuthor(db.meId, p.authorId);
+
 export const visiblePosts = () =>
-  db.posts.filter((p) => !hidden(p.authorId) && (p.repostOf == null || db.posts.some((o) => o.id === p.repostOf && !hidden(o.authorId))));
+  db.posts.filter((p) => !postHidden(p) && (p.repostOf == null || db.posts.some((o) => o.id === p.repostOf && !postHidden(o))));

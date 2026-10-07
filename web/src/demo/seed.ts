@@ -15,6 +15,7 @@ export function seed() {
   db.resets = [];
   db.notifications = [];
   db.blocks = [];
+  db.followRequests = [];
   db.bookmarks = [];
   db.reports = [];
   db.chats = [];

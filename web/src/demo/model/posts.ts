@@ -1,6 +1,6 @@
 import { type Comment, type Post, type User } from '../../api';
 import { type DbUser, type DbPost, type DbComment, db } from '../store';
-import { byId, author, hidden, visiblePosts } from './people';
+import { byId, author, hidden, postHidden, visiblePosts } from './people';
 
 /** Записи, комментарии и поиск по ним — как posts.js и search.js. */
 
@@ -60,7 +60,7 @@ function sharedOf(p: DbPost, depth: number): Post['shared'] {
   if (target == null) return null;
   const kind = p.repostOf != null ? 'repost' : 'quote';
   const original = db.posts.find((x) => x.id === target);
-  if (depth >= 2 || !original || hidden(original.authorId)) return { kind, post: null };
+  if (depth >= 2 || !original || postHidden(original)) return { kind, post: null };
   return { kind, post: postAt(original, depth + 1) };
 }
 
@@ -82,7 +82,7 @@ const postAt = (p: DbPost, depth: number): Post => ({
   repostedByMe: db.posts.some((x) => x.repostOf === p.id && x.authorId === db.meId),
   pinned: byId(p.authorId)?.pinnedPostId === p.id,
   shared: sharedOf(p, depth),
-  author: author(byId(p.authorId)!),
+  author: { ...author(byId(p.authorId)!), ...(byId(p.authorId)?.private ? { private: true } : {}) },
 });
 
 export const toComment = (c: DbComment): Comment => {

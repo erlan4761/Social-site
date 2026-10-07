@@ -73,15 +73,34 @@ export function FollowListDialog({ username, side: initial, counts, onClose, onC
     }
   }
 
+  // Свой список подписчиков: у каждого — «Убрать». Нужно прежде всего закрытому
+  // профилю: заявку приняли по ошибке — подписку можно снять.
+  const ownFollowers = side === 'followers' && user?.username === username;
+
   async function toggle(person: FollowEntry) {
     setBusy(person.id);
     setError(null);
     try {
-      const res = await api.setFollow(person.username, !person.followedByMe);
-      setList((prev) => prev?.map((x) => (x.id === person.id ? { ...x, followedByMe: res.followedByMe } : x)) ?? null);
+      // Заявка на закрытый профиль отзывается той же кнопкой.
+      const res = await api.setFollow(person.username, !(person.followedByMe || person.requestedByMe));
+      setList((prev) => prev?.map((x) => (x.id === person.id ? { ...x, followedByMe: res.followedByMe, requestedByMe: Boolean(res.requested) } : x)) ?? null);
       onChanged?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось изменить подписку');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function remove(person: FollowEntry) {
+    setBusy(person.id);
+    setError(null);
+    try {
+      await api.removeFollower(person.username);
+      setList((prev) => prev?.filter((x) => x.id !== person.id) ?? null);
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось убрать подписчика');
     } finally {
       setBusy(null);
     }
@@ -131,13 +150,24 @@ export function FollowListDialog({ username, side: initial, counts, onClose, onC
                 </Link>
                 {user && user.id !== p.id && (
                   <button
-                    className={p.followedByMe ? 'btn ghost small' : 'btn small'}
+                    className={p.followedByMe || p.requestedByMe ? 'btn ghost small' : 'btn small'}
                     type="button"
                     disabled={busy === p.id}
                     aria-label={p.followedByMe ? `Отписаться от ${p.displayName}` : `Подписаться на ${p.displayName}`}
                     onClick={() => void toggle(p)}
                   >
-                    {p.followedByMe ? 'Вы подписаны' : 'Подписаться'}
+                    {p.followedByMe ? 'Вы подписаны' : p.requestedByMe ? 'Заявка отправлена' : 'Подписаться'}
+                  </button>
+                )}
+                {ownFollowers && (
+                  <button
+                    className="post-delete"
+                    type="button"
+                    disabled={busy === p.id}
+                    aria-label={`Убрать ${p.displayName} из подписчиков`}
+                    onClick={() => void remove(p)}
+                  >
+                    Убрать
                   </button>
                 )}
               </li>

@@ -73,7 +73,7 @@ export function notify(input: NotifyInput) {
 
   // Лайк и подписка: включение-выключение не должно быть способом дёргать
   // человека бесконечно.
-  if ((kind === 'like' || kind === 'follow' || kind === 'repost') && db.notifications.some(sameObject)) return;
+  if ((kind === 'like' || kind === 'follow' || kind === 'repost' || kind === 'follow_request') && db.notifications.some(sameObject)) return;
 
   // Сообщения схлопываются: на диалог или чат приходится не больше одного
   // непрочитанного события, иначе лента станет дублем переписки.
