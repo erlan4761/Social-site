@@ -610,3 +610,7 @@ a.post-quote:focus-visible { outline: 3px solid var(--accent); outline-offset: 2
   border-radius: 2px;
   background: var(--accent);
 }
+
+/* Отслеживаемые теги над вкладкой «Подписки» и кнопка на странице тега. */
+.followed-tags { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-3); margin: 0 0 var(--s-4); font-size: var(--t-meta); color: var(--ink-3); }
+.tag-head-actions { display: inline-flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; }

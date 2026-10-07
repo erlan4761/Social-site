@@ -3,6 +3,7 @@ import { Composer } from '../components/Composer';
 import { PostRow } from '../components/PostRow';
 import { SuggestedPeople } from '../components/SuggestedPeople';
 import { ScheduledPostsBar } from '../components/ScheduledPosts';
+import { FollowedTags } from '../components/FollowedTags';
 import { useSession } from '../session';
 import { usePostStream } from '../usePostStream';
 
@@ -43,6 +44,7 @@ export function Feed() {
       <div className="rail">
         <Composer onPublished={stream.prepend} onScheduled={() => setQueueVersion((v) => v + 1)} />
         <ScheduledPostsBar version={queueVersion} onPublished={stream.prepend} onDue={onDue} />
+        {tab === 'following' && <FollowedTags />}
 
         {stream.error && <p className="error">{stream.error}</p>}
 

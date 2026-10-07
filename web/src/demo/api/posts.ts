@@ -155,7 +155,9 @@ export const postsApi = {
     if (opts.feed === 'following') {
       if (!me()) fail(401, 'Войдите, чтобы смотреть подписки');
       const mine = db.follows.filter((f) => f.followerId === db.meId).map((f) => f.followeeId);
-      list = list.filter((p) => p.authorId === db.meId || mine.includes(p.authorId));
+      // И записи с тегами, за которыми человек следит.
+      const tags = new Set(db.tagFollows.filter((f) => f.userId === db.meId).map((f) => f.tag));
+      list = list.filter((p) => p.authorId === db.meId || mine.includes(p.authorId) || tagsIn(p.body).some((x) => tags.has(x.tag)));
     }
     if (opts.cursor != null) list = list.filter((p) => p.id < opts.cursor!);
 
@@ -258,6 +260,27 @@ export const postsApi = {
     return tick({ ok: true as const });
   },
 
+  followedTags: () => {
+    const u = requireMe()!;
+    const tags = db.tagFollows
+      .filter((f) => f.userId === u.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((f) => {
+        const labels = visiblePosts().flatMap((p) => tagsIn(p.body).filter((x) => x.tag === f.tag).map((x) => x.label));
+        return { tag: f.tag, label: labels.reduce((best, l) => (l > best ? l : best), labels[0] ?? f.tag) };
+      });
+    return tick({ tags });
+  },
+
+  setTagFollow: (raw: string, on: boolean) => {
+    const u = requireMe()!;
+    const tag = tagFromParam(raw);
+    if (!tag) fail(400, 'Некорректный тег');
+    db.tagFollows = db.tagFollows.filter((f) => !(f.userId === u.id && f.tag === tag));
+    if (on) db.tagFollows.push({ userId: u.id, tag: tag!, createdAt: new Date().toISOString() });
+    return tick({ followedByMe: on });
+  },
+
   // Таблицы тегов у витрины нет: теги считаются из текста на лету — записей мало.
   trendingTags: () => {
     const since = Date.now() - 7 * 24 * 60 * 60_000;
@@ -281,7 +304,8 @@ export const postsApi = {
     const labels = visiblePosts().flatMap((p) => tagsIn(p.body).filter((x) => x.tag === tag).map((x) => x.label));
     // Подпись — «старшая» строка, как MAX(label) на сервере: написание с «ё» побеждает.
     const label = labels.reduce((best, l) => (l > best ? l : best), labels[0] ?? raw.replace(/^#/, '').toLowerCase());
-    return tick({ tag: tag!, label, count: labels.length });
+    const followedByMe = db.tagFollows.some((f) => f.userId === db.meId && f.tag === tag);
+    return tick({ tag: tag!, label, count: labels.length, followedByMe });
   },
 
   setPin: (postId: number, on: boolean) => {

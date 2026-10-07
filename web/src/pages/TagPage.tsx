@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, type TagStat } from '../api';
 import { PostRow } from '../components/PostRow';
 import { TrendingTags } from '../components/TrendingTags';
+import { TagFollowButton } from '../components/FollowedTags';
 import { tagFromParam } from '../hashtags';
 import { useSession } from '../session';
 import { plural } from '../time';
@@ -56,9 +57,12 @@ function TagFeed({ tag, raw }: { tag: string; raw: string }) {
     <>
       <div className="events-top">
         <h1 className="page-title tag-title">#{label}</h1>
-        <Link className="btn ghost small" to="/">
-          Вернуться в ленту
-        </Link>
+        <span className="tag-head-actions">
+          {user && <TagFollowButton tag={tag} initial={Boolean(info?.followedByMe)} />}
+          <Link className="btn ghost small" to="/">
+            Вернуться в ленту
+          </Link>
+        </span>
       </div>
 
       {info && info.count > 0 && (
