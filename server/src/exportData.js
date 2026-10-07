@@ -31,6 +31,10 @@ export function exportFor(userId) {
         .map((m) => ({ type: m.type, url: publicUrl('media', m.path) })),
     }));
 
+  // Отложенные записи — свои и ещё не опубликованные: тоже ваши данные.
+  const scheduledPosts = db.prepare('SELECT body, send_at FROM scheduled_posts WHERE author_id = ? ORDER BY send_at').all(userId)
+    .map((s) => ({ body: s.body, sendAt: s.send_at }));
+
   const comments = db.prepare(`
     SELECT c.id, c.post_id, c.body, c.created_at FROM comments c WHERE c.author_id = ? ORDER BY c.id
   `).all(userId).map((c) => ({ id: c.id, postId: c.post_id, body: c.body, createdAt: c.created_at }));
@@ -88,6 +92,7 @@ export function exportFor(userId) {
     },
     privacy: { lastSeen: u.last_seen_privacy, phoneFind: u.phone_find, phoneShow: u.phone_show },
     posts,
+    scheduledPosts,
     comments,
     likes: db.prepare('SELECT post_id, created_at FROM likes WHERE user_id = ? ORDER BY created_at').all(userId)
       .map((l) => ({ postId: l.post_id, at: l.created_at })),

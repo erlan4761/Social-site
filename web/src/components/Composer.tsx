@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, type MediaKind, type Post } from '../api';
 import { useSession } from '../session';
 import { Monogram } from './Monogram';
+import { Icon } from './Icon';
+import { ScheduleDialog } from './Scheduled';
+import { fullDate } from '../time';
 
 const LIMIT = 500;
 const MAX_BYTES = 40 * 1024 * 1024;
@@ -33,10 +36,14 @@ function Clip() {
   );
 }
 
-export function Composer({ onPublished }: { onPublished: (post: Post) => void }) {
+export function Composer({ onPublished, onScheduled }: { onPublished: (post: Post) => void; onScheduled?: () => void }) {
   const { user } = useSession();
   const [text, setText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
+  /** Окно «Опубликовать позже». */
+  const [scheduling, setScheduling] = useState(false);
+  /** «Запись выйдет …» — после того как отложили. */
+  const [scheduledNote, setScheduledNote] = useState<string | null>(null);
   const [previews, setPreviews] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -89,8 +96,20 @@ export function Composer({ onPublished }: { onPublished: (post: Post) => void })
     if (fileInput.current) fileInput.current.value = '';
   }
 
+  // Отложить можно только текст — как и сообщение: файл неделю на диске ради
+  // одной записи — лишняя уборка.
+  const canSchedule = Boolean(onScheduled) && text.trim().length > 0 && files.length === 0 && left >= 0 && !sending;
+
+  async function schedule(at: Date) {
+    await api.schedulePost(text.trim(), at);
+    setText('');
+    setScheduledNote(`Запись выйдет ${fullDate(at.toISOString())}.`);
+    onScheduled?.();
+  }
+
   async function publish() {
     if (!canSend) return;
+    setScheduledNote(null);
     setSending(true);
     setError(null);
     try {
@@ -170,6 +189,11 @@ export function Composer({ onPublished }: { onPublished: (post: Post) => void })
         )}
 
         {error && <p className="error" style={{ marginTop: '0.75rem' }}>{error}</p>}
+        {scheduledNote && (
+          <p className="settings-status" role="status" style={{ marginTop: '0.75rem' }}>
+            {scheduledNote}
+          </p>
+        )}
 
         <div className="composer-foot">
           <input
@@ -190,6 +214,18 @@ export function Composer({ onPublished }: { onPublished: (post: Post) => void })
             <Clip />
             <span className="sr-only">Прикрепить файл</span>
           </button>
+          {onScheduled && (
+            <button
+              className="act attach-btn"
+              type="button"
+              disabled={!canSchedule}
+              title={files.length > 0 ? 'Отложить можно только текст — запись с файлами выходит сразу' : 'Опубликовать позже'}
+              onClick={() => setScheduling(true)}
+            >
+              <Icon name="clock" size={18} />
+              <span className="sr-only">Опубликовать позже</span>
+            </button>
+          )}
 
           {left <= 100 && (
             <span className={left < 0 ? 'counter over' : 'counter'}>{left}</span>
@@ -199,6 +235,15 @@ export function Composer({ onPublished }: { onPublished: (post: Post) => void })
           </button>
         </div>
       </form>
+      {scheduling && (
+        <ScheduleDialog
+          title="Опубликовать позже"
+          preview={text.trim()}
+          submitLabel="Запланировать"
+          onSubmit={schedule}
+          onClose={() => setScheduling(false)}
+        />
+      )}
     </div>
   );
 }

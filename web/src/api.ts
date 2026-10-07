@@ -249,6 +249,9 @@ export type Poll = {
 export type ScheduledKind = 'dm' | 'chat' | 'channel';
 export type Scheduled = { id: number; kind: ScheduledKind; body: string; sendAt: string; createdAt: string };
 
+/** Отложенная запись ленты — только текст, видна только автору. */
+export type ScheduledPost = { id: number; body: string; sendAt: string; createdAt: string };
+
 export type PollInput = {
   question: string;
   options: string[];
@@ -654,6 +657,21 @@ const realApi = {
   /** Править текст своей записи — двое суток после публикации. */
   updatePost: (id: number, text: string) =>
     request<{ post: Post }>(`/posts/${id}`, { method: 'PATCH', body: body({ body: text }) }),
+
+  /** Своя очередь отложенных записей — ближайшие сверху. */
+  scheduledPosts: () => request<{ scheduled: ScheduledPost[] }>('/posts/scheduled'),
+
+  /** Опубликовать запись позже — только текст. */
+  schedulePost: (text: string, sendAt: Date) =>
+    request<{ scheduled: ScheduledPost }>('/posts/scheduled', { method: 'POST', body: body({ body: text, sendAt: sendAt.toISOString() }) }),
+
+  reschedulePost: (id: number, sendAt: Date) =>
+    request<{ scheduled: ScheduledPost }>(`/posts/scheduled/${id}`, { method: 'PATCH', body: body({ sendAt: sendAt.toISOString() }) }),
+
+  cancelScheduledPost: (id: number) => request<{ ok: true }>(`/posts/scheduled/${id}`, { method: 'DELETE' }),
+
+  /** «Опубликовать сейчас» — запись выходит немедленно. */
+  publishScheduledPost: (id: number) => request<{ post: Post }>(`/posts/scheduled/${id}/publish`, { method: 'POST' }),
 
   /** Закрепить свою запись наверху профиля (одна; новая заменяет прежнюю) или снять. */
   setPin: (id: number, on: boolean) =>

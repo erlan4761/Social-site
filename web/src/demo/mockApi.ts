@@ -13,7 +13,7 @@ import { sweepExpired } from './model/autoDelete';
 import { seed } from './seed';
 import { authApi } from './api/auth';
 import { peopleApi } from './api/people';
-import { postsApi } from './api/posts';
+import { postsApi, publishDuePosts } from './api/posts';
 import { dmApi } from './api/dm';
 import { notificationsApi } from './api/notifications';
 import { chatsApi } from './api/chats';
@@ -69,6 +69,7 @@ if (import.meta.env.VITE_DEMO === '1') {
   // Тот же такт убирает сообщения с истёкшим автоудалением, как на сервере.
   setInterval(() => {
     deliverDueScheduled();
+    publishDuePosts();
     sweepExpired();
   }, 1000);
 }

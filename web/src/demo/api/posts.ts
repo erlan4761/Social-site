@@ -22,8 +22,80 @@ function notifyPostMentions(input: { authorId: number; postId: number; commentId
   }
 }
 
+/** Отложенная запись выходит — тем же путём, что обычная: теги из текста, упоминания. */
+type DbScheduledPost = (typeof db.scheduledPosts)[number];
+function publishScheduled(s: DbScheduledPost) {
+  db.scheduledPosts = db.scheduledPosts.filter((x) => x.id !== s.id);
+  const author = db.users.find((u) => u.id === s.authorId);
+  if (!author || author.bannedAt) return null;
+  const post: DbPost = { id: id(), authorId: s.authorId, body: s.body, createdAt: new Date().toISOString(), media: null, gallery: [] };
+  db.posts.push(post);
+  notifyPostMentions({ authorId: s.authorId, postId: post.id, body: s.body });
+  return post;
+}
+
+/** Такт планировщика витрины — как publishDuePosts() на сервере. */
+export function publishDuePosts() {
+  const now = new Date().toISOString();
+  for (const s of db.scheduledPosts.filter((x) => x.sendAt <= now)) publishScheduled(s);
+}
+
+function readPostSendAt(raw: Date) {
+  const at = raw.getTime();
+  if (Number.isNaN(at)) fail(400, 'Время публикации — дата в формате ISO');
+  if (at <= Date.now()) fail(400, 'Время публикации уже прошло');
+  if (at - Date.now() > 365 * 864e5) fail(400, 'Отложить можно не больше чем на год');
+  return raw.toISOString();
+}
+
+const ownScheduled = (scheduledId: number) => {
+  const u = requireMe()!;
+  const s = db.scheduledPosts.find((x) => x.id === scheduledId && x.authorId === u.id);
+  if (!s) fail(404, 'Отложенная запись не найдена');
+  return s!;
+};
+
+const scheduledView = (s: DbScheduledPost) => ({ id: s.id, body: s.body, sendAt: s.sendAt, createdAt: s.createdAt });
+
 export const postsApi = {
+  scheduledPosts: () => {
+    const u = requireMe()!;
+    publishDuePosts();
+    return tick({ scheduled: db.scheduledPosts.filter((s) => s.authorId === u.id).sort((a, b) => a.sendAt.localeCompare(b.sendAt)).map(scheduledView) });
+  },
+
+  schedulePost: (text: string, sendAt: Date) => {
+    const u = requireMe()!;
+    const body = text.trim();
+    if (!body) fail(400, '«текст поста»: минимум 1 символов');
+    if (body.length > 500) fail(400, '«текст поста»: максимум 500 символов');
+    const at = readPostSendAt(sendAt);
+    if (db.scheduledPosts.filter((s) => s.authorId === u.id).length >= 50) fail(400, 'Отложенных записей не больше 50');
+    const s = { id: id(), authorId: u.id, body, sendAt: at, createdAt: new Date().toISOString() };
+    db.scheduledPosts.push(s);
+    return tick({ scheduled: scheduledView(s) });
+  },
+
+  reschedulePost: (scheduledId: number, sendAt: Date) => {
+    const s = ownScheduled(scheduledId);
+    s.sendAt = readPostSendAt(sendAt);
+    return tick({ scheduled: scheduledView(s) });
+  },
+
+  cancelScheduledPost: (scheduledId: number) => {
+    const s = ownScheduled(scheduledId);
+    db.scheduledPosts = db.scheduledPosts.filter((x) => x.id !== s.id);
+    return tick({ ok: true as const });
+  },
+
+  publishScheduledPost: (scheduledId: number) => {
+    const post = publishScheduled(ownScheduled(scheduledId));
+    if (!post) fail(404, 'Отложенная запись не найдена');
+    return tick({ post: toPost(post!) });
+  },
+
   posts: (opts: { author?: string; cursor?: number | null; feed?: 'following'; period?: string; tag?: string } = {}) => {
+    publishDuePosts();
     // Блокировка — главный фильтр ленты: и общей, и «по подпискам», и профильной.
     let list = visiblePosts().sort((a, b) => b.id - a.id);
 

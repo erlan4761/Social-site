@@ -730,6 +730,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_follow_requests_target ON follow_requests(target_id, created_at);
 `);
 
+// Отложенные записи ленты (routes/scheduledPosts.js): только текст, ждут своего часа.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS scheduled_posts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    author_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL,
+    send_at    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_scheduled_posts_due ON scheduled_posts(send_at);
+  CREATE INDEX IF NOT EXISTS idx_scheduled_posts_author ON scheduled_posts(author_id, send_at);
+`);
+
 // Хэштеги записей (hashtags.js): ключ — для поиска, подпись — как написал автор.
 // Записи, опубликованные до хэштегов, размечаются при запуске; запись с «#» без
 // настоящего тега просто перечитывается — это дешевле отдельной отметки.
