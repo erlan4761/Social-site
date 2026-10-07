@@ -12,6 +12,7 @@ import { Monogram } from './Monogram';
 import { Icon } from './Icon';
 import { useViewTracker } from '../postViews';
 import { ContinueDialog } from './ContinueDialog';
+import { PostStatsDialog } from './PostStatsDialog';
 import { ReportDialog } from './ReportDialog';
 
 /** Править запись можно двое суток — как и сообщение. */
@@ -140,6 +141,7 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
   const [shareError, setShareError] = useState<string | null>(null);
   const [pinError, setPinError] = useState<string | null>(null);
   const [continuing, setContinuing] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
   // Продолжают последнюю запись своей ветки (или одиночную): ветка линейна.
   const canContinue = user?.id === post.author.id && !post.thread?.nextId;
   // Закрепить можно свою запись; репост сюда не попадает — он рисуется оригиналом.
@@ -444,12 +446,22 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
               </button>
             )}
 
-            {viewCount > 0 && (
-              <span className="post-views" title={`Запись видели ${viewCount} ${plural(viewCount, 'человек', 'человека', 'человек')}`}>
+            {/* Автору счётчик — кнопка статистики (и при нуле: посмотреть, что
+                пока никто не видел, — тоже ответ); остальным — тихое число. */}
+            {user?.id === post.author.id ? (
+              <button className="post-views as-button" type="button" title="Статистика записи" onClick={() => setStatsOpen(true)}>
                 <Icon name="eye" size={15} />
                 {viewCount}
-                <span className="sr-only"> {plural(viewCount, 'просмотр', 'просмотра', 'просмотров')}</span>
-              </span>
+                <span className="sr-only"> {plural(viewCount, 'просмотр', 'просмотра', 'просмотров')}, статистика</span>
+              </button>
+            ) : (
+              viewCount > 0 && (
+                <span className="post-views" title={`Запись видели ${viewCount} ${plural(viewCount, 'человек', 'человека', 'человек')}`}>
+                  <Icon name="eye" size={15} />
+                  {viewCount}
+                  <span className="sr-only"> {plural(viewCount, 'просмотр', 'просмотра', 'просмотров')}</span>
+                </span>
+              )
             )}
           </div>
         )}
@@ -490,6 +502,8 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
             }}
           />
         )}
+
+        {statsOpen && <PostStatsDialog postId={post.id} onClose={() => setStatsOpen(false)} />}
 
         {continuing && (
           <ContinueDialog

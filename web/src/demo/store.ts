@@ -205,7 +205,7 @@ export const db = {
   /** Черновик записи ленты — как post_drafts: один на человека. */
   postDrafts: [] as { userId: number; body: string; updatedAt: string }[],
   /** Просмотры записей — как post_views: один на человека. */
-  postViews: [] as { postId: number; userId: number }[],
+  postViews: [] as { postId: number; userId: number; createdAt?: string }[],
   /** Отложенные записи ленты — как scheduled_posts. */
   scheduledPosts: [] as { id: number; authorId: number; body: string; sendAt: string; createdAt: string }[],
   /** Заявки на подписку на закрытый профиль — как follow_requests. */

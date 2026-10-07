@@ -91,6 +91,20 @@ export type Post = {
 
 export type SharedPost = { kind: 'repost' | 'quote'; post: Post | null };
 
+/** Статистика своей записи — обезличенные числа и просмотры по дням. */
+export type PostStats = {
+  views: number;
+  fromFollowers: number;
+  likes: number;
+  comments: number;
+  reposts: number;
+  quotes: number;
+  bookmarks: number;
+  /** Доля смотревших, кто отозвался; без просмотров — null. */
+  engagement: number | null;
+  byDay: { day: string; views: number }[];
+};
+
 /** Ветка: первая запись, номер этой, сколько всего, соседи. */
 export type PostThread = { rootId: number; position: number; length: number; prevId: number | null; nextId: number | null };
 
@@ -673,6 +687,9 @@ const realApi = {
   /** Править текст своей записи — двое суток после публикации. */
   updatePost: (id: number, text: string) =>
     request<{ post: Post }>(`/posts/${id}`, { method: 'PATCH', body: body({ body: text }) }),
+
+  /** Статистика своей записи — только автору. */
+  postStats: (id: number) => request<{ stats: PostStats }>(`/posts/${id}/stats`),
 
   /** Вся ветка, в которую входит запись, — от первой до последней. */
   postThread: (id: number) => request<{ posts: Post[] }>(`/posts/${id}/thread`),
