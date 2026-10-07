@@ -8,6 +8,7 @@ import { dropNotification, notify } from '../notifications.js';
 import { notifyPostMentions } from '../postMentions.js';
 import { tagFromParam, tagsIn } from '../hashtags.js';
 import { canSeeAuthor, canSeeAuthorSql, isPrivate } from '../privacy.js';
+import { clearPostDraft } from '../drafts.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -295,6 +296,8 @@ router.post('/', requireAuth, mediaUpload.array('media', GALLERY_MAX), async (re
       stored.push(await storeUpload(f.buffer, { allowedKinds: files.length > 1 ? ['image', 'video'] : ['image', 'video', 'audio'], into: 'media' }));
     }
     const postId = insertPost({ authorId: req.user.id, body, stored, names, quoted });
+    // Запись из композера — его черновик исполнен. Цитата пишется в своём окне.
+    if (!quoted) clearPostDraft(req.user.id);
     res.status(201).json({ post: postById(postId, req.user.id) });
   } catch (err) {
     // Файлы уже на диске, а записи нет — сирот не оставляем.

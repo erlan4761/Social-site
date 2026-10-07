@@ -18,6 +18,7 @@ export function seed() {
   db.followRequests = [];
   db.scheduledPosts = [];
   db.postViews = [];
+  db.postDrafts = [];
   db.bookmarks = [];
   db.reports = [];
   db.chats = [];

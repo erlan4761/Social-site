@@ -33,6 +33,7 @@ export function exportFor(userId) {
     }));
 
   // Отложенные записи — свои и ещё не опубликованные: тоже ваши данные.
+  const postDraft = db.prepare('SELECT body, updated_at FROM post_drafts WHERE user_id = ?').get(userId);
   const scheduledPosts = db.prepare('SELECT body, send_at FROM scheduled_posts WHERE author_id = ? ORDER BY send_at').all(userId)
     .map((s) => ({ body: s.body, sendAt: s.send_at }));
 
@@ -96,6 +97,7 @@ export function exportFor(userId) {
     privacy: { lastSeen: u.last_seen_privacy, phoneFind: u.phone_find, phoneShow: u.phone_show },
     posts,
     scheduledPosts,
+    postDraft: postDraft ? { body: postDraft.body, updatedAt: postDraft.updated_at } : null,
     comments,
     likes: db.prepare('SELECT post_id, created_at FROM likes WHERE user_id = ? ORDER BY created_at').all(userId)
       .map((l) => ({ postId: l.post_id, at: l.created_at })),

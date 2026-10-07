@@ -51,3 +51,30 @@ export function clearDraft(userId, kind, targetId) {
 export function dropDrafts(kind, targetId) {
   db.prepare('DELETE FROM drafts WHERE kind = ? AND target_id = ?').run(kind, targetId);
 }
+
+/* ─ Черновик записи ленты ────────────────────────────────────────────────
+ * Один на человека: поле «Что вы хотите записать?» продолжается на другом
+ * устройстве. Уходит, когда запись опубликована из композера или отложена —
+ * цитата пишется в своём окне, её текст черновиком не был.
+ */
+export const POST_DRAFT_MAX = 500;
+
+export function postDraftOf(userId) {
+  return serialize(db.prepare('SELECT body, updated_at FROM post_drafts WHERE user_id = ?').get(userId));
+}
+
+export function savePostDraft(userId, body) {
+  if (!body.trim()) {
+    clearPostDraft(userId);
+    return null;
+  }
+  db.prepare(`
+    INSERT INTO post_drafts (user_id, body, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT (user_id) DO UPDATE SET body = excluded.body, updated_at = excluded.updated_at
+  `).run(userId, body, nowIso());
+  return postDraftOf(userId);
+}
+
+export function clearPostDraft(userId) {
+  db.prepare('DELETE FROM post_drafts WHERE user_id = ?').run(userId);
+}

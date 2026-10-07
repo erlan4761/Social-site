@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db.js';
 import { requireAuth } from '../auth.js';
-import { DRAFT_KINDS, DRAFT_MAX, draftFor, saveDraft } from '../drafts.js';
+import { DRAFT_KINDS, DRAFT_MAX, POST_DRAFT_MAX, draftFor, postDraftOf, saveDraft, savePostDraft } from '../drafts.js';
 import * as v from '../validate.js';
 
 /**
@@ -38,6 +38,20 @@ function resolve(req, res) {
   if (targetId == null) res.status(404).json(NOT_FOUND);
   return targetId == null ? null : { kind, targetId };
 }
+
+/* Черновик записи ленты — один сегмент пути, с черновиками чатов не пересекается. */
+router.get('/post', (req, res) => {
+  res.json({ draft: postDraftOf(req.user.id) });
+});
+
+router.put('/post', (req, res, next) => {
+  try {
+    const body = v.str(req.body?.body ?? '', 'черновик', { max: POST_DRAFT_MAX, trim: false });
+    res.json({ draft: savePostDraft(req.user.id, body) });
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.get('/:kind/:target', (req, res) => {
   const found = resolve(req, res);

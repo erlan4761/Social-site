@@ -57,7 +57,26 @@ const ownScheduled = (scheduledId: number) => {
 
 const scheduledView = (s: DbScheduledPost) => ({ id: s.id, body: s.body, sendAt: s.sendAt, createdAt: s.createdAt });
 
+const postDraftView = (userId: number) => {
+  const d = db.postDrafts.find((x) => x.userId === userId);
+  return d ? { body: d.body, updatedAt: d.updatedAt } : null;
+};
+const clearPostDraft = (userId: number) => {
+  db.postDrafts = db.postDrafts.filter((x) => x.userId !== userId);
+};
+
 export const postsApi = {
+  // Черновик записи — как /api/drafts/post: пустой убирает, лимит — как у записи.
+  postDraft: () => tick({ draft: postDraftView(requireMe()!.id) }),
+
+  savePostDraft: (text: string) => {
+    const u = requireMe()!;
+    if (text.length > 500) fail(400, '«черновик»: максимум 500 символов');
+    clearPostDraft(u.id);
+    if (text.trim()) db.postDrafts.push({ userId: u.id, body: text, updatedAt: new Date().toISOString() });
+    return tick({ draft: postDraftView(u.id) });
+  },
+
   // Те же правила, что POST /api/posts/views: свои, репосты и невидимые — мимо.
   recordViews: (ids: number[]) => {
     const u = requireMe()!;
@@ -88,6 +107,7 @@ export const postsApi = {
     if (db.scheduledPosts.filter((s) => s.authorId === u.id).length >= 50) fail(400, 'Отложенных записей не больше 50');
     const s = { id: id(), authorId: u.id, body, sendAt: at, createdAt: new Date().toISOString() };
     db.scheduledPosts.push(s);
+    clearPostDraft(u.id);
     return tick({ scheduled: scheduledView(s) });
   },
 
@@ -178,6 +198,8 @@ export const postsApi = {
       quoteOf: quoted?.id ?? null,
     };
     db.posts.push(p);
+    // Запись из композера — черновик исполнен; цитата пишется в своём окне.
+    if (!quoted) clearPostDraft(u.id);
     if (quoted) notify({ userId: quoted.authorId, actorId: u.id, kind: 'quote', postId: p.id });
     notifyPostMentions({ authorId: u.id, postId: p.id, body, skip: quoted ? [quoted.authorId] : [] });
     return tick({ post: toPost(p) });
