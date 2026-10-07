@@ -747,6 +747,16 @@ db.exec(`
 ensureColumn('users', 'cover_path', 'TEXT');
 ensureColumn('users', 'links', 'TEXT');
 
+// Просмотры записей ленты — как channel_post_views: один на человека, счётчик
+// считает людей, а не прокрутки. Свои просмотры автор не набирает.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS post_views (
+    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (post_id, user_id)
+  );
+`);
+
 // Хэштеги записей (hashtags.js): ключ — для поиска, подпись — как написал автор.
 // Записи, опубликованные до хэштегов, размечаются при запуске; запись с «#» без
 // настоящего тега просто перечитывается — это дешевле отдельной отметки.

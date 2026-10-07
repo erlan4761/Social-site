@@ -58,6 +58,21 @@ const ownScheduled = (scheduledId: number) => {
 const scheduledView = (s: DbScheduledPost) => ({ id: s.id, body: s.body, sendAt: s.sendAt, createdAt: s.createdAt });
 
 export const postsApi = {
+  // Те же правила, что POST /api/posts/views: свои, репосты и невидимые — мимо.
+  recordViews: (ids: number[]) => {
+    const u = requireMe()!;
+    if (!Array.isArray(ids) || ids.length > 50) fail(400, 'ids — список до 50 записей');
+    let counted = 0;
+    for (const postId of new Set(ids)) {
+      const p = visiblePosts().find((x) => x.id === postId);
+      if (!p || p.repostOf != null || p.authorId === u.id) continue;
+      if (db.postViews.some((v) => v.postId === postId && v.userId === u.id)) continue;
+      db.postViews.push({ postId, userId: u.id });
+      counted += 1;
+    }
+    return tick({ counted });
+  },
+
   scheduledPosts: () => {
     const u = requireMe()!;
     publishDuePosts();

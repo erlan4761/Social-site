@@ -76,6 +76,8 @@ const serializePost = (row, depth) => ({
   repostedByMe: Boolean(row.reposted_by_me),
   // Закреплена автором в профиле.
   pinned: Boolean(row.pinned),
+  // Сколько человек видели запись — без самого автора.
+  viewCount: row.view_count ?? 0,
   shared: sharedOf(row, depth),
   author: {
     id: row.author_id,
@@ -130,7 +132,8 @@ export const POST_COLUMNS = `
      FROM (SELECT * FROM post_media pm WHERE pm.post_id = p.id ORDER BY pm.position) g) AS gallery_json,
   (SELECT COUNT(*) FROM posts rp WHERE rp.repost_of_id = p.id)
     + (SELECT COUNT(*) FROM posts qp WHERE qp.quote_of_id = p.id) AS repost_count,
-  EXISTS(SELECT 1 FROM posts rp2 WHERE rp2.repost_of_id = p.id AND rp2.author_id = :viewerId) AS reposted_by_me
+  EXISTS(SELECT 1 FROM posts rp2 WHERE rp2.repost_of_id = p.id AND rp2.author_id = :viewerId) AS reposted_by_me,
+  (SELECT COUNT(*) FROM post_views pvw WHERE pvw.post_id = p.id) AS view_count
 `;
 
 /** Видна ли запись смотрящему: не в блокировке и автор не закрыт от него. */
@@ -399,6 +402,37 @@ function setPostTags(postId, body) {
   const insert = db.prepare('INSERT OR IGNORE INTO post_tags (post_id, tag, label) VALUES (?, ?, ?)');
   for (const { tag, label } of tagsIn(body)) insert.run(postId, tag, label);
 }
+
+/* ─ Просмотры ─────────────────────────────────────────────────────────── */
+
+/**
+ * Просмотры пачкой: клиент присылает id записей, которые человек действительно
+ * видел (на экране, а не просто загруженные), — до пятидесяти за раз. Один
+ * человек — один просмотр записи; свои записи и те, что смотрящему не видны,
+ * молча пропускаются: отказ по одной испортил бы всю пачку. Гостю счётчик не
+ * набирается — его не отличить от обновления страницы.
+ */
+const VIEWS_BATCH_MAX = 50;
+
+router.post('/views', requireAuth, (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : null;
+  if (!ids || ids.length > VIEWS_BATCH_MAX) return res.status(400).json({ error: `ids — список до ${VIEWS_BATCH_MAX} записей` });
+  const viewerId = req.user.id;
+  const visible = db.prepare(`
+    SELECT p.author_id FROM posts p
+    WHERE p.id = :id AND p.repost_of_id IS NULL AND ${POST_VISIBLE_SQL}
+  `);
+  const insert = db.prepare('INSERT OR IGNORE INTO post_views (post_id, user_id) VALUES (?, ?)');
+  let counted = 0;
+  for (const raw of new Set(ids)) {
+    const id = intParam(String(raw));
+    if (!id) continue;
+    const post = visible.get({ id, viewerId });
+    if (!post || post.author_id === viewerId) continue;
+    counted += Number(insert.run(id, viewerId).changes);
+  }
+  res.json({ counted });
+});
 
 /* ─ Закреплённая запись ────────────────────────────────────────────────── */
 
