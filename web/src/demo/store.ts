@@ -200,6 +200,8 @@ export const db = {
   comments: [] as DbComment[],
   likes: [] as { userId: number; postId: number }[],
   follows: [] as { followerId: number; followeeId: number }[],
+  /** Отслеживаемые теги — как tag_follows. */
+  tagFollows: [] as { userId: number; tag: string; createdAt: string }[],
   /** Черновик записи ленты — как post_drafts: один на человека. */
   postDrafts: [] as { userId: number; body: string; updatedAt: string }[],
   /** Просмотры записей — как post_views: один на человека. */

@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { db } from '../db.js';
+import { db, nowIso } from '../db.js';
+import { requireAuth } from '../auth.js';
 import { tagFromParam } from '../hashtags.js';
 import { POST_VISIBLE_SQL, REPOST_VISIBLE_SQL } from './posts.js';
 
@@ -29,6 +30,40 @@ router.get('/trending', (req, res) => {
   res.json({ tags });
 });
 
+/**
+ * Теги, за которыми человек следит, — свежие подписки сверху. Записи с ними
+ * приходят во вкладку «Подписки» вместе с записями людей. До ста тегов:
+ * больше — это уже не подписка, а вся лента.
+ */
+const FOLLOWED_MAX = 100;
+
+router.get('/followed', requireAuth, (req, res) => {
+  const tags = db.prepare(`
+    SELECT tf.tag,
+           COALESCE((SELECT MAX(pt.label) FROM post_tags pt WHERE pt.tag = tf.tag), tf.tag) AS label
+    FROM tag_follows tf WHERE tf.user_id = ?
+    ORDER BY tf.created_at DESC, tf.tag
+  `).all(req.user.id);
+  res.json({ tags });
+});
+
+router.put('/:tag/follow', requireAuth, (req, res) => {
+  const tag = tagFromParam(req.params.tag);
+  if (!tag) return res.status(400).json({ error: 'Некорректный тег' });
+  const { n } = db.prepare('SELECT COUNT(*) AS n FROM tag_follows WHERE user_id = ?').get(req.user.id);
+  const already = db.prepare('SELECT 1 FROM tag_follows WHERE user_id = ? AND tag = ?').get(req.user.id, tag);
+  if (!already && n >= FOLLOWED_MAX) return res.status(400).json({ error: `Следить можно не больше чем за ${FOLLOWED_MAX} тегами` });
+  db.prepare('INSERT OR IGNORE INTO tag_follows (user_id, tag, created_at) VALUES (?, ?, ?)').run(req.user.id, tag, nowIso());
+  res.json({ followedByMe: true });
+});
+
+router.delete('/:tag/follow', requireAuth, (req, res) => {
+  const tag = tagFromParam(req.params.tag);
+  if (!tag) return res.status(400).json({ error: 'Некорректный тег' });
+  db.prepare('DELETE FROM tag_follows WHERE user_id = ? AND tag = ?').run(req.user.id, tag);
+  res.json({ followedByMe: false });
+});
+
 /** Шапка страницы тега: подпись и сколько всего записей. Незнакомый тег — 0, а не 404: его просто ещё не ставили. */
 router.get('/:tag', (req, res) => {
   const tag = tagFromParam(req.params.tag);
@@ -38,5 +73,8 @@ router.get('/:tag', (req, res) => {
     FROM post_tags t JOIN posts p ON p.id = t.post_id
     WHERE t.tag = :tag AND ${POST_VISIBLE_SQL} AND ${REPOST_VISIBLE_SQL}
   `).get({ tag, viewerId: req.user?.id ?? null });
-  res.json({ tag, label: row.label ?? String(req.params.tag).replace(/^#/, '').toLowerCase(), count: row.count });
+  const followedByMe = req.user
+    ? Boolean(db.prepare('SELECT 1 FROM tag_follows WHERE user_id = ? AND tag = ?').get(req.user.id, tag))
+    : false;
+  res.json({ tag, label: row.label ?? String(req.params.tag).replace(/^#/, '').toLowerCase(), count: row.count, followedByMe });
 });

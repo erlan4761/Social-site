@@ -110,7 +110,7 @@ export type Page = { posts: Post[]; nextCursor: number | null };
 export type ArchiveMonth = { month: string; count: number };
 
 /** Тег: ключ (нижний регистр, «ё» → «е»), подпись как пишут авторы и число записей. */
-export type TagStat = { tag: string; label: string; count: number };
+export type TagStat = { tag: string; label: string; count: number; followedByMe?: boolean };
 
 /** Набор реакций фиксирован — тот же список, что на сервере. */
 export const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'] as const;
@@ -701,6 +701,13 @@ const realApi = {
 
   /** Популярные теги за неделю — до десяти. */
   trendingTags: () => request<{ tags: TagStat[] }>('/tags/trending'),
+
+  /** Теги, за которыми следит человек, — свежие сверху. */
+  followedTags: () => request<{ tags: { tag: string; label: string }[] }>('/tags/followed'),
+
+  /** Следить за тегом: записи с ним — во вкладке «Подписки». */
+  setTagFollow: (tag: string, on: boolean) =>
+    request<{ followedByMe: boolean }>(`/tags/${encodeURIComponent(tag)}/follow`, { method: on ? 'PUT' : 'DELETE' }),
 
   /** Шапка страницы тега: подпись и сколько всего записей. */
   tagInfo: (tag: string) => request<TagStat>(`/tags/${encodeURIComponent(tag)}`),

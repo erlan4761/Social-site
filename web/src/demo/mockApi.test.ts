@@ -686,7 +686,7 @@ describe('витрина: хэштеги', () => {
     expect((await api.posts({ tag: '#ПЛЕНКА' })).posts).toHaveLength(2);
     expect((await api.posts({ tag: 'ночь' })).posts).toHaveLength(1);
     await expect(api.posts({ tag: '1' })).rejects.toMatchObject({ status: 400 });
-    expect(await api.tagInfo('пленка')).toEqual({ tag: 'пленка', label: 'плёнка', count: 2 });
+    expect(await api.tagInfo('пленка')).toEqual({ tag: 'пленка', label: 'плёнка', count: 2, followedByMe: false });
     const { tags } = await api.trendingTags();
     expect(tags[0]).toMatchObject({ tag: 'пленка', count: 2 });
   });
@@ -810,5 +810,21 @@ describe('витрина: ветки записей', () => {
     expect((await api.postThread(b.id)).posts.map((p) => p.id)).toEqual([a.id, b.id, c.id]);
     await api.deletePost(b.id);
     expect((await api.post(c.id)).post.thread).toMatchObject({ position: 2, length: 2, prevId: a.id });
+  });
+});
+
+describe('витрина: подписка на теги', () => {
+  it('записи отслеживаемого тега — в «Подписках»', async () => {
+    await loginAs('nina');
+    const { post } = await api.createPost('Проявил #плёнкаНочью');
+    await loginAs('demo');
+    await api.setFollow('nina', false);
+    expect((await api.posts({ feed: 'following' })).posts.some((p) => p.id === post.id)).toBe(false);
+    await api.setTagFollow('#ПлёнкаНочью', true);
+    expect((await api.tagInfo('пленканочью')).followedByMe).toBe(true);
+    expect((await api.followedTags()).tags).toEqual([{ tag: 'пленканочью', label: 'плёнканочью' }]);
+    expect((await api.posts({ feed: 'following' })).posts.some((p) => p.id === post.id)).toBe(true);
+    await api.setTagFollow('пленканочью', false);
+    expect((await api.posts({ feed: 'following' })).posts.some((p) => p.id === post.id)).toBe(false);
   });
 });

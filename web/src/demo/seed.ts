@@ -19,6 +19,7 @@ export function seed() {
   db.scheduledPosts = [];
   db.postViews = [];
   db.postDrafts = [];
+  db.tagFollows = [];
   db.bookmarks = [];
   db.reports = [];
   db.chats = [];
