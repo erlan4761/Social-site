@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { linksOf } from './auth.js';
 import { callLabel } from './messageExtras.js';
 import { publicUrl } from './media.js';
 
@@ -89,6 +90,8 @@ export function exportFor(userId) {
       avatar: publicUrl('avatar', u.avatar_path),
       pinnedPostId: u.pinned_post_id ?? null,
       privateProfile: Boolean(u.private),
+      cover: publicUrl('media', u.cover_path),
+      links: linksOf(u.links),
     },
     privacy: { lastSeen: u.last_seen_privacy, phoneFind: u.phone_find, phoneShow: u.phone_show },
     posts,

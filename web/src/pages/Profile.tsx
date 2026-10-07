@@ -7,6 +7,7 @@ import { Monogram } from '../components/Monogram';
 import { FollowListDialog, type FollowSide } from '../components/FollowListDialog';
 import { PostRow } from '../components/PostRow';
 import { Icon } from '../components/Icon';
+import { LINKS_MAX, linkLabel, normalizeLinks } from '../profileLinks';
 import { ReportDialog } from '../components/ReportDialog';
 import { useSession } from '../session';
 import { joinedOn, monthLabel, plural, yearOf } from '../time';
@@ -229,6 +230,7 @@ export function Profile() {
           onChanged={() => void refreshCounts()}
         />
       )}
+      {profile.coverUrl && <img className="profile-cover" src={profile.coverUrl} alt="" />}
       <div className="profile-head">
         {isMe ? (
           <AvatarEditor
@@ -255,10 +257,13 @@ export function Profile() {
               profile={profile}
               onCancel={() => setEditing(false)}
               onSaved={(updated) => {
-                setProfile({ ...updated, postCount: count });
+                // Слиянием, а не заменой: в ответе правки нет счётчиков и
+                // флагов профиля — без этого после «Сохранить» было бы «0 подписчиков».
+                setProfile((p) => (p ? { ...p, ...updated, postCount: count } : p));
                 setUser(updated);
                 setEditing(false);
               }}
+              onCover={(updated) => setProfile((p) => (p ? { ...p, coverUrl: updated.coverUrl ?? null } : p))}
             />
           ) : (
             <>
@@ -277,6 +282,18 @@ export function Profile() {
                 </p>
               )}
               {profile.bio && <p className="profile-bio">{profile.bio}</p>}
+              {profile.links && profile.links.length > 0 && (
+                <ul className="profile-links">
+                  {profile.links.map((href) => (
+                    <li key={href}>
+                      <a href={href} target="_blank" rel="me noopener noreferrer nofollow">
+                        <Icon name="link" size={15} />
+                        {linkLabel(href)}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
               <p className="profile-meta">
                 <span>
                   {count} {plural(count, 'пост', 'поста', 'постов')}
@@ -654,26 +671,87 @@ function AvatarEditor({ profile, onChanged }: { profile: User; onChanged: (user:
   );
 }
 
+/** Обложка — в форме правки: загружается сразу, как и аватар, без «Сохранить». */
+const MAX_COVER = 8 * 1024 * 1024;
+
+function CoverPicker({ profile, onChanged }: { profile: User; onChanged: (user: User) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+
+  async function run(action: () => Promise<{ user: User }>) {
+    setBusy(true);
+    setError(null);
+    try {
+      onChanged((await action()).user);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось сменить обложку');
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = '';
+    }
+  }
+
+  function pick(file: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) return setError('Обложка — только изображение');
+    if (file.size > MAX_COVER) return setError('Изображение больше 8 МБ');
+    void run(() => api.setCover(file));
+  }
+
+  return (
+    <div className="field cover-field">
+      <span>Обложка</span>
+      <div className="cover-actions">
+        <button className="btn ghost small" type="button" disabled={busy} onClick={() => input.current?.click()}>
+          {busy ? 'Загружаю…' : profile.coverUrl ? 'Сменить обложку' : 'Выбрать обложку'}
+        </button>
+        {profile.coverUrl && (
+          <button className="post-delete" type="button" disabled={busy} onClick={() => void run(() => api.removeCover())}>
+            Убрать обложку
+          </button>
+        )}
+      </div>
+      <input
+        ref={input}
+        className="sr-only"
+        type="file"
+        aria-label="Файл обложки"
+        accept="image/jpeg,image/png,image/gif,image/webp"
+        onChange={(e) => pick(e.target.files?.[0] ?? null)}
+      />
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
 function ProfileForm({
   profile,
   onSaved,
   onCancel,
+  onCover,
 }: {
   profile: User;
   onSaved: (user: User) => void;
   onCancel: () => void;
+  onCover: (user: User) => void;
 }) {
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [bio, setBio] = useState(profile.bio);
+  // Три поля всегда: пустые — просто не сохраняются.
+  const [links, setLinks] = useState<string[]>(() => [...(profile.links ?? []), '', '', ''].slice(0, LINKS_MAX));
+  const [cover, setCover] = useState(profile);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function save(e: FormEvent) {
     e.preventDefault();
+    const checked = normalizeLinks(links);
+    if ('error' in checked) return setError(checked.error);
     setBusy(true);
     setError(null);
     try {
-      const res = await api.updateProfile({ displayName, bio });
+      const res = await api.updateProfile({ displayName, bio, links: checked.links });
       onSaved(res.user);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось сохранить');
@@ -695,6 +773,30 @@ function ProfileForm({
         <span>О себе</span>
         <textarea value={bio} onChange={(e) => setBio(e.target.value)} maxLength={200} rows={3} />
       </label>
+
+      <fieldset className="field links-field">
+        <legend>Ссылки — до трёх</legend>
+        {links.map((value, i) => (
+          <input
+            key={i}
+            type="text"
+            inputMode="url"
+            value={value}
+            aria-label={`Ссылка ${i + 1}`}
+            placeholder={i === 0 ? 't.me/вы или адрес сайта' : ''}
+            maxLength={200}
+            onChange={(e) => setLinks((prev) => prev.map((x, j) => (j === i ? e.target.value : x)))}
+          />
+        ))}
+      </fieldset>
+
+      <CoverPicker
+        profile={cover}
+        onChanged={(updated) => {
+          setCover(updated);
+          onCover(updated);
+        }}
+      />
 
       <div style={{ display: 'flex', gap: '0.75rem' }}>
         <button className="btn" type="submit" disabled={busy}>

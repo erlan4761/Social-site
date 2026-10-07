@@ -20,6 +20,10 @@ export type User = {
   moderator?: boolean;
   /** Закрытый профиль: записи видят только одобренные подписчики. */
   private?: boolean;
+  /** Обложка профиля — широкая картинка над шапкой. */
+  coverUrl?: string | null;
+  /** До трёх ссылок профиля — полные адреса http(s). */
+  links?: string[];
   /** Из `GET /users/:username`: видит ли смотрящий записи (у закрытого — только подписчик). */
   canSeePosts?: boolean;
   /** Заявка смотрящего на подписку ждёт ответа владельца. */
@@ -622,7 +626,8 @@ const realApi = {
   profile: (username: string) =>
     request<{ user: User; pinnedPost?: Post | null }>(`/users/${encodeURIComponent(username)}`),
 
-  updateProfile: (input: { displayName: string; bio: string }) =>
+  /** `links` — заменить ссылки профиля целиком; не прислать — оставить как были. */
+  updateProfile: (input: { displayName: string; bio: string; links?: string[] }) =>
     request<{ user: User }>('/users/me', { method: 'PATCH', body: body(input) }),
 
   // period — `YYYY` или `YYYY-MM`; мусор сервер отвергает 400, потому что
@@ -714,6 +719,15 @@ const realApi = {
   },
 
   removeAvatar: () => request<{ user: User }>('/users/me/avatar', { method: 'DELETE' }),
+
+  /** Обложка профиля — картинка до 8 МБ; прежняя стирается. */
+  setCover: (file: File) => {
+    const form = new FormData();
+    form.set('cover', file);
+    return request<{ user: User }>('/users/me/cover', { method: 'PUT', body: form });
+  },
+
+  removeCover: () => request<{ user: User }>('/users/me/cover', { method: 'DELETE' }),
 
   conversations: () =>
     request<{ conversations: Conversation[]; unreadTotal: number }>('/messages'),

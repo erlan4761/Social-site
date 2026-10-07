@@ -743,6 +743,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_scheduled_posts_author ON scheduled_posts(author_id, send_at);
 `);
 
+// Оформление профиля: обложка (файл в media) и до трёх ссылок (JSON-массив адресов).
+ensureColumn('users', 'cover_path', 'TEXT');
+ensureColumn('users', 'links', 'TEXT');
+
 // Хэштеги записей (hashtags.js): ключ — для поиска, подпись — как написал автор.
 // Записи, опубликованные до хэштегов, размечаются при запуске; запись с «#» без
 // настоящего тега просто перечитывается — это дешевле отдельной отметки.

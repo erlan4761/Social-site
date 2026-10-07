@@ -4,6 +4,7 @@ import { byId, byName, requireMe, author, blockedPair, hidden, canSeeAuthor } fr
 import { publicUser, toPost } from '../model/posts';
 import { notify, dropNotification } from '../model/notifications';
 import { findByPhones, visiblePhone } from '../model/phoneBook';
+import { normalizeLinks } from '../../profileLinks';
 
 /** Методы витрины: профиль, аватар, поиск людей, подписки, блокировки, жалобы. */
 
@@ -55,10 +56,15 @@ export const peopleApi = {
     });
   },
 
-  updateProfile: (input: { displayName: string; bio: string }) => {
+  updateProfile: (input: { displayName: string; bio: string; links?: string[] }) => {
     const u = requireMe()!;
     if (!input.displayName.trim()) fail(400, '«имя»: минимум 1 символов');
     if (input.bio.length > 200) fail(400, '«о себе»: максимум 200 символов');
+    if (input.links !== undefined) {
+      const checked = normalizeLinks(input.links);
+      if ('error' in checked) fail(400, checked.error);
+      else u.links = checked.links;
+    }
     u.displayName = input.displayName.trim();
     u.bio = input.bio.trim();
     return tick({ user: publicUser(u) });
@@ -73,6 +79,19 @@ export const peopleApi = {
   removeAvatar: () => {
     const u = requireMe()!;
     u.avatarUrl = null;
+    return tick({ user: publicUser(u) });
+  },
+
+  setCover: (file: File) => {
+    const u = requireMe()!;
+    if (!file.type.startsWith('image/')) fail(400, 'Обложка — только изображение');
+    u.coverUrl = URL.createObjectURL(file);
+    return tick({ user: publicUser(u) });
+  },
+
+  removeCover: () => {
+    const u = requireMe()!;
+    u.coverUrl = null;
     return tick({ user: publicUser(u) });
   },
 
