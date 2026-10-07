@@ -772,6 +772,16 @@ db.exec(`
 ensureColumn('posts', 'continues_id', 'INTEGER REFERENCES posts(id) ON DELETE SET NULL');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_continues ON posts(continues_id) WHERE continues_id IS NOT NULL');
 
+// Подписка на теги (routes/tags.js): записи с ними — во вкладке «Подписки».
+db.exec(`
+  CREATE TABLE IF NOT EXISTS tag_follows (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tag        TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, tag)
+  );
+`);
+
 // Хэштеги записей (hashtags.js): ключ — для поиска, подпись — как написал автор.
 // Записи, опубликованные до хэштегов, размечаются при запуске; запись с «#» без
 // настоящего тега просто перечитывается — это дешевле отдельной отметки.

@@ -99,6 +99,7 @@ export function exportFor(userId) {
     privacy: { lastSeen: u.last_seen_privacy, phoneFind: u.phone_find, phoneShow: u.phone_show },
     posts,
     scheduledPosts,
+    followedTags: db.prepare('SELECT tag FROM tag_follows WHERE user_id = ? ORDER BY created_at').all(userId).map((r) => r.tag),
     postDraft: postDraft ? { body: postDraft.body, updatedAt: postDraft.updated_at } : null,
     comments,
     likes: db.prepare('SELECT post_id, created_at FROM likes WHERE user_id = ? ORDER BY created_at').all(userId)

@@ -243,6 +243,11 @@ router.get('/', (req, res, next) => {
           :onlyFollowing = 0
           OR p.author_id = :viewerId
           OR p.author_id IN (SELECT followee_id FROM follows WHERE follower_id = :viewerId)
+          -- И записи с тегами, за которыми смотрящий следит (routes/tags.js).
+          OR EXISTS (
+            SELECT 1 FROM post_tags ft JOIN tag_follows tf ON tf.tag = ft.tag AND tf.user_id = :viewerId
+            WHERE ft.post_id = p.id
+          )
         )
         -- Одно условие на оба случая: длина самого периода решает, сравнивается
         -- год («2026») или месяц («2026-09»). created_at — ISO-строка в UTC,
