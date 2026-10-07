@@ -198,6 +198,8 @@ export const db = {
   comments: [] as DbComment[],
   likes: [] as { userId: number; postId: number }[],
   follows: [] as { followerId: number; followeeId: number }[],
+  /** Просмотры записей — как post_views: один на человека. */
+  postViews: [] as { postId: number; userId: number }[],
   /** Отложенные записи ленты — как scheduled_posts. */
   scheduledPosts: [] as { id: number; authorId: number; body: string; sendAt: string; createdAt: string }[],
   /** Заявки на подписку на закрытый профиль — как follow_requests. */

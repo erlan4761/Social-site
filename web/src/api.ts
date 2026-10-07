@@ -80,6 +80,8 @@ export type Post = {
   repostedByMe?: boolean;
   /** Закреплена автором наверху профиля. */
   pinned?: boolean;
+  /** Сколько человек видели запись — без самого автора. */
+  viewCount?: number;
   /** Чистый репост — оригинал целиком; цитата — то, что цитируют. `post: null` — оригинал удалён или скрыт. */
   shared?: SharedPost | null;
   author: Author;
@@ -662,6 +664,9 @@ const realApi = {
   /** Править текст своей записи — двое суток после публикации. */
   updatePost: (id: number, text: string) =>
     request<{ post: Post }>(`/posts/${id}`, { method: 'PATCH', body: body({ body: text }) }),
+
+  /** Записи, которые человек действительно видел на экране, — пачкой до пятидесяти. */
+  recordViews: (ids: number[]) => request<{ counted: number }>('/posts/views', { method: 'POST', body: body({ ids }) }),
 
   /** Своя очередь отложенных записей — ближайшие сверху. */
   scheduledPosts: () => request<{ scheduled: ScheduledPost[] }>('/posts/scheduled'),

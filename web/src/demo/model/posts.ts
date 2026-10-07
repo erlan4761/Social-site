@@ -83,6 +83,7 @@ const postAt = (p: DbPost, depth: number): Post => ({
   repostCount: repostCountOf(p.id),
   repostedByMe: db.posts.some((x) => x.repostOf === p.id && x.authorId === db.meId),
   pinned: byId(p.authorId)?.pinnedPostId === p.id,
+  viewCount: db.postViews.filter((v) => v.postId === p.id).length,
   shared: sharedOf(p, depth),
   author: { ...author(byId(p.authorId)!), ...(byId(p.authorId)?.private ? { private: true } : {}) },
 });

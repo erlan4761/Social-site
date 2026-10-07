@@ -775,3 +775,14 @@ describe('витрина: обложка и ссылки', () => {
     expect((await api.removeCover()).user.coverUrl).toBeNull();
   });
 });
+
+describe('витрина: просмотры записей', () => {
+  it('один человек — один просмотр, свои не считаются', async () => {
+    const other = (await api.posts({ author: 'oleg_k' })).posts[0];
+    expect((await api.recordViews([other.id, other.id])).counted).toBe(1);
+    expect((await api.recordViews([other.id])).counted).toBe(0);
+    const { post: mine } = await api.createPost('Моя');
+    expect((await api.recordViews([mine.id])).counted).toBe(0);
+    expect((await api.post(other.id)).post.viewCount).toBeGreaterThanOrEqual(1);
+  });
+});

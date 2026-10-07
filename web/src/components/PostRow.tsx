@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError, type Author, type Post } from '../api';
 import { useSession } from '../session';
@@ -10,6 +10,7 @@ import { PostGallery } from './PostGallery';
 import { QuoteCard, QuoteDialog, Repeat, RepostMenu } from './PostShare';
 import { Monogram } from './Monogram';
 import { Icon } from './Icon';
+import { useViewTracker } from '../postViews';
 import { ReportDialog } from './ReportDialog';
 
 /** Править запись можно двое суток — как и сообщение. */
@@ -141,6 +142,10 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
   const canPin = user?.id === post.author.id;
   const { author } = post;
   const repostCount = post.repostCount ?? 0;
+  const viewCount = post.viewCount ?? 0;
+  // Просмотр засчитывается, когда запись правда побывала на экране; свои — нет.
+  const row = useRef<HTMLElement>(null);
+  useViewTracker(row, post.id, Boolean(user) && user?.id !== post.author.id);
   const canEdit = user?.id === author.id && Date.now() - Date.parse(post.createdAt) <= POST_EDIT_WINDOW_MS;
   const profile = `/u/${author.username}`;
   // На свою запись жаловаться некому: сервер такую жалобу и не примет.
@@ -235,7 +240,7 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
   }
 
   return (
-    <article className={fresh ? 'rail-row fresh' : 'rail-row'}>
+    <article ref={row} className={fresh ? 'rail-row fresh' : 'rail-row'}>
       {pinnedMark && (
         <p className="post-reposted post-pinned">
           <Icon name="pin" size={15} />
@@ -422,6 +427,14 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
               <button className="act-danger" type="button" onClick={() => setReporting(true)}>
                 Пожаловаться
               </button>
+            )}
+
+            {viewCount > 0 && (
+              <span className="post-views" title={`Запись видели ${viewCount} ${plural(viewCount, 'человек', 'человека', 'человек')}`}>
+                <Icon name="eye" size={15} />
+                {viewCount}
+                <span className="sr-only"> {plural(viewCount, 'просмотр', 'просмотра', 'просмотров')}</span>
+              </span>
             )}
           </div>
         )}
