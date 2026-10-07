@@ -63,7 +63,8 @@ export type IconName =
   | 'clock'
   | 'sticker'
   | 'link'
-  | 'palette';
+  | 'palette'
+  | 'lock';
 
 /** Лучи солнца: восемь отрезков по кругу, считаются один раз при загрузке. */
 const SUN_RAYS = [0, 45, 90, 135, 180, 225, 270, 315].map((deg) => {
@@ -201,6 +202,12 @@ const SHAPES: Record<IconName, ReactElement> = {
     <>
       <path d="m14.4 6.2 5.2 5.2-5.2 5.2" />
       <path d="M19.2 11.4H9.8a5.4 5.4 0 0 0-5.4 5.4v1.4" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="5.4" y="10.6" width="13.2" height="9.4" rx="2" />
+      <path d="M8.4 10.6V7.8a3.6 3.6 0 0 1 7.2 0v2.8" />
     </>
   ),
   palette: (

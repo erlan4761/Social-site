@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { api, type Post } from '../api';
@@ -42,5 +42,36 @@ describe('профиль: закреплённая запись', () => {
     expect(within(rows[0]).getByText('Обо мне')).toBeInTheDocument();
     expect(screen.getAllByText('Обо мне')).toHaveLength(1);
     expect(within(rows[1]).getByText('Свежая')).toBeInTheDocument();
+  });
+});
+
+describe('профиль: закрытый', () => {
+  it('чужой закрытый — замок, объяснение вместо записей, кнопка заявки', async () => {
+    vi.spyOn(api, 'profile').mockResolvedValue({
+      user: {
+        ...nina, bio: '', createdAt: '2026-01-01T00:00:00.000Z', postCount: 4, followerCount: 2, followingCount: 0,
+        private: true, canSeePosts: false, requestedByMe: false, followedByMe: false,
+      },
+      pinnedPost: null,
+    });
+    vi.spyOn(api, 'archive').mockResolvedValue({ months: [], total: 0 });
+    vi.spyOn(api, 'posts').mockResolvedValue({ posts: [], nextCursor: null });
+    const follow = vi.spyOn(api, 'setFollow').mockResolvedValue({ followedByMe: false, requested: true, followerCount: 2 });
+    render(
+      <MemoryRouter initialEntries={['/u/nina']}>
+        <Routes>
+          <Route path="/u/:username" element={<Profile />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('img', { name: 'Закрытый профиль' })).toBeInTheDocument();
+    expect(await screen.findByText('Это закрытый профиль.')).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Попросить подписку' }));
+    });
+    expect(follow).toHaveBeenCalledWith('nina', true);
+    expect(screen.getByRole('button', { name: 'Заявка отправлена' })).toBeInTheDocument();
+    expect(screen.getByText(/Заявка отправлена — записи откроются/)).toBeInTheDocument();
+    expect(screen.getByText(/2 подписчика/)).toBeInTheDocument();
   });
 });

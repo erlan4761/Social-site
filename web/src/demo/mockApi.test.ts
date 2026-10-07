@@ -721,3 +721,28 @@ describe('витрина: кого почитать', () => {
     }
   });
 });
+
+describe('витрина: закрытый профиль', () => {
+  it('заявка, одобрение, скрытые записи, открытие принимает ждущих', async () => {
+    // Марина сперва не подписана: давний подписчик закрытие не заметил бы.
+    await loginAs('marina');
+    await api.setFollow('demo', false);
+    await loginAs('demo');
+    const { post } = await api.createPost('Только для своих');
+    await api.setPrivateProfile(true);
+    expect((await api.account()).privateProfile).toBe(true);
+    await loginAs('marina');
+    const asked = await api.setFollow('demo', true);
+    expect(asked).toMatchObject({ followedByMe: false, requested: true });
+    await expect(api.post(post.id)).rejects.toMatchObject({ status: 404 });
+    await expect(api.setLike(post.id, true)).rejects.toMatchObject({ status: 404 });
+    expect((await api.profile('demo')).user).toMatchObject({ private: true, canSeePosts: false, requestedByMe: true });
+    await loginAs('demo');
+    expect((await api.followRequests()).users.map((u) => u.username)).toContain('marina');
+    await api.acceptFollowRequest('marina');
+    await loginAs('marina');
+    expect((await api.post(post.id)).post.author.private).toBe(true);
+    await expect(api.setRepost(post.id, true)).rejects.toMatchObject({ status: 403 });
+    expect((await api.notifications()).notifications.some((n) => n.kind === 'follow_accept')).toBe(true);
+  });
+});

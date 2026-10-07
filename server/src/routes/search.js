@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { blockPairSql } from '../blocks.js';
 import { ftsQuery } from '../search.js';
-import { POST_COLUMNS, serialize } from './posts.js';
+import { POST_COLUMNS, serialize, POST_VISIBLE_SQL } from './posts.js';
 
 export const router = Router();
 
@@ -50,7 +49,7 @@ router.get('/posts', (req, res) => {
   // символ. Отвечаем пустым списком и в базу не ходим.
   if (match === null) return res.json({ posts: [], nextCursor: null, query: q });
 
-  // Все параметры именованные: blockPairSql() и POST_COLUMNS ждут :viewerId,
+  // Все параметры именованные: POST_VISIBLE_SQL и POST_COLUMNS ждут :viewerId,
   // а смешивать именованные с позиционными в node:sqlite — лишний повод
   // ошибиться порядком.
   const rows = db.prepare(`
@@ -61,7 +60,7 @@ router.get('/posts', (req, res) => {
     WHERE posts_fts MATCH :match
       AND (:author IS NULL OR u.username = :author)
       AND (:cursor IS NULL OR p.id < :cursor)
-      AND ${blockPairSql('p.author_id')}
+      AND ${POST_VISIBLE_SQL}
     ORDER BY p.id DESC
     LIMIT :limit
   `).all({

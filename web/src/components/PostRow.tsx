@@ -355,8 +355,10 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
               type="button"
               aria-haspopup="menu"
               aria-expanded={menu != null}
-              disabled={!user}
-              title={user ? undefined : 'Войдите, чтобы делиться записями'}
+              disabled={!user || post.author.private}
+              title={
+                !user ? 'Войдите, чтобы делиться записями' : post.author.private ? 'Записи закрытого профиля не репостят' : undefined
+              }
               onClick={(e) => {
                 const r = e.currentTarget.getBoundingClientRect();
                 setMenu(menu ? null : { x: r.left, y: r.bottom + 4 });

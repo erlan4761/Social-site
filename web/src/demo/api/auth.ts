@@ -273,6 +273,7 @@ export const authApi = {
       createdAt: u.createdAt,
       twoFactor: twoFactorOn(u) ? { enabled: true, backupCodesLeft: backupCodesLeft(u) } : { enabled: false },
       sessionTtlDays: u.sessionTtlDays ?? 30,
+      privateProfile: Boolean(u.private),
     });
   },
 

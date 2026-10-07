@@ -5,7 +5,8 @@ import { requireAuth, publicUser } from '../auth.js';
 import { blockPairSql, isBlockedPair } from '../blocks.js';
 import { deleteUpload, publicUrl, storeUpload } from '../media.js';
 import { dropNotification, notify } from '../notifications.js';
-import { POST_COLUMNS, REPOST_VISIBLE_SQL, serialize } from './posts.js';
+import { POST_COLUMNS, POST_VISIBLE_SQL, REPOST_VISIBLE_SQL, serialize } from './posts.js';
+import { canSeeAuthor } from '../privacy.js';
 import { findByPhones, LOOKUP_MAX, visiblePhone } from '../phoneBook.js';
 import * as v from '../validate.js';
 
@@ -135,6 +136,61 @@ router.post('/by-phone', requireAuth, (req, res) => {
   });
 });
 
+/* ─ Заявки на подписку ───────────────────────────────────────────────────
+ * Только у закрытого профиля. Принять — заявитель становится подписчиком и
+ * получает «принял(а) вашу заявку»; отклонить — заявка тихо исчезает, как в
+ * любой соцсети: отказ не сообщают. Убрать подписчика — его подписка
+ * снимается, тоже без события.
+ */
+router.get('/me/follow-requests', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT u.id, u.username, u.display_name, u.bio, u.avatar_path, u.created_at, fr.created_at AS requested_at
+    FROM follow_requests fr JOIN users u ON u.id = fr.requester_id
+    WHERE fr.target_id = ?
+    ORDER BY fr.created_at DESC
+  `).all(req.user.id);
+  res.json({
+    users: rows.map((r) => ({
+      id: r.id, username: r.username, displayName: r.display_name, bio: r.bio ?? '',
+      avatarUrl: publicUrl('avatar', r.avatar_path), createdAt: r.created_at, requestedAt: r.requested_at,
+    })),
+  });
+});
+
+const requesterOf = (req) => db.prepare(`
+  SELECT u.id FROM follow_requests fr JOIN users u ON u.id = fr.requester_id
+  WHERE fr.target_id = ? AND u.username = ?
+`).get(req.user.id, String(req.params.username).toLowerCase());
+
+router.post('/me/follow-requests/:username/accept', requireAuth, (req, res) => {
+  const who = requesterOf(req);
+  if (!who) return res.status(404).json({ error: 'Заявки нет' });
+  acceptRequest(who.id, req.user.id);
+  res.json({ ok: true, followerCount: followerCount(req.user.id) });
+});
+
+router.delete('/me/follow-requests/:username', requireAuth, (req, res) => {
+  const who = requesterOf(req);
+  if (!who) return res.status(404).json({ error: 'Заявки нет' });
+  db.prepare('DELETE FROM follow_requests WHERE requester_id = ? AND target_id = ?').run(who.id, req.user.id);
+  dropNotification({ userId: req.user.id, actorId: who.id, kind: 'follow_request' });
+  res.json({ ok: true });
+});
+
+router.delete('/me/followers/:username', requireAuth, (req, res) => {
+  const who = db.prepare('SELECT id FROM users WHERE username = ?').get(String(req.params.username).toLowerCase());
+  if (!who) return res.status(404).json({ error: 'Пользователь не найден' });
+  db.prepare('DELETE FROM follows WHERE follower_id = ? AND followee_id = ?').run(who.id, req.user.id);
+  res.json({ ok: true, followerCount: followerCount(req.user.id) });
+});
+
+/** Заявка принята: подписка, а заявителю — событие. Экспорт — для «открыть профиль» в настройках. */
+export function acceptRequest(requesterId, targetId) {
+  db.prepare('INSERT OR IGNORE INTO follows (follower_id, followee_id, created_at) VALUES (?, ?, ?)').run(requesterId, targetId, nowIso());
+  db.prepare('DELETE FROM follow_requests WHERE requester_id = ? AND target_id = ?').run(requesterId, targetId);
+  notify({ userId: requesterId, actorId: targetId, kind: 'follow_accept' });
+}
+
 // Тоже перед /:username — иначе Express принял бы "me" за чьё-то имя.
 router.get('/me/blocks', requireAuth, (req, res) => {
   const rows = db.prepare(`
@@ -232,7 +288,7 @@ router.get('/:username/archive', (req, res) => {
   const months = db.prepare(`
     SELECT substr(p.created_at, 1, 7) AS month, COUNT(*) AS count
     FROM posts p
-    WHERE p.author_id = :authorId AND ${blockPairSql('p.author_id')} AND ${REPOST_VISIBLE_SQL}
+    WHERE p.author_id = :authorId AND ${POST_VISIBLE_SQL} AND ${REPOST_VISIBLE_SQL}
     GROUP BY month
     ORDER BY month DESC
   `).all({ authorId: user.id, viewerId: req.user?.id ?? null });
@@ -275,7 +331,7 @@ router.get('/:username', (req, res) => {
     ? db.prepare(`
         SELECT ${POST_COLUMNS}
         FROM posts p JOIN users u ON u.id = p.author_id
-        WHERE p.id = :id AND ${blockPairSql('p.author_id')}
+        WHERE p.id = :id AND ${POST_VISIBLE_SQL}
       `).get({ id: user.pinned_post_id, viewerId })
     : null;
 
@@ -293,6 +349,11 @@ router.get('/:username', (req, res) => {
       blocksMe,
       // Номер — только если владелец показывает его смотрящему (см. phoneBook.js).
       phone: visiblePhone(user, viewerId),
+      // Закрытый профиль: записи — только одобренным подписчикам; заявка — ждёт ответа.
+      private: Boolean(user.private),
+      canSeePosts: canSeeAuthor(viewerId, user.id),
+      requestedByMe: viewerId != null
+        && Boolean(db.prepare('SELECT 1 FROM follow_requests WHERE requester_id = ? AND target_id = ?').get(viewerId, user.id)),
     },
   });
 });
@@ -338,7 +399,7 @@ router.get('/:username/following', (req, res) => followList(req, res, 'following
 router.put('/:username/follow', requireAuth, (req, res, next) => {
   try {
     const uname = String(req.params.username).toLowerCase();
-    const target = db.prepare('SELECT id FROM users WHERE username = ?').get(uname);
+    const target = db.prepare('SELECT id, private FROM users WHERE username = ?').get(uname);
     if (!target) return res.status(404).json({ error: 'Пользователь не найден' });
     if (target.id === req.user.id) return res.status(400).json({ error: 'Нельзя подписаться на себя' });
 
@@ -346,6 +407,16 @@ router.put('/:username/follow', requireAuth, (req, res, next) => {
     // заблокировали, ни на того, кто заблокировал вас.
     if (isBlockedPair(req.user.id, target.id)) {
       return res.status(400).json({ error: BLOCKED_PAIR_MESSAGE });
+    }
+
+    // Закрытый профиль: не подписка, а заявка — до ответа владельца. Уже
+    // одобренный подписчик остаётся подписчиком.
+    const already = db.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?').get(req.user.id, target.id);
+    if (target.private && !already) {
+      db.prepare('INSERT OR IGNORE INTO follow_requests (requester_id, target_id, created_at) VALUES (?, ?, ?)')
+        .run(req.user.id, target.id, nowIso());
+      notify({ userId: target.id, actorId: req.user.id, kind: 'follow_request' });
+      return res.json({ followedByMe: false, requested: true, followerCount: followerCount(target.id) });
     }
 
     // Idempotent: subscribing twice is not an error, the row is simply already there.
@@ -369,10 +440,13 @@ router.delete('/:username/follow', requireAuth, (req, res, next) => {
     if (!target) return res.status(404).json({ error: 'Пользователь не найден' });
 
     db.prepare('DELETE FROM follows WHERE follower_id = ? AND followee_id = ?').run(req.user.id, target.id);
+    // Та же кнопка отзывает и заявку.
+    db.prepare('DELETE FROM follow_requests WHERE requester_id = ? AND target_id = ?').run(req.user.id, target.id);
 
     dropNotification({ userId: target.id, actorId: req.user.id, kind: 'follow' });
+    dropNotification({ userId: target.id, actorId: req.user.id, kind: 'follow_request' });
 
-    res.json({ followedByMe: false, followerCount: followerCount(target.id) });
+    res.json({ followedByMe: false, requested: false, followerCount: followerCount(target.id) });
   } catch (err) {
     next(err);
   }
@@ -405,6 +479,11 @@ router.put('/:username/block', requireAuth, (req, res, next) => {
         DELETE FROM follows
         WHERE (follower_id = :me AND followee_id = :other)
            OR (follower_id = :other AND followee_id = :me)
+      `).run({ me, other: target.id });
+      db.prepare(`
+        DELETE FROM follow_requests
+        WHERE (requester_id = :me AND target_id = :other)
+           OR (requester_id = :other AND target_id = :me)
       `).run({ me, other: target.id });
 
       // Непрочитанные события чистятся в обе стороны. Свои — потому что

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { acceptRequest } from './users.js';
 import { db, nowIso } from '../db.js';
 import {
   SESSION_COOKIE, SESSION_TTL_OPTIONS, applySessionTtl, hashPassword, publicUser, requireAuth, setSessionCookie, ttlDaysOf, verifyPassword,
@@ -47,7 +48,25 @@ router.get('/', (req, res) => {
     createdAt: row.created_at,
     twoFactor: twoFactorOn(row) ? { enabled: true, backupCodesLeft: backupCodesLeft(row.id) } : { enabled: false },
     sessionTtlDays: ttlDaysOf(row),
+    privateProfile: Boolean(row.private),
   });
+});
+
+/**
+ * Закрытый профиль. Закрыть — нынешние подписчики остаются, новые придут
+ * заявками. Открыть — все ждущие заявки принимаются: держать их незачем,
+ * записи теперь видны всем.
+ */
+router.put('/private', (req, res) => {
+  if (typeof req.body?.private !== 'boolean') return res.status(400).json({ error: 'Нужно true или false' });
+  db.prepare('UPDATE users SET private = ? WHERE id = ?').run(req.body.private ? 1 : 0, req.user.id);
+  let accepted = 0;
+  if (!req.body.private) {
+    const pending = db.prepare('SELECT requester_id FROM follow_requests WHERE target_id = ? ORDER BY created_at').all(req.user.id);
+    for (const r of pending) acceptRequest(r.requester_id, req.user.id);
+    accepted = pending.length;
+  }
+  res.json({ privateProfile: req.body.private, accepted });
 });
 
 /**

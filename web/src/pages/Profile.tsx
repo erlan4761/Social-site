@@ -6,6 +6,7 @@ import { ArchivePanel } from '../components/ArchivePanel';
 import { Monogram } from '../components/Monogram';
 import { FollowListDialog, type FollowSide } from '../components/FollowListDialog';
 import { PostRow } from '../components/PostRow';
+import { Icon } from '../components/Icon';
 import { ReportDialog } from '../components/ReportDialog';
 import { useSession } from '../session';
 import { joinedOn, monthLabel, plural, yearOf } from '../time';
@@ -143,18 +144,40 @@ export function Profile() {
 
   async function toggleFollow() {
     if (!profile || followBusy) return;
-    const next = !profile.followedByMe;
+    // Заявка на закрытый профиль отзывается той же кнопкой.
+    const next = !(profile.followedByMe || profile.requestedByMe);
+    const wasRequested = Boolean(profile.requestedByMe);
 
     setFollowBusy(true);
     setFollowError(null);
     // Optimistic: the button answers the click, then the server confirms.
-    setProfile((p) => (p ? { ...p, followedByMe: next, followerCount: (p.followerCount ?? 0) + (next ? 1 : -1) } : p));
+    // У закрытого профиля счётчик не меняется: заявка — ещё не подписка.
+    setProfile((p) =>
+      p
+        ? p.private && !p.followedByMe
+          ? { ...p, requestedByMe: next }
+          : { ...p, followedByMe: next, followerCount: (p.followerCount ?? 0) + (next ? 1 : -1) }
+        : p,
+    );
 
     try {
       const res = await api.setFollow(profile.username, next);
-      setProfile((p) => (p ? { ...p, followedByMe: res.followedByMe, followerCount: res.followerCount } : p));
+      const nowFollowing = res.followedByMe;
+      setProfile((p) =>
+        p
+          ? {
+              ...p,
+              followedByMe: nowFollowing,
+              requestedByMe: Boolean(res.requested),
+              followerCount: res.followerCount,
+              // Отписка от закрытого прячет его записи сразу.
+              canSeePosts: p.private ? nowFollowing : p.canSeePosts,
+            }
+          : p,
+      );
+      if (profile.private && !nowFollowing && profile.followedByMe) setReloadKey((k) => k + 1);
     } catch (err) {
-      setProfile((p) => (p ? { ...p, followedByMe: !next, followerCount: followers } : p));
+      setProfile((p) => (p ? { ...p, followedByMe: !next && !wasRequested, requestedByMe: wasRequested, followerCount: followers } : p));
       setFollowError(err instanceof ApiError ? err.message : 'Не удалось изменить подписку');
     } finally {
       setFollowBusy(false);
@@ -239,7 +262,14 @@ export function Profile() {
             />
           ) : (
             <>
-              <h1 className="profile-name">{profile.displayName}</h1>
+              <h1 className="profile-name">
+                {profile.displayName}
+                {profile.private && (
+                  <span className="profile-lock" title="Закрытый профиль: записи видят только подписчики" role="img" aria-label="Закрытый профиль">
+                    <Icon name="lock" size={18} />
+                  </span>
+                )}
+              </h1>
               <p className="profile-handle">@{profile.username}</p>
               {profile.phone && (
                 <p className="profile-phone">
@@ -288,20 +318,34 @@ export function Profile() {
 
               <div className="profile-actions">
                 {isMe ? (
-                  <button className="btn ghost" type="button" onClick={() => setEditing(true)}>
-                    Редактировать профиль
-                  </button>
+                  <>
+                    <button className="btn ghost" type="button" onClick={() => setEditing(true)}>
+                      Редактировать профиль
+                    </button>
+                    {profile.private && (
+                      <Link className="btn ghost" to="/requests">
+                        Заявки на подписку
+                      </Link>
+                    )}
+                  </>
                 ) : (
                   <>
                     {!profile.blockedByMe && !profile.blocksMe && (
                       <>
                         <button
-                          className={profile.followedByMe ? 'btn ghost' : 'btn'}
+                          className={profile.followedByMe || profile.requestedByMe ? 'btn ghost' : 'btn'}
                           type="button"
                           onClick={() => void toggleFollow()}
                           disabled={followBusy}
+                          title={profile.requestedByMe ? 'Нажмите, чтобы отозвать заявку' : undefined}
                         >
-                          {profile.followedByMe ? 'Отписаться' : 'Подписаться'}
+                          {profile.followedByMe
+                            ? 'Отписаться'
+                            : profile.requestedByMe
+                              ? 'Заявка отправлена'
+                              : profile.private
+                                ? 'Попросить подписку'
+                                : 'Подписаться'}
                         </button>
                         <Link className="btn ghost" to={`/messages/${profile.username}`}>
                           Написать
@@ -381,6 +425,13 @@ export function Profile() {
 
         {stream.loading ? (
           <p className="empty">Загружаю…</p>
+        ) : !isMe && profile.private && profile.canSeePosts === false && !profile.blockedByMe && !profile.blocksMe ? (
+          <p className="empty">
+            <strong>Это закрытый профиль.</strong>
+            {profile.requestedByMe
+              ? 'Заявка отправлена — записи откроются, когда владелец её примет.'
+              : 'Записи видят только подписчики, которых принял владелец. Попросите подписку.'}
+          </p>
         ) : stream.posts.length === 0 && !showPinned ? (
           // Пустая лента у заблокированного — не «постов нет», а «их не видно»:
           // подменять причину значит врать человеку о его же действии.

@@ -84,6 +84,7 @@ export function exportFor(userId) {
       createdAt: u.created_at,
       avatar: publicUrl('avatar', u.avatar_path),
       pinnedPostId: u.pinned_post_id ?? null,
+      privateProfile: Boolean(u.private),
     },
     privacy: { lastSeen: u.last_seen_privacy, phoneFind: u.phone_find, phoneShow: u.phone_show },
     posts,

@@ -18,12 +18,21 @@ export type User = {
   phone?: string | null;
   /** Только в собственном «я» (/auth/me): человек — модератор жалоб. */
   moderator?: boolean;
+  /** Закрытый профиль: записи видят только одобренные подписчики. */
+  private?: boolean;
+  /** Из `GET /users/:username`: видит ли смотрящий записи (у закрытого — только подписчик). */
+  canSeePosts?: boolean;
+  /** Заявка смотрящего на подписку ждёт ответа владельца. */
+  requestedByMe?: boolean;
 };
 
-export type Author = { id: number; username: string; displayName: string; avatarUrl: string | null };
+export type Author = { id: number; username: string; displayName: string; avatarUrl: string | null; private?: boolean };
 
 /** Человек в списке подписчиков или подписок — с флагом «вы подписаны». */
-export type FollowEntry = Author & { bio: string; createdAt: string; followedByMe: boolean };
+export type FollowEntry = Author & { bio: string; createdAt: string; followedByMe: boolean; requestedByMe?: boolean };
+
+/** Заявка на подписку на закрытый профиль. */
+export type FollowRequest = Author & { bio: string; createdAt: string; requestedAt: string };
 
 /** «Кого почитать»: сколько ваших подписок его читают и одно имя для подписи; у гостя — 0 и null. */
 export type Suggestion = FollowEntry & { followerCount: number; mutualCount: number; mutualName: string | null };
@@ -356,6 +365,8 @@ export type AccountSettings = {
   twoFactor: { enabled: boolean; backupCodesLeft?: number };
   /** Сеанс, которым не пользовались столько дней, закрывается сам. */
   sessionTtlDays: number;
+  /** Закрытый профиль. */
+  privateProfile?: boolean;
 };
 
 /** Пароль (или код из SMS) верный, дальше — шесть цифр из приложения. */
@@ -398,6 +409,10 @@ export type NotificationKind =
   /** Процитировали вашу запись; `post` — сама цитата. */
   | 'quote'
   | 'follow'
+  /** Просят подписаться на закрытый профиль. */
+  | 'follow_request'
+  /** Владелец закрытого профиля принял вашу заявку. */
+  | 'follow_accept'
   | 'message'
   | 'chat_message'
   | 'chat_invite'
@@ -794,11 +809,29 @@ const realApi = {
       `/users/${encodeURIComponent(username)}/following${cursor != null ? `?cursor=${cursor}` : ''}`,
     ),
 
+  /** Заявки на подписку на свой закрытый профиль — свежие сверху. */
+  followRequests: () => request<{ users: FollowRequest[] }>('/users/me/follow-requests'),
+
+  acceptFollowRequest: (username: string) =>
+    request<{ ok: true; followerCount: number }>(`/users/me/follow-requests/${encodeURIComponent(username)}/accept`, { method: 'POST' }),
+
+  declineFollowRequest: (username: string) =>
+    request<{ ok: true }>(`/users/me/follow-requests/${encodeURIComponent(username)}`, { method: 'DELETE' }),
+
+  /** Убрать подписчика — без события. */
+  removeFollower: (username: string) =>
+    request<{ ok: true; followerCount: number }>(`/users/me/followers/${encodeURIComponent(username)}`, { method: 'DELETE' }),
+
+  /** Закрыть или открыть профиль; открытие принимает все ждущие заявки. */
+  setPrivateProfile: (on: boolean) =>
+    request<{ privateProfile: boolean; accepted: number }>('/account/private', { method: 'PUT', body: body({ private: on }) }),
+
   /** Пять человек, на которых стоит подписаться, — сперва те, кого читают ваши подписки. */
   suggestions: () => request<{ users: Suggestion[] }>('/users/suggestions'),
 
+  /** На закрытый профиль подписка — заявка: `requested: true`, `followedByMe` — false до ответа. */
   setFollow: (username: string, following: boolean) =>
-    request<{ followedByMe: boolean; followerCount: number }>(
+    request<{ followedByMe: boolean; followerCount: number; requested?: boolean }>(
       `/users/${encodeURIComponent(username)}/follow`,
       { method: following ? 'PUT' : 'DELETE' },
     ),

@@ -112,6 +112,10 @@ function describe(n) {
       return { title: `${who} процитировал(а) вашу запись`, body: cut(n.post_body ?? ''), url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
     case 'follow':
       return { title: 'Хроника', body: `${who} подписался(ась) на вас`, url: `/u/${n.actor_username}`, tag: `follow-${n.actor_id}` };
+    case 'follow_request':
+      return { title: 'Хроника', body: `${who} просит подписаться на вас`, url: '/requests', tag: `follow-${n.actor_id}` };
+    case 'follow_accept':
+      return { title: 'Хроника', body: `${who} принял(а) вашу заявку на подписку`, url: `/u/${n.actor_username}`, tag: `follow-${n.actor_id}` };
     case 'new_login': {
       let device = 'Новое устройство';
       try {

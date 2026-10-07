@@ -71,8 +71,11 @@ export function SuggestedPeople({ variant = 'rail' }: { variant?: 'rail' | 'plai
     setBusy(p.id);
     setError(null);
     try {
-      const res = await api.setFollow(p.username, !p.followedByMe);
-      setPeople((list) => list?.map((x) => (x.id === p.id ? { ...x, followedByMe: res.followedByMe } : x)) ?? list);
+      // Закрытый профиль отвечает заявкой — её отзывает та же кнопка.
+      const res = await api.setFollow(p.username, !(p.followedByMe || p.requestedByMe));
+      setPeople(
+        (list) => list?.map((x) => (x.id === p.id ? { ...x, followedByMe: res.followedByMe, requestedByMe: Boolean(res.requested) } : x)) ?? list,
+      );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось подписаться');
     } finally {
@@ -111,13 +114,13 @@ export function SuggestedPeople({ variant = 'rail' }: { variant?: 'rail' | 'plai
             </Link>
             {user && (
               <button
-                className={p.followedByMe ? 'btn ghost small' : 'btn small'}
+                className={p.followedByMe || p.requestedByMe ? 'btn ghost small' : 'btn small'}
                 type="button"
                 disabled={busy === p.id}
                 aria-label={p.followedByMe ? `Отписаться от ${p.displayName}` : `Подписаться на ${p.displayName}`}
                 onClick={() => void toggle(p)}
               >
-                {p.followedByMe ? 'Вы подписаны' : 'Подписаться'}
+                {p.followedByMe ? 'Вы подписаны' : p.requestedByMe ? 'Заявка отправлена' : 'Подписаться'}
               </button>
             )}
           </li>

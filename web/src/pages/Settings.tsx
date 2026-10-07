@@ -97,6 +97,7 @@ export function Settings() {
         )}
 
         {account && <PhoneBlock account={account} onChange={reload} />}
+        {account && <PrivateProfile initial={Boolean(account.privateProfile)} />}
         {account && (
           <PrivacyChoice
             field="lastSeen"
@@ -322,6 +323,72 @@ function PhoneBlock({ account, onChange }: { account: AccountSettings; onChange:
             </button>
           </div>
         </form>
+      )}
+    </section>
+  );
+}
+
+/* ─ Закрытый профиль ─────────────────────────────────────────────────────── */
+
+/**
+ * Открытый или закрытый профиль. Закрыть — нынешние подписчики остаются, новые
+ * приходят заявками. Открыть — все ждущие заявки принимаются: держать их незачем.
+ */
+function PrivateProfile({ initial }: { initial: boolean }) {
+  const [value, setValue] = useState(initial);
+  const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function choose(next: boolean) {
+    const before = value;
+    setValue(next);
+    setStatus(null);
+    try {
+      const res = await api.setPrivateProfile(next);
+      setStatus({
+        ok: true,
+        text: res.accepted > 0 ? `Сохранено. Ждавшие заявки приняты: ${res.accepted}` : 'Сохранено',
+      });
+    } catch (err) {
+      setValue(before);
+      setStatus({ ok: false, text: errorText(err, 'Не удалось сохранить') });
+    }
+  }
+
+  return (
+    <section className="settings-block" aria-labelledby="settings-private">
+      <h2 className="settings-title" id="settings-private">
+        Кто видит мои записи
+      </h2>
+      <fieldset className="choices">
+        <legend className="sr-only">Кто видит мои записи</legend>
+        <label className="choice">
+          <input type="radio" name="private-profile" checked={!value} onChange={() => void choose(false)} />
+          <span>
+            <strong>Все</strong>
+            <span className="choice-hint">Открытый профиль: подписаться может любой.</span>
+          </span>
+        </label>
+        <label className="choice">
+          <input type="radio" name="private-profile" checked={value} onChange={() => void choose(true)} />
+          <span>
+            <strong>Только подписчики</strong>
+            <span className="choice-hint">Закрытый профиль: подписка — по заявке, которую вы принимаете.</span>
+          </span>
+        </label>
+      </fieldset>
+      <p className="settings-note">
+        Имя, «о себе» и число записей видны всем. Записи закрытого профиля нельзя репостить и цитировать.
+        {value && (
+          <>
+            {' '}
+            <Link to="/requests">Заявки на подписку</Link>
+          </>
+        )}
+      </p>
+      {status && (
+        <p className={status.ok ? 'settings-status' : 'error'} role="status">
+          {status.text}
+        </p>
       )}
     </section>
   );

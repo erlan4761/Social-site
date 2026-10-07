@@ -21,7 +21,10 @@ function targetOf(event: NotificationItem) {
     case 'quote':
       return event.post ? `/p/${event.post.id}` : profile;
     case 'follow':
+    case 'follow_accept':
       return profile;
+    case 'follow_request':
+      return '/requests';
     case 'message':
       return `/messages/${event.actor.username}`;
     case 'chat_message':
@@ -55,6 +58,10 @@ function lineOf(event: NotificationItem) {
       return `${who} процитировал вашу запись`;
     case 'follow':
       return `${who} подписался на вас`;
+    case 'follow_request':
+      return `${who} просит подписаться на вас`;
+    case 'follow_accept':
+      return `${who} принял вашу заявку на подписку`;
     case 'message':
       return `${who} написал вам`;
     case 'chat_message':
