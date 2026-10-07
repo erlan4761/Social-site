@@ -31,7 +31,7 @@ export const PAGE_MAX = 512 * 1024;
 export const IMAGE_MAX = 3 * 1024 * 1024;
 const TIMEOUT_MS = 5_000;
 const REDIRECTS = 3;
-const UA = 'Mozilla/5.0 (compatible; ChronikaPreview/1.0; +link preview)';
+const UA = 'Mozilla/5.0 (compatible; DuetPreview/1.0; +link preview)';
 export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'];
 
 /* ─ Какие адреса можно ────────────────────────────────────────────────── */

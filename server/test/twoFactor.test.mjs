@@ -59,7 +59,7 @@ test('окно ±30 секунд и запрет повтора', () => {
 
 test('адрес для QR — то, что понимают приложения', () => {
   const uri = otpauthUri('nina', 'JBSWY3DPEHPK3PXP');
-  assert.match(uri, /^otpauth:\/\/totp\/%D0%A5%D1%80%D0%BE%D0%BD%D0%B8%D0%BA%D0%B0:nina\?secret=JBSWY3DPEHPK3PXP&/);
-  assert.match(uri, /issuer=%D0%A5%D1%80%D0%BE%D0%BD%D0%B8%D0%BA%D0%B0/);
+  assert.match(uri, /^otpauth:\/\/totp\/Duet:nina\?secret=JBSWY3DPEHPK3PXP&/);
+  assert.match(uri, /issuer=Duet&/);
   assert.match(uri, /digits=6&period=30$/);
 });

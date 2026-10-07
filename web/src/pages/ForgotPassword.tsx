@@ -28,7 +28,7 @@ export function ForgotPassword() {
   return (
     <div className="center">
       <div className="auth">
-        <span className="wordmark">хроника</span>
+        <span className="wordmark">duet</span>
         <p className="auth-lede">
           Укажите email, с которым регистрировались, — пришлём ссылку для нового пароля.
         </p>

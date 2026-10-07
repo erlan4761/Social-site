@@ -329,7 +329,7 @@ export const authApi = {
       convs.get(other)!.messages.push({ id: m.id, from: m.fromId === u.id ? 'me' : nameOf(m.fromId), body: m.body, createdAt: m.createdAt });
     }
     return tick({
-      format: 'hronika-export/1',
+      format: 'duet-export/1',
       exportedAt: new Date().toISOString(),
       profile: { username: u.username, displayName: u.displayName, bio: u.bio, email: u.email, phone: u.phone ?? null, createdAt: u.createdAt },
       posts: db.posts.filter((x) => x.authorId === u.id).map((x) => ({ id: x.id, body: x.body, createdAt: x.createdAt })),

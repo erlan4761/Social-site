@@ -81,7 +81,7 @@ export function exportFor(userId) {
   }));
 
   return {
-    format: 'hronika-export/1',
+    format: 'duet-export/1',
     exportedAt: new Date().toISOString(),
     profile: {
       username: u.username,

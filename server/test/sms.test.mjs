@@ -23,7 +23,7 @@ before(async () => {
   Object.assign(process.env, {
     SMS_PROVIDER: 'smsru',
     SMSRU_API_ID: 'test-api-id',
-    SMSRU_FROM: 'Hronika',
+    SMSRU_FROM: 'Duet',
     SMSRU_API_BASE: `http://127.0.0.1:${server.address().port}`,
   });
   // Провайдер выбирается при загрузке модуля — поэтому импорт после настройки.
@@ -33,14 +33,14 @@ after(() => server.close());
 
 test('отправляет форму, которую ждёт SMS.ru', async () => {
   reply = { status: 'OK', sms: { 996555123456: { status: 'OK', status_code: 100, sms_id: '1' } } };
-  await sendSms('+996555123456', 'Хроника: код 123456.');
+  await sendSms('+996555123456', 'Duet: код 123456.');
   const { path, form } = received.at(-1);
   assert.equal(path, '/sms/send');
   assert.equal(form.get('api_id'), 'test-api-id');
   assert.equal(form.get('to'), '996555123456', 'номер — без плюса');
-  assert.equal(form.get('msg'), 'Хроника: код 123456.');
+  assert.equal(form.get('msg'), 'Duet: код 123456.');
   assert.equal(form.get('json'), '1');
-  assert.equal(form.get('from'), 'Hronika');
+  assert.equal(form.get('from'), 'Duet');
 });
 
 test('общая ошибка SMS.ru — SmsError, хоть HTTP и 200', async () => {

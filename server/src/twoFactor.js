@@ -23,7 +23,7 @@ const WINDOW = 1;
 const TICKET_TTL_MS = 5 * 60_000;
 const TICKET_ATTEMPTS = 5;
 export const BACKUP_CODES = 10;
-export const ISSUER = 'Хроника';
+export const ISSUER = 'Duet';
 
 /* ─ base32 (RFC 4648, без «=»): так секрет понимают приложения ─ */
 

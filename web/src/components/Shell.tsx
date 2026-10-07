@@ -288,7 +288,7 @@ function ShellLayout() {
         {!wide && !fullscreenChat && (
           <header className="topbar">
             <Link className="wordmark" to="/">
-              хроника
+              duet
             </Link>
             <div className="topbar-search">
               <SearchBox />
@@ -303,7 +303,7 @@ function ShellLayout() {
             {wide && (
               <>
                 <Link className="wordmark" to="/">
-                  хроника
+                  duet
                 </Link>
                 <div className="search-slot">
                   <SearchBox />
@@ -405,7 +405,7 @@ function ShellLayout() {
             <div className="aside-slot" ref={setAsideSlot} />
 
             <p className="aside-foot">
-              «Хроника» — спокойный дневник.{' '}
+              Duet — социальная сеть и мессенджер.{' '}
               <a href={REPO} target="_blank" rel="noreferrer">
                 Исходный код
               </a>

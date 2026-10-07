@@ -1,5 +1,5 @@
 ﻿<#
-  Открывает локально запущенную Хронику в интернет через бесплатный туннель
+  Открывает локально запущенный Duet в интернет через бесплатный туннель
   Cloudflare: сервер работает на этом компьютере, а наружу смотрит адрес вида
   https://что-то-случайное.trycloudflare.com. Сайт доступен, пока открыто это
   окно; адрес новый при каждом запуске. Ctrl+C останавливает и сервер, и туннель.
@@ -11,13 +11,22 @@ param(
   [string]$Cloudflared = "$env:USERPROFILE\tools\cloudflared.exe",
   # Отдельно от server\data: там локальная разработка, а сюда пишут живые
   # люди — смешивать тестовые аккаунты с настоящими незачем.
-  [string]$DataDir = "$env:USERPROFILE\hronika-data",
+  # Пусто — %USERPROFILE%\duet-data (или прежняя hronika-data, см. ниже).
+  [string]$DataDir = '',
   [int]$Port = 3001,
   [switch]$SkipBuild
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+
+if (-not $DataDir) {
+  $DataDir = "$env:USERPROFILE\duet-data"
+  # До переименования данные жили в hronika-data: новой папки нет, а старая
+  # есть — берём старую, иначе живые аккаунты «пропали» бы после обновления.
+  $legacy = "$env:USERPROFILE\hronika-data"
+  if (-not (Test-Path $DataDir) -and (Test-Path $legacy)) { $DataDir = $legacy }
+}
 
 if (-not (Test-Path $Cloudflared)) {
   $onPath = Get-Command cloudflared -ErrorAction SilentlyContinue
@@ -74,7 +83,7 @@ try {
     -WorkingDirectory $root -NoNewWindow -PassThru
 
   Write-Host ''
-  Write-Host "  Хроника открыта в интернете: $url" -ForegroundColor Green
+  Write-Host "  Duet открыт в интернете: $url" -ForegroundColor Green
   Write-Host "  Данные: $DataDir"
   Write-Host '  Остановить — Ctrl+C. Письма сброса пароля печатаются ниже.'
   Write-Host ''
