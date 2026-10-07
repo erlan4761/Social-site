@@ -11,6 +11,7 @@ import { QuoteCard, QuoteDialog, Repeat, RepostMenu } from './PostShare';
 import { Monogram } from './Monogram';
 import { Icon } from './Icon';
 import { useViewTracker } from '../postViews';
+import { ContinueDialog } from './ContinueDialog';
 import { ReportDialog } from './ReportDialog';
 
 /** Править запись можно двое суток — как и сообщение. */
@@ -138,6 +139,9 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
   const [quoted, setQuoted] = useState<number | null>(null);
   const [shareError, setShareError] = useState<string | null>(null);
   const [pinError, setPinError] = useState<string | null>(null);
+  const [continuing, setContinuing] = useState(false);
+  // Продолжают последнюю запись своей ветки (или одиночную): ветка линейна.
+  const canContinue = user?.id === post.author.id && !post.thread?.nextId;
   // Закрепить можно свою запись; репост сюда не попадает — он рисуется оригиналом.
   const canPin = user?.id === post.author.id;
   const { author } = post;
@@ -276,6 +280,11 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
             <span className="post-edited" title={`Изменено ${fullDate(post.editedAt)}`}>
               изменено
             </span>
+          )}
+          {post.thread && (
+            <Link className="post-thread" to={`/p/${post.thread.rootId}`} title="Открыть всю ветку">
+              Ветка: {post.thread.position} из {post.thread.length}
+            </Link>
           )}
         </header>
 
@@ -417,6 +426,12 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
               </button>
             )}
 
+            {canContinue && (
+              <button className="post-delete" type="button" title="Следующая запись этой ветки" onClick={() => setContinuing(true)}>
+                Продолжить
+              </button>
+            )}
+
             {canDelete && (
               <button className="post-delete" type="button" onClick={() => onDelete(post.id)}>
                 Удалить
@@ -472,6 +487,19 @@ function PostCard({ post, fresh, canDelete, openThread = false, highlight, onDel
               onPatch(post.id, { repostCount: repostCount + 1 });
               if (onCreated) onCreated(quote);
               else setQuoted(quote.id);
+            }}
+          />
+        )}
+
+        {continuing && (
+          <ContinueDialog
+            post={post}
+            onClose={() => setContinuing(false)}
+            onPublished={(next) => {
+              const base = post.thread ?? { rootId: post.id, position: 1, length: 1, prevId: null, nextId: null };
+              onPatch(post.id, { thread: { ...base, nextId: next.id, length: next.thread?.length ?? base.length + 1 } });
+              if (onCreated) onCreated(next);
+              else setQuoted(next.id);
             }}
           />
         )}

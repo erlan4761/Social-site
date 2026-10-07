@@ -2,7 +2,7 @@ import { type ArchiveMonth, type Page, type TagStat } from '../../api';
 import { tagFromParam, tagsIn } from '../../hashtags';
 import { type DbPost, type DbComment, db, id, tick, fail } from '../store';
 import { byId, byName, me, requireMe, hidden, postHidden, canSeeAuthor, visiblePosts } from '../model/people';
-import { searchTerms, matchesTerms, visibleComments, toPost, toComment, repostCountOf, PAGE, PERIOD_RE, type SearchPage } from '../model/posts';
+import { searchTerms, matchesTerms, visibleComments, toPost, toComment, repostCountOf, threadOfPost, PAGE, PERIOD_RE, type SearchPage } from '../model/posts';
 import { notify, dropNotification } from '../model/notifications';
 
 /** Методы витрины: лента, записи, комментарии, поиск, архив, закладки. */
@@ -167,8 +167,17 @@ export const postsApi = {
     return tick(result);
   },
 
-  createPost: (text: string, media?: File | File[] | null, quoteOf?: number | null) => {
+  createPost: (text: string, media?: File | File[] | null, quoteOf?: number | null, continues?: number | null) => {
     const u = requireMe()!;
+    // Продолжение ветки — как на сервере: своя, не репост, без продолжения.
+    let continued: DbPost | undefined;
+    if (continues != null) {
+      continued = db.posts.find((x) => x.id === continues);
+      if (!continued) fail(404, 'Запись для продолжения не найдена');
+      if (continued!.authorId !== u.id) fail(403, 'Продолжить можно только свою запись');
+      if (continued!.repostOf != null) fail(400, 'Репост не продолжить — продолжите свою запись');
+      if (db.posts.some((x) => x.continuesId === continues)) fail(409, 'У записи уже есть продолжение — продолжите последнюю запись ветки');
+    }
     // Цитата репоста — цитата оригинала, как на сервере.
     let quoted: DbPost | undefined;
     if (quoteOf != null) {
@@ -196,10 +205,11 @@ export const postsApi = {
       media: gallery[0] ?? null,
       gallery,
       quoteOf: quoted?.id ?? null,
+      continuesId: continued?.id ?? null,
     };
     db.posts.push(p);
-    // Запись из композера — черновик исполнен; цитата пишется в своём окне.
-    if (!quoted) clearPostDraft(u.id);
+    // Запись из композера — черновик исполнен; цитата и продолжение — в своих окнах.
+    if (!quoted && !continued) clearPostDraft(u.id);
     if (quoted) notify({ userId: quoted.authorId, actorId: u.id, kind: 'quote', postId: p.id });
     notifyPostMentions({ authorId: u.id, postId: p.id, body, skip: quoted ? [quoted.authorId] : [] });
     return tick({ post: toPost(p) });
@@ -234,6 +244,9 @@ export const postsApi = {
     if (original) dropNotification({ userId: original.authorId, actorId: u.id, kind: 'repost', postId: original.id });
     // Репосты уходят вместе с оригиналом — каскад repost_of_id; цитаты остаются.
     const gone = new Set([postId, ...db.posts.filter((x) => x.repostOf === postId).map((x) => x.id)]);
+    // Удалили середину ветки — следующая продолжает предыдущую.
+    const nextInThread = db.posts.find((x) => x.continuesId === postId);
+    if (nextInThread) nextInThread.continuesId = p!.continuesId ?? null;
     // Закрепление снимается само — ON DELETE SET NULL.
     if (u.pinnedPostId != null && gone.has(u.pinnedPostId)) u.pinnedPostId = null;
     db.posts = db.posts.filter((x) => !gone.has(x.id));
@@ -358,6 +371,15 @@ export const postsApi = {
     db.comments = db.comments.filter((x) => x.id !== commentId);
     db.notifications = db.notifications.filter((n) => n.commentId !== commentId);
     return tick({ ok: true as const });
+  },
+
+  postThread: (postId: number) => {
+    const p = visiblePosts().find((x) => x.id === postId);
+    if (!p) fail(404, 'Пост не найден');
+    const rootId = threadOfPost(p!)?.rootId ?? p!.id;
+    const chain: DbPost[] = [];
+    for (let cur = db.posts.find((x) => x.id === rootId); cur; cur = db.posts.find((x) => x.continuesId === cur!.id)) chain.push(cur);
+    return tick({ posts: chain.map(toPost) });
   },
 
   post: (postId: number) => {

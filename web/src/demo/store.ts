@@ -60,6 +60,8 @@ export type DbPost = {
   repostOf?: number | null;
   /** Цитата — как posts.quote_of_id (остаётся, когда оригинала нет). */
   quoteOf?: number | null;
+  /** Ветка — как posts.continues_id: какую свою запись эта продолжает. */
+  continuesId?: number | null;
   media: Media | null;
 };
 

@@ -189,3 +189,30 @@ describe('запись закрытого профиля', () => {
     expect(share).toHaveAttribute('title', 'Записи закрытого профиля не репостят');
   });
 });
+
+describe('ветки записей', () => {
+  it('в ветке — «Ветка: 2 из 3» ссылкой на первую; у не последней нет «Продолжить»', () => {
+    show(post({ thread: { rootId: 3, position: 2, length: 3, prevId: 3, nextId: 7 } }));
+    expect(screen.getByRole('link', { name: 'Ветка: 2 из 3' })).toHaveAttribute('href', '/p/3');
+    expect(screen.queryByRole('button', { name: 'Продолжить' })).toBeNull();
+  });
+
+  it('«Продолжить» — окно с предыдущей, запрос с continues, запись становится веткой', async () => {
+    const next = post({ id: 6, body: 'Дальше', thread: { rootId: 5, position: 2, length: 2, prevId: 5, nextId: null } });
+    const create = vi.spyOn(api, 'createPost').mockResolvedValue({ post: next });
+    const onPatch = show(post());
+    fireEvent.click(screen.getByRole('button', { name: 'Продолжить' }));
+    expect(screen.getByRole('dialog', { name: 'Продолжить ветку' })).toHaveTextContent('Проявил плёнку');
+    fireEvent.change(screen.getByLabelText('Следующая запись ветки'), { target: { value: 'Дальше' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Опубликовать' }));
+    });
+    expect(create).toHaveBeenCalledWith('Дальше', null, null, 5);
+    expect(onPatch).toHaveBeenCalledWith(5, { thread: { rootId: 5, position: 1, length: 2, prevId: null, nextId: 6 } });
+  });
+
+  it('чужая запись — без «Продолжить»', () => {
+    show(post({ author: { id: 2, username: 'nina', displayName: 'Нина', avatarUrl: null } }));
+    expect(screen.queryByRole('button', { name: 'Продолжить' })).toBeNull();
+  });
+});

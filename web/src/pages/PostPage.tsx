@@ -11,6 +11,8 @@ export function PostPage() {
   const navigate = useNavigate();
 
   const [post, setPost] = useState<Post | null>(null);
+  /** Ветка, если запись в ней, — по порядку; иначе null. */
+  const [chain, setChain] = useState<Post[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,9 +23,17 @@ export function PostPage() {
     setMissing(false);
     setError(null);
 
+    setChain(null);
     api
       .post(Number(id))
-      .then((res) => !cancelled && setPost(res.post))
+      .then(async (res) => {
+        if (cancelled) return;
+        setPost(res.post);
+        if (res.post.thread) {
+          const whole = await api.postThread(res.post.id).catch(() => null);
+          if (!cancelled && whole) setChain(whole.posts);
+        }
+      })
       .catch((err) => {
         if (cancelled) return;
         // Сервер отвечает 404 и на мусорный id, и на запись автора,
@@ -49,8 +59,14 @@ export function PostPage() {
     }
   }
 
-  function patch(_postId: number, changes: Partial<Post>) {
-    setPost((prev) => (prev ? { ...prev, ...changes } : prev));
+  function patch(postId: number, changes: Partial<Post>) {
+    setPost((prev) => (prev && prev.id === postId ? { ...prev, ...changes } : prev));
+    setChain((prev) => prev?.map((x) => (x.id === postId ? { ...x, ...changes } : x)) ?? prev);
+  }
+
+  /** Продолжили ветку здесь же — новая запись встаёт в конец цепочки. */
+  function appended(next: Post) {
+    setChain((prev) => [...(prev ?? (post ? [post] : [])), next]);
   }
 
   return (
@@ -72,7 +88,24 @@ export function PostPage() {
           Её удалили или она недоступна.
         </p>
       ) : (
-        post && (
+        post &&
+        (chain && chain.length > 1 ? (
+          // Ветка целиком: открытая запись — с раскрытыми ответами, остальные — свёрнуты.
+          <div className="rail thread-chain" aria-label={`Ветка из ${chain.length} записей`}>
+            {chain.map((x) => (
+              <div key={x.id} className={x.id === post.id ? 'thread-item current' : 'thread-item'}>
+                <PostRow
+                  post={x}
+                  canDelete={x.author.id === user?.id}
+                  openThread={x.id === post.id}
+                  onDelete={(postId) => void remove(postId)}
+                  onPatch={patch}
+                  onCreated={appended}
+                />
+              </div>
+            ))}
+          </div>
+        ) : (
           <div className="rail single">
             <PostRow
               post={post}
@@ -80,9 +113,10 @@ export function PostPage() {
               openThread
               onDelete={(postId) => void remove(postId)}
               onPatch={patch}
+              onCreated={appended}
             />
           </div>
-        )
+        ))
       )}
     </>
   );
