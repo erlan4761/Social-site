@@ -56,6 +56,36 @@ function sharedOf(row, depth) {
   return { kind, post: original ? serializePost(original, depth + 1) : null };
 }
 
+/**
+ * Ветка — цепочка своих записей, каждая продолжает предыдущую. Для записи в ветке:
+ * корень, номер и длина; у одиночной — null. Цепочки короткие и свои, поэтому
+ * два рекурсивных запроса на запись в ветке — честная цена.
+ */
+function threadOf(row) {
+  if (!row.continues_id && !row.next_id) return null;
+  const up = db.prepare(`
+    WITH RECURSIVE up(id, prev) AS (
+      SELECT id, continues_id FROM posts WHERE id = ?
+      UNION ALL SELECT p.id, p.continues_id FROM posts p JOIN up ON p.id = up.prev
+    )
+    SELECT COUNT(*) AS n, (SELECT id FROM up WHERE prev IS NULL) AS root FROM up
+  `).get(row.id);
+  const down = db.prepare(`
+    WITH RECURSIVE down(id) AS (
+      SELECT id FROM posts WHERE continues_id = ?
+      UNION ALL SELECT p.id FROM posts p JOIN down ON p.continues_id = down.id
+    )
+    SELECT COUNT(*) AS n FROM down
+  `).get(row.id);
+  return {
+    rootId: up.root ?? row.id,
+    position: up.n,
+    length: up.n + down.n,
+    prevId: row.continues_id ?? null,
+    nextId: row.next_id ?? null,
+  };
+}
+
 const serializePost = (row, depth) => ({
   id: row.id,
   body: row.body,
@@ -79,6 +109,8 @@ const serializePost = (row, depth) => ({
   pinned: Boolean(row.pinned),
   // Сколько человек видели запись — без самого автора.
   viewCount: row.view_count ?? 0,
+  // Место в ветке: «2 из 3» и куда вести «вся ветка».
+  thread: threadOf(row),
   shared: sharedOf(row, depth),
   author: {
     id: row.author_id,
@@ -122,7 +154,8 @@ const serializeComment = (row) => ({
 // (у гостя он NULL, и оба EXISTS честно дают 0).
 export const POST_COLUMNS = `
   p.id, p.body, p.created_at, p.edited_at, p.author_id, p.media_path, p.media_type, p.media_mime, p.media_name,
-  p.repost_of_id, p.quote_of_id, :viewerId AS viewer_id,
+  p.repost_of_id, p.quote_of_id, p.continues_id, :viewerId AS viewer_id,
+  (SELECT nx.id FROM posts nx WHERE nx.continues_id = p.id) AS next_id,
   u.username, u.display_name, u.avatar_path AS author_avatar_path, u.pinned_post_id IS p.id AS pinned, u.private AS author_private,
   (SELECT COUNT(*) FROM likes    l WHERE l.post_id = p.id) AS like_count,
   (SELECT COUNT(*) FROM comments c
@@ -267,6 +300,31 @@ router.get('/:id', (req, res) => {
   res.json({ post: serialize(row) });
 });
 
+/**
+ * Вся ветка, в которую входит запись, — от первой до последней. Записи одной
+ * ветки — одного автора, поэтому видимость одна на всех: видна эта — видны все.
+ */
+router.get('/:id/thread', (req, res) => {
+  const id = intParam(req.params.id);
+  if (!id) return res.status(404).json({ error: 'Пост не найден' });
+  const viewerId = req.user?.id ?? null;
+  const row = db.prepare(`
+    SELECT ${POST_COLUMNS}
+    FROM posts p JOIN users u ON u.id = p.author_id
+    WHERE p.id = :id AND ${POST_VISIBLE_SQL} AND ${REPOST_VISIBLE_SQL}
+  `).get({ id, viewerId });
+  if (!row) return res.status(404).json({ error: 'Пост не найден' });
+  const rootId = threadOf(row)?.rootId ?? row.id;
+  const ids = db.prepare(`
+    WITH RECURSIVE down(id, n) AS (
+      SELECT ?, 0
+      UNION ALL SELECT p.id, down.n + 1 FROM posts p JOIN down ON p.continues_id = down.id
+    )
+    SELECT id FROM down ORDER BY n
+  `).all(rootId).map((r) => r.id);
+  res.json({ posts: ids.map((x) => postById(x, viewerId)).filter(Boolean) });
+});
+
 router.post('/', requireAuth, mediaUpload.array('media', GALLERY_MAX), async (req, res, next) => {
   const stored = [];
   try {
@@ -290,14 +348,29 @@ router.post('/', requireAuth, mediaUpload.array('media', GALLERY_MAX), async (re
       if (isPrivate(quoted.author_id)) return res.status(403).json({ error: PRIVATE_SHARE_MESSAGE });
     }
 
+    // Продолжение ветки: своя запись, не репост и ещё без продолжения — ветка
+    // линейна, продолжают её последнюю запись.
+    let continued = null;
+    if (req.body?.continues != null && req.body.continues !== '') {
+      const prevId = intParam(String(req.body.continues));
+      continued = prevId ? db.prepare('SELECT id, author_id, repost_of_id FROM posts WHERE id = ?').get(prevId) : null;
+      if (!continued) return res.status(404).json({ error: 'Запись для продолжения не найдена' });
+      if (continued.author_id !== req.user.id) return res.status(403).json({ error: 'Продолжить можно только свою запись' });
+      if (continued.repost_of_id) return res.status(400).json({ error: 'Репост не продолжить — продолжите свою запись' });
+      if (db.prepare('SELECT 1 FROM posts WHERE continues_id = ?').get(continued.id)) {
+        return res.status(409).json({ error: 'У записи уже есть продолжение — продолжите последнюю запись ветки' });
+      }
+    }
+
     // Несколько файлов — галерея: только фото и видео. Аудио — одно, само по себе.
     const names = files.map((f) => v.str(fileName(f.originalname), 'имя файла', { max: 200 }));
     for (const f of files) {
       stored.push(await storeUpload(f.buffer, { allowedKinds: files.length > 1 ? ['image', 'video'] : ['image', 'video', 'audio'], into: 'media' }));
     }
-    const postId = insertPost({ authorId: req.user.id, body, stored, names, quoted });
-    // Запись из композера — его черновик исполнен. Цитата пишется в своём окне.
-    if (!quoted) clearPostDraft(req.user.id);
+    const postId = insertPost({ authorId: req.user.id, body, stored, names, quoted, continuesId: continued?.id ?? null });
+    // Запись из композера — его черновик исполнен. Цитата и продолжение ветки
+    // пишутся в своих окнах.
+    if (!quoted && !continued) clearPostDraft(req.user.id);
     res.status(201).json({ post: postById(postId, req.user.id) });
   } catch (err) {
     // Файлы уже на диске, а записи нет — сирот не оставляем.
@@ -311,12 +384,12 @@ router.post('/', requireAuth, mediaUpload.array('media', GALLERY_MAX), async (re
  * строка, снимки, теги, событие процитированному и упоминания.
  * Возвращает id записи.
  */
-export function insertPost({ authorId, body, stored = [], names = [], quoted = null }) {
+export function insertPost({ authorId, body, stored = [], names = [], quoted = null, continuesId = null }) {
   const first = stored[0] ?? null;
   const info = db.prepare(`
-    INSERT INTO posts (author_id, body, media_path, media_type, media_mime, media_name, quote_of_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(authorId, body, first?.filename ?? null, first?.kind ?? null, first?.mime ?? null, names[0] ?? null, quoted?.id ?? null, nowIso());
+    INSERT INTO posts (author_id, body, media_path, media_type, media_mime, media_name, quote_of_id, continues_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(authorId, body, first?.filename ?? null, first?.kind ?? null, first?.mime ?? null, names[0] ?? null, quoted?.id ?? null, continuesId, nowIso());
   const postId = Number(info.lastInsertRowid);
   const insertMedia = db.prepare('INSERT INTO post_media (post_id, position, path, type, mime, name) VALUES (?, ?, ?, ?, ?, ?)');
   stored.forEach((s, i) => insertMedia.run(postId, i, s.filename, s.kind, s.mime, names[i]));
@@ -383,7 +456,7 @@ router.delete('/:id', requireAuth, (req, res) => {
   const id = intParam(req.params.id);
   if (!id) return res.status(400).json({ error: 'Некорректный id' });
 
-  const post = db.prepare('SELECT author_id, media_path, repost_of_id FROM posts WHERE id = ?').get(id);
+  const post = db.prepare('SELECT author_id, media_path, repost_of_id, continues_id FROM posts WHERE id = ?').get(id);
   if (!post) return res.status(404).json({ error: 'Пост не найден' });
   if (post.author_id !== req.user.id) return res.status(403).json({ error: 'Это не ваш пост' });
   if (post.repost_of_id) {
@@ -394,7 +467,11 @@ router.delete('/:id', requireAuth, (req, res) => {
   // Likes, comments and gallery rows go with it via ON DELETE CASCADE; the
   // files on disk do not — collect them first.
   const files = galleryPaths([id]);
+  // Удалили запись из середины ветки — следующая продолжает предыдущую:
+  // ветка не рвётся на две.
+  const next = db.prepare('SELECT id FROM posts WHERE continues_id = ?').get(id);
   db.prepare('DELETE FROM posts WHERE id = ?').run(id);
+  if (next && post.continues_id) db.prepare('UPDATE posts SET continues_id = ? WHERE id = ?').run(post.continues_id, next.id);
   for (const path of new Set([post.media_path, ...files])) deleteUpload('media', path);
   res.json({ ok: true });
 });
