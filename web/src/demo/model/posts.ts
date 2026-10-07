@@ -41,6 +41,8 @@ export const publicUser = (u: DbUser): User => ({
   bio: u.bio,
   avatarUrl: u.avatarUrl,
   createdAt: u.createdAt,
+  coverUrl: u.coverUrl ?? null,
+  links: u.links ?? [],
   // Счётчик записей учитывает блокировку: «12 записей» над пустой лентой
   // выглядели бы поломкой сайта, а не следствием собственного решения.
   postCount: visiblePosts().filter((p) => p.authorId === u.id).length,

@@ -8,6 +8,9 @@ export type DbUser = {
   pinnedPostId?: number | null;
   /** Закрытый профиль — как users.private. */
   private?: boolean;
+  /** Обложка (blob:) и ссылки профиля — как users.cover_path и users.links. */
+  coverUrl?: string | null;
+  links?: string[];
   username: string;
   displayName: string;
   bio: string;

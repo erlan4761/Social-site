@@ -763,3 +763,15 @@ describe('витрина: отложенные записи', () => {
     expect((await api.posts({ tag: 'встреча' })).posts.map((p) => p.id)).toContain(post.id);
   });
 });
+
+describe('витрина: обложка и ссылки', () => {
+  it('ссылки по тем же правилам, обложка ставится и убирается', async () => {
+    const { user } = await api.updateProfile({ displayName: 'Ерлан', bio: '', links: ['t.me/erlan', 't.me/erlan'] });
+    expect(user.links).toEqual(['https://t.me/erlan']);
+    await expect(api.updateProfile({ displayName: 'Ерлан', bio: '', links: ['ftp://x.ru'] })).rejects.toMatchObject({ status: 400 });
+    expect((await api.updateProfile({ displayName: 'Ерлан', bio: '' })).user.links).toEqual(['https://t.me/erlan']);
+    expect((await api.setCover(new File(['x'], 'c.png', { type: 'image/png' }))).user.coverUrl).toBeTruthy();
+    expect((await api.profile('demo')).user.coverUrl).toBeTruthy();
+    expect((await api.removeCover()).user.coverUrl).toBeNull();
+  });
+});

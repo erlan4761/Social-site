@@ -75,3 +75,57 @@ describe('профиль: закрытый', () => {
     expect(screen.getByText(/2 подписчика/)).toBeInTheDocument();
   });
 });
+
+describe('профиль: обложка и ссылки', () => {
+  const me = {
+    id: 1, username: 'demo', displayName: 'Ерлан', avatarUrl: null, bio: 'Снимаю', createdAt: '2026-01-01T00:00:00.000Z',
+    postCount: 0, followerCount: 5, followingCount: 2, coverUrl: '/uploads/media/cover.png', links: ['https://t.me/erlan'],
+  };
+  const open = () =>
+    render(
+      <MemoryRouter initialEntries={['/u/demo']}>
+        <Routes>
+          <Route path="/u/:username" element={<Profile />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+  it('обложка и ссылки видны; правка сохраняет ссылки и не теряет счётчики', async () => {
+    vi.spyOn(api, 'profile').mockResolvedValue({ user: me, pinnedPost: null });
+    vi.spyOn(api, 'archive').mockResolvedValue({ months: [], total: 0 });
+    vi.spyOn(api, 'posts').mockResolvedValue({ posts: [], nextCursor: null });
+    // Ответ правки — как с сервера: без счётчиков профиля вовсе (JSON не несёт undefined).
+    const { followerCount: _f, followingCount: _g, postCount: _p, ...plain } = me;
+    const update = vi.spyOn(api, 'updateProfile').mockResolvedValue({
+      user: { ...plain, links: ['https://t.me/erlan', 'https://example.com/'] },
+    });
+    const { container } = open();
+    const link = await screen.findByRole('link', { name: 't.me/erlan' });
+    expect(link).toHaveAttribute('href', 'https://t.me/erlan');
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
+    expect(container.querySelector('.profile-cover')).toHaveAttribute('src', '/uploads/media/cover.png');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Редактировать профиль' }));
+    fireEvent.change(screen.getByLabelText('Ссылка 2'), { target: { value: 'example.com' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+    });
+    expect(update).toHaveBeenCalledWith({ displayName: 'Ерлан', bio: 'Снимаю', links: ['https://t.me/erlan', 'https://example.com/'] });
+    expect(await screen.findByRole('link', { name: 'example.com' })).toBeInTheDocument();
+    expect(screen.getByText(/5 подписчиков/)).toBeInTheDocument();
+  });
+
+  it('негодная ссылка — ошибка без запроса', async () => {
+    vi.spyOn(api, 'profile').mockResolvedValue({ user: me, pinnedPost: null });
+    vi.spyOn(api, 'archive').mockResolvedValue({ months: [], total: 0 });
+    vi.spyOn(api, 'posts').mockResolvedValue({ posts: [], nextCursor: null });
+    const update = vi.spyOn(api, 'updateProfile');
+    update.mockClear();
+    open();
+    fireEvent.click(await screen.findByRole('button', { name: 'Редактировать профиль' }));
+    fireEvent.change(screen.getByLabelText('Ссылка 2'), { target: { value: 'javascript:alert(1)' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+    expect(await screen.findByText(/только на сайт/)).toBeInTheDocument();
+    expect(update).not.toHaveBeenCalled();
+  });
+});
