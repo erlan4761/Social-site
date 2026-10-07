@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { blockPairSql } from '../blocks.js';
 import { tagFromParam } from '../hashtags.js';
-import { REPOST_VISIBLE_SQL } from './posts.js';
+import { POST_VISIBLE_SQL, REPOST_VISIBLE_SQL } from './posts.js';
 
 export const router = Router();
 
@@ -22,7 +21,7 @@ router.get('/trending', (req, res) => {
   const tags = db.prepare(`
     SELECT t.tag, MAX(t.label) AS label, COUNT(*) AS count
     FROM post_tags t JOIN posts p ON p.id = t.post_id
-    WHERE p.created_at >= :since AND ${blockPairSql('p.author_id')}
+    WHERE p.created_at >= :since AND ${POST_VISIBLE_SQL}
     GROUP BY t.tag
     ORDER BY count DESC, t.tag
     LIMIT :limit
@@ -37,7 +36,7 @@ router.get('/:tag', (req, res) => {
   const row = db.prepare(`
     SELECT MAX(t.label) AS label, COUNT(*) AS count
     FROM post_tags t JOIN posts p ON p.id = t.post_id
-    WHERE t.tag = :tag AND ${blockPairSql('p.author_id')} AND ${REPOST_VISIBLE_SQL}
+    WHERE t.tag = :tag AND ${POST_VISIBLE_SQL} AND ${REPOST_VISIBLE_SQL}
   `).get({ tag, viewerId: req.user?.id ?? null });
   res.json({ tag, label: row.label ?? String(req.params.tag).replace(/^#/, '').toLowerCase(), count: row.count });
 });

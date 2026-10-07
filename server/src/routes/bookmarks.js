@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db.js';
 import { requireAuth } from '../auth.js';
-import { blockPairSql } from '../blocks.js';
-import { POST_COLUMNS, serialize } from './posts.js';
+import { POST_COLUMNS, serialize, POST_VISIBLE_SQL } from './posts.js';
 
 export const router = Router();
 
@@ -45,7 +44,7 @@ router.get('/', requireAuth, (req, res) => {
     JOIN users u ON u.id = p.author_id
     WHERE bk.user_id = :viewerId
       AND (:cursor IS NULL OR bk.id < :cursor)
-      AND ${blockPairSql('p.author_id')}
+      AND ${POST_VISIBLE_SQL}
     ORDER BY bk.id DESC
     LIMIT :limit
   `).all({ cursor, viewerId, limit: PAGE_SIZE + 1 });

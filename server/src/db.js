@@ -717,6 +717,19 @@ db.exec(`
 // Удалили запись — закрепление снимается само.
 ensureColumn('users', 'pinned_post_id', 'INTEGER REFERENCES posts(id) ON DELETE SET NULL');
 
+// Закрытый профиль (privacy.js): записи видят автор и одобренные подписчики,
+// подписка становится заявкой — до ответа владельца она живёт здесь.
+ensureColumn('users', 'private', 'INTEGER NOT NULL DEFAULT 0');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS follow_requests (
+    requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    target_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at   TEXT NOT NULL,
+    PRIMARY KEY (requester_id, target_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_follow_requests_target ON follow_requests(target_id, created_at);
+`);
+
 // Хэштеги записей (hashtags.js): ключ — для поиска, подпись — как написал автор.
 // Записи, опубликованные до хэштегов, размечаются при запуске; запись с «#» без
 // настоящего тега просто перечитывается — это дешевле отдельной отметки.

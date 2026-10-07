@@ -1,6 +1,7 @@
 import { db } from './db.js';
 import { mentionedNames } from './mentions.js';
 import { notify } from './notifications.js';
+import { canSeeAuthor } from './privacy.js';
 
 /**
  * Упоминания в ленте: `@логин` в записи или комментарии — событие «упомянул
@@ -22,9 +23,13 @@ export function notifyPostMentions({ authorId, postId, commentId = null, body, p
   const names = [...mentionedNames(body)].filter((n) => !before.has(n)).slice(0, MENTION_NOTIFY_MAX);
   if (names.length === 0) return 0;
   const users = db.prepare(`SELECT id FROM users WHERE username IN (${names.map(() => '?').join(', ')})`).all(...names);
+  // Упоминание в закрытой записи будит только тех, кто её увидит: иначе
+  // событие вело бы на «не найдено».
+  const postAuthor = db.prepare('SELECT author_id FROM posts WHERE id = ?').get(postId)?.author_id ?? authorId;
   let sent = 0;
   for (const u of users) {
     if (skip.includes(u.id)) continue;
+    if (!canSeeAuthor(u.id, postAuthor)) continue;
     if (notify({ userId: u.id, actorId: authorId, kind: 'post_mention', postId, commentId })) sent += 1;
   }
   return sent;

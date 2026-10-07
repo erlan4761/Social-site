@@ -7,6 +7,7 @@ import { deleteUpload, fileName, publicUrl, storeUpload } from '../media.js';
 import { dropNotification, notify } from '../notifications.js';
 import { notifyPostMentions } from '../postMentions.js';
 import { tagFromParam, tagsIn } from '../hashtags.js';
+import { canSeeAuthor, canSeeAuthorSql, isPrivate } from '../privacy.js';
 import * as v from '../validate.js';
 
 export const router = Router();
@@ -49,7 +50,7 @@ function sharedOf(row, depth) {
   const original = db.prepare(`
     SELECT ${POST_COLUMNS}
     FROM posts p JOIN users u ON u.id = p.author_id
-    WHERE p.id = :id AND ${blockPairSql('p.author_id')}
+    WHERE p.id = :id AND ${POST_VISIBLE_SQL}
   `).get({ id, viewerId: row.viewer_id ?? null });
   return { kind, post: original ? serializePost(original, depth + 1) : null };
 }
@@ -81,6 +82,7 @@ const serializePost = (row, depth) => ({
     username: row.username,
     displayName: row.display_name,
     avatarUrl: publicUrl('avatar', row.author_avatar_path),
+    ...(row.author_private ? { private: true } : {}),
   },
 });
 
@@ -118,7 +120,7 @@ const serializeComment = (row) => ({
 export const POST_COLUMNS = `
   p.id, p.body, p.created_at, p.edited_at, p.author_id, p.media_path, p.media_type, p.media_mime, p.media_name,
   p.repost_of_id, p.quote_of_id, :viewerId AS viewer_id,
-  u.username, u.display_name, u.avatar_path AS author_avatar_path, u.pinned_post_id IS p.id AS pinned,
+  u.username, u.display_name, u.avatar_path AS author_avatar_path, u.pinned_post_id IS p.id AS pinned, u.private AS author_private,
   (SELECT COUNT(*) FROM likes    l WHERE l.post_id = p.id) AS like_count,
   (SELECT COUNT(*) FROM comments c
     WHERE c.post_id = p.id AND ${blockPairSql('c.author_id')}) AS comment_count,
@@ -131,12 +133,15 @@ export const POST_COLUMNS = `
   EXISTS(SELECT 1 FROM posts rp2 WHERE rp2.repost_of_id = p.id AND rp2.author_id = :viewerId) AS reposted_by_me
 `;
 
+/** Видна ли запись смотрящему: не в блокировке и автор не закрыт от него. */
+export const POST_VISIBLE_SQL = `${blockPairSql('p.author_id')} AND ${canSeeAuthorSql('p.author_id')}`;
+
 /**
  * Чистый репост виден, только если виден оригинал: репост записи того, с кем
  * смотрящий в блокировке, был бы пустой рамкой — его просто нет в ленте.
  */
 export const REPOST_VISIBLE_SQL = `(p.repost_of_id IS NULL OR EXISTS (
-  SELECT 1 FROM posts o WHERE o.id = p.repost_of_id AND ${blockPairSql('o.author_id')}
+  SELECT 1 FROM posts o WHERE o.id = p.repost_of_id AND ${blockPairSql('o.author_id')} AND ${canSeeAuthorSql('o.author_id')}
 ))`;
 
 /** Numeric route param, or null when it is not a usable id. */
@@ -195,7 +200,7 @@ router.get('/', (req, res, next) => {
       FROM posts p JOIN users u ON u.id = p.author_id
       WHERE (:author IS NULL OR u.username = :author)
         AND (:cursor IS NULL OR p.id < :cursor)
-        AND ${blockPairSql('p.author_id')}
+        AND ${POST_VISIBLE_SQL}
         AND ${REPOST_VISIBLE_SQL}
         AND (
           :onlyFollowing = 0
@@ -248,7 +253,7 @@ router.get('/:id', (req, res) => {
   const row = db.prepare(`
     SELECT ${POST_COLUMNS}
     FROM posts p JOIN users u ON u.id = p.author_id
-    WHERE p.id = :id AND ${blockPairSql('p.author_id')} AND ${REPOST_VISIBLE_SQL}
+    WHERE p.id = :id AND ${POST_VISIBLE_SQL} AND ${REPOST_VISIBLE_SQL}
   `).get({ id, viewerId });
 
   // Пост автора, с которым смотрящий в блокировке, тоже «не найден»:
@@ -278,6 +283,7 @@ router.post('/', requireAuth, mediaUpload.array('media', GALLERY_MAX), async (re
       quoted = quoteId ? visiblePost(quoteId, req.user.id) : null;
       if (quoted?.repost_of_id) quoted = visiblePost(quoted.repost_of_id, req.user.id);
       if (!quoted) return res.status(404).json({ error: 'Цитируемая запись не найдена' });
+      if (isPrivate(quoted.author_id)) return res.status(403).json({ error: PRIVATE_SHARE_MESSAGE });
     }
 
     // Несколько файлов — галерея: только фото и видео. Аудио — одно, само по себе.
@@ -409,11 +415,14 @@ router.delete('/:id/pin', requireAuth, (req, res) => {
 
 /* ─ Репосты ────────────────────────────────────────────────────────────── */
 
-/** Запись, которую смотрящий видит: нет её или автор с ним в блокировке — null. */
+/** Записи закрытого профиля не расходятся дальше его подписчиков — ни репостом, ни цитатой. */
+const PRIVATE_SHARE_MESSAGE = 'Записи закрытого профиля нельзя репостить и цитировать';
+
+/** Запись, которую смотрящий видит: нет её, автор с ним в блокировке или закрыт от него — null. */
 function visiblePost(id, viewerId) {
   return db.prepare(`
     SELECT p.id, p.author_id, p.repost_of_id FROM posts p
-    WHERE p.id = :id AND ${blockPairSql('p.author_id')}
+    WHERE p.id = :id AND ${POST_VISIBLE_SQL}
   `).get({ id, viewerId }) ?? null;
 }
 
@@ -435,6 +444,7 @@ router.put('/:id/repost', requireAuth, (req, res, next) => {
     let target = visiblePost(id, req.user.id);
     if (target?.repost_of_id) target = visiblePost(target.repost_of_id, req.user.id);
     if (!target) return res.status(404).json({ error: 'Пост не найден' });
+    if (isPrivate(target.author_id)) return res.status(403).json({ error: PRIVATE_SHARE_MESSAGE });
 
     db.prepare("INSERT OR IGNORE INTO posts (author_id, body, repost_of_id, created_at) VALUES (?, '', ?, ?)")
       .run(req.user.id, target.id, nowIso());
@@ -476,7 +486,7 @@ router.put('/:id/like', requireAuth, (req, res, next) => {
     if (!id) return res.status(400).json({ error: 'Некорректный id' });
 
     const post = db.prepare('SELECT author_id FROM posts WHERE id = ?').get(id);
-    if (!post) return res.status(404).json({ error: 'Пост не найден' });
+    if (!post || !canSeeAuthor(req.user.id, post.author_id)) return res.status(404).json({ error: 'Пост не найден' });
 
     // Idempotent: liking twice is not an error, the row is simply already there.
     db.prepare('INSERT OR IGNORE INTO likes (user_id, post_id, created_at) VALUES (?, ?, ?)')
@@ -530,7 +540,7 @@ router.put('/:id/bookmark', requireAuth, (req, res, next) => {
 
     const viewerId = req.user.id;
     const post = db.prepare(`
-      SELECT 1 FROM posts p WHERE p.id = :id AND ${blockPairSql('p.author_id')}
+      SELECT 1 FROM posts p WHERE p.id = :id AND ${POST_VISIBLE_SQL}
     `).get({ id, viewerId });
     if (!post) return res.status(404).json({ error: 'Пост не найден' });
 
@@ -583,7 +593,7 @@ router.get('/:id/comments', (req, res) => {
   // Пост автора, с которым смотрящий в блокировке, «не найден» — ровно как в
   // GET /:id. Иначе тред остался бы дверью к скрытому посту.
   const exists = db.prepare(`
-    SELECT 1 FROM posts p WHERE p.id = :id AND ${blockPairSql('p.author_id')}
+    SELECT 1 FROM posts p WHERE p.id = :id AND ${POST_VISIBLE_SQL}
   `).get({ id, viewerId });
   if (!exists) return res.status(404).json({ error: 'Пост не найден' });
 
@@ -612,7 +622,7 @@ router.post('/:id/comments', requireAuth, (req, res, next) => {
     if (!id) return res.status(400).json({ error: 'Некорректный id' });
 
     const post = db.prepare('SELECT author_id FROM posts WHERE id = ?').get(id);
-    if (!post) return res.status(404).json({ error: 'Пост не найден' });
+    if (!post || !canSeeAuthor(req.user.id, post.author_id)) return res.status(404).json({ error: 'Пост не найден' });
 
     // Читать чужой тред заблокированная пара всё равно не может (выше 404),
     // но запись под чужим постом закрывается отдельно: id поста мог остаться
