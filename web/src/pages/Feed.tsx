@@ -1,7 +1,8 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useCallback, useState } from 'react';
 import { Composer } from '../components/Composer';
 import { PostRow } from '../components/PostRow';
 import { SuggestedPeople } from '../components/SuggestedPeople';
+import { ScheduledPostsBar } from '../components/ScheduledPosts';
 import { useSession } from '../session';
 import { usePostStream } from '../usePostStream';
 
@@ -10,7 +11,11 @@ type Tab = 'all' | 'following';
 export function Feed() {
   const { user } = useSession();
   const [tab, setTab] = useState<Tab>('all');
-  const stream = usePostStream(tab === 'following' ? { feed: 'following' } : {});
+  // Отложенная запись вышла по расписанию — ленту просим заново тем же запросом.
+  const [reloadKey, setReloadKey] = useState(0);
+  const [queueVersion, setQueueVersion] = useState(0);
+  const stream = usePostStream(tab === 'following' ? { feed: 'following', reloadKey } : { reloadKey });
+  const onDue = useCallback(() => setReloadKey((k) => k + 1), []);
 
   return (
     <>
@@ -36,7 +41,8 @@ export function Feed() {
       </div>
 
       <div className="rail">
-        <Composer onPublished={stream.prepend} />
+        <Composer onPublished={stream.prepend} onScheduled={() => setQueueVersion((v) => v + 1)} />
+        <ScheduledPostsBar version={queueVersion} onPublished={stream.prepend} onDue={onDue} />
 
         {stream.error && <p className="error">{stream.error}</p>}
 

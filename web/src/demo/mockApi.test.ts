@@ -746,3 +746,20 @@ describe('витрина: закрытый профиль', () => {
     expect((await api.notifications()).notifications.some((n) => n.kind === 'follow_accept')).toBe(true);
   });
 });
+
+describe('витрина: отложенные записи', () => {
+  it('ждут своего часа, «сейчас» публикует, чужие не видны', async () => {
+    const at = new Date(Date.now() + 60 * 60_000);
+    const { scheduled } = await api.schedulePost('Анонс #встреча', at);
+    await expect(api.schedulePost('В прошлое', new Date(Date.now() - 1000))).rejects.toMatchObject({ status: 400 });
+    expect((await api.posts({ author: 'demo' })).posts.some((p) => p.body === 'Анонс #встреча')).toBe(false);
+    await loginAs('nina');
+    expect((await api.scheduledPosts()).scheduled).toHaveLength(0);
+    await expect(api.cancelScheduledPost(scheduled.id)).rejects.toMatchObject({ status: 404 });
+    await loginAs('demo');
+    const { post } = await api.publishScheduledPost(scheduled.id);
+    expect(post.body).toBe('Анонс #встреча');
+    expect((await api.scheduledPosts()).scheduled).toHaveLength(0);
+    expect((await api.posts({ tag: 'встреча' })).posts.map((p) => p.id)).toContain(post.id);
+  });
+});
