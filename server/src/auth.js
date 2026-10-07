@@ -147,5 +147,19 @@ export function publicUser(row) {
     bio: row.bio ?? '',
     avatarUrl: publicUrl('avatar', row.avatar_path),
     createdAt: row.created_at,
+    // Оформление профиля — там, где строка пришла целиком (SELECT *).
+    coverUrl: publicUrl('media', row.cover_path ?? null),
+    links: linksOf(row.links),
   };
+}
+
+/** Ссылки профиля из колонки: битый JSON — просто без ссылок. */
+export function linksOf(raw) {
+  if (!raw) return [];
+  try {
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
 }

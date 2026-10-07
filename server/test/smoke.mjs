@@ -5211,5 +5211,49 @@ check('по часам — опубликована сама', r.body.posts?.som
 r = await spA('/posts/scheduled');
 check('и ушла из очереди', !r.body.scheduled.some((x) => x.id === spTimed.id), JSON.stringify(r.body));
 
+console.log('\n— обложка и ссылки профиля —');
+const cvA = makeClient();
+const userCvA = `cva_${stamp}`;
+await legacySignUp(cvA, userCvA, 'Оформляющий');
+const cvProfile = (links) => cvA('/users/me', { method: 'PATCH', body: JSON.stringify({ displayName: 'Оформляющий', bio: 'Снимаю', ...(links !== undefined ? { links } : {}) }) });
+r = await cvProfile(['t.me/nina', 'https://example.com/plenka', 't.me/nina', '  ']);
+check('ссылки: схема дописана, повторы и пустые убраны', r.status === 200
+  && JSON.stringify(r.body.user.links) === JSON.stringify(['https://t.me/nina', 'https://example.com/plenka']), JSON.stringify(r.body.user?.links ?? r.body));
+r = await cvProfile(['a.ru', 'b.ru', 'c.ru', 'd.ru']);
+const cvTooMany = r.status;
+r = await cvProfile(['javascript:alert(1)']);
+const cvScheme = r.status;
+r = await cvProfile(['localhost']);
+const cvNoDot = r.status;
+r = await cvProfile('example.com');
+check('больше трёх, не http(s), без домена, не список — 400', cvTooMany === 400 && cvScheme === 400 && cvNoDot === 400 && r.status === 400, `${cvTooMany} ${cvScheme} ${cvNoDot} ${r.status}`);
+r = await cvProfile(undefined);
+check('правка без ссылок их не трогает', r.body.user.links?.length === 2, JSON.stringify(r.body.user?.links));
+r = await guest(`/users/${userCvA}`);
+check('ссылки видны в профиле', r.body.user.links?.[0] === 'https://t.me/nina' && r.body.user.coverUrl === null, JSON.stringify(r.body.user));
+
+r = await guest('/users/me/cover', { method: 'PUT', body: upload(PNG_1PX, 'cover.png', 'image/png', 'cover') });
+check('обложка — гостю 401', r.status === 401, `${r.status}`);
+r = await cvA('/users/me/cover', { method: 'PUT', body: upload(MP3_HEAD, 'song.mp3', 'audio/mpeg', 'cover') });
+check('обложка — только картинка', r.status >= 400 && r.status < 500, `${r.status}`);
+r = await cvA('/users/me/cover', { method: 'PUT', body: upload(PNG_1PX, 'cover.png', 'image/png', 'cover') });
+const cvFirst = r.body.user?.coverUrl;
+raw = await fetch(BASE.replace('/api', '') + cvFirst);
+check('обложка поставлена и отдаётся', r.status === 200 && /^\/uploads\/media\//.test(cvFirst ?? '') && raw.status === 200, `${r.status} ${cvFirst} ${raw.status}`);
+r = await cvA('/users/me/cover', { method: 'PUT', body: upload(PNG_1PX, 'cover2.png', 'image/png', 'cover') });
+raw = await fetch(BASE.replace('/api', '') + cvFirst);
+check('новая обложка стирает прежний файл', r.body.user.coverUrl !== cvFirst && raw.status === 404, `${raw.status}`);
+const cvSecond = r.body.user.coverUrl;
+r = await guest(`/users/${userCvA}`);
+check('обложка видна в профиле', r.body.user.coverUrl === cvSecond, JSON.stringify(r.body.user.coverUrl));
+raw = await cvA.raw('/api/account/export');
+const cvDump = JSON.parse(await raw.text());
+check('выгрузка: обложка и ссылки', cvDump.profile?.cover === cvSecond && cvDump.profile.links?.length === 2, JSON.stringify(cvDump.profile));
+r = await cvA('/users/me/cover', { method: 'DELETE' });
+raw = await fetch(BASE.replace('/api', '') + cvSecond);
+check('убрать обложку — файла нет', r.body.user.coverUrl === null && raw.status === 404, `${raw.status}`);
+r = await cvProfile([]);
+check('пустой список — ссылки убраны', r.body.user.links?.length === 0, JSON.stringify(r.body.user?.links));
+
 console.log(`\n${pass} ok, ${fail} fail\n`);
 process.exit(fail ? 1 : 0);

@@ -364,6 +364,7 @@ function deleteAccount(me) {
     avatar: paths('SELECT avatar_path AS p FROM users WHERE id = ?', me),
     media: [
       ...paths('SELECT media_path AS p FROM posts WHERE author_id = ?', me),
+      ...paths('SELECT cover_path AS p FROM users WHERE id = ?', me),
       ...paths('SELECT pm.path AS p FROM post_media pm JOIN posts po ON po.id = pm.post_id WHERE po.author_id = ?', me),
     ],
     attachment: [

@@ -17,6 +17,42 @@ const avatarUpload = multer({
   limits: { fileSize: 5 * 1024 * 1024, files: 1 },
 });
 
+// Обложка шире аватара — и предел у неё больше.
+const coverUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
+});
+
+/**
+ * Ссылки профиля: до трёх адресов http(s), каждый до 200 знаков. Адрес без
+ * схемы («t.me/nina») получает https:// — так их и пишут. Повторы убираются.
+ * Другие схемы (javascript:, mailto:) — отказ: ссылка в профиле ведёт на сайт.
+ */
+export const LINKS_MAX = 3;
+
+function readLinks(raw) {
+  if (!Array.isArray(raw)) throw v.bad('Ссылки — список адресов');
+  const out = [];
+  for (const item of raw) {
+    const text = String(item ?? '').trim();
+    if (!text) continue;
+    if (text.length > 200) throw v.bad('Ссылка длиннее 200 знаков');
+    const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(text) ? text : `https://${text}`;
+    let url;
+    try {
+      url = new URL(withScheme);
+    } catch {
+      throw v.bad(`Не похоже на адрес: ${text}`);
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw v.bad('Ссылка — только на сайт: http или https');
+    if (!url.hostname.includes('.')) throw v.bad(`Не похоже на адрес: ${text}`);
+    const href = url.toString();
+    if (!out.includes(href)) out.push(href);
+  }
+  if (out.length > LINKS_MAX) throw v.bad(`Ссылок — не больше ${LINKS_MAX}`);
+  return out;
+}
+
 const followerCount = (id) => db.prepare('SELECT COUNT(*) AS c FROM follows WHERE followee_id = ?').get(id).c;
 const followingCount = (id) => db.prepare('SELECT COUNT(*) AS c FROM follows WHERE follower_id = ?').get(id).c;
 
@@ -35,9 +71,12 @@ router.patch('/me', requireAuth, (req, res, next) => {
   try {
     const displayName = v.str(req.body?.displayName, 'имя', { min: 1, max: 40 });
     const bio = v.str(req.body?.bio ?? '', 'о себе', { max: 200 });
+    // Ссылки меняются, только если присланы: старый клиент шлёт имя и «о себе».
+    const links = req.body?.links !== undefined ? readLinks(req.body.links) : null;
 
     db.prepare('UPDATE users SET display_name = ?, bio = ? WHERE id = ?')
       .run(displayName, bio, req.user.id);
+    if (links) db.prepare('UPDATE users SET links = ? WHERE id = ?').run(links.length ? JSON.stringify(links) : null, req.user.id);
 
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
     res.json({ user: publicUser(user) });
@@ -61,6 +100,27 @@ router.put('/me/avatar', requireAuth, avatarUpload.single('avatar'), async (req,
   } catch (err) {
     next(err);
   }
+});
+
+/** Обложка профиля — широкая картинка над именем. Прежний файл стирается. */
+router.put('/me/cover', requireAuth, coverUpload.single('cover'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
+    const stored = await storeUpload(req.file.buffer, { allowedKinds: ['image'], into: 'media' });
+    const previous = db.prepare('SELECT cover_path FROM users WHERE id = ?').get(req.user.id);
+    db.prepare('UPDATE users SET cover_path = ? WHERE id = ?').run(stored.filename, req.user.id);
+    deleteUpload('media', previous?.cover_path);
+    res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/me/cover', requireAuth, (req, res) => {
+  const previous = db.prepare('SELECT cover_path FROM users WHERE id = ?').get(req.user.id);
+  db.prepare('UPDATE users SET cover_path = NULL WHERE id = ?').run(req.user.id);
+  deleteUpload('media', previous?.cover_path);
+  res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)) });
 });
 
 router.delete('/me/avatar', requireAuth, (req, res) => {
