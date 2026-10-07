@@ -184,7 +184,7 @@ export function Search() {
           ) : byPhone.length === 0 ? (
             <p className="empty flush">
               <strong>Никого.</strong>
-              Либо этого номера нет в Хронике, либо человек не разрешил находить себя по номеру.
+              Либо этого номера нет в Duet, либо человек не разрешил находить себя по номеру.
             </p>
           ) : (
             <PeopleList people={byPhone} />
@@ -325,7 +325,7 @@ function FromContacts() {
       {error && <p className="error">{error}</p>}
       {found && found.length === 0 && (
         <p className="empty flush">
-          Из {asked} {plural(asked, 'номера', 'номеров', 'номеров')} никого: либо их нет в Хронике, либо они не разрешили
+          Из {asked} {plural(asked, 'номера', 'номеров', 'номеров')} никого: либо их нет в Duet, либо они не разрешили
           находить себя по номеру.
         </p>
       )}

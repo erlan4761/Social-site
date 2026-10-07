@@ -1,5 +1,5 @@
 /*
- * Сервис-воркер «Хроники»: только пуш-уведомления и переход по ним.
+ * Сервис-воркер Duet: только пуш-уведомления и переход по ним.
  *
  * Кэша страниц здесь нет намеренно: мессенджер без сети бесполезен, а
  * закэшированная старая сборка — источник странных ошибок после выкладки.
@@ -21,7 +21,7 @@ self.addEventListener('push', (event) => {
     data = { body: event.data ? event.data.text() : '' };
   }
   event.waitUntil(
-    self.registration.showNotification(data.title || 'Хроника', {
+    self.registration.showNotification(data.title || 'Duet', {
       body: data.body || '',
       // Одна переписка — одно уведомление: новое заменяет прежнее и звенит снова.
       tag: data.tag,

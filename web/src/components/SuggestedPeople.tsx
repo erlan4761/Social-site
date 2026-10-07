@@ -6,7 +6,7 @@ import { plural } from '../time';
 import { Monogram } from './Monogram';
 
 /** «Скрыть» прячет блок на неделю — в этом браузере: это удобство, а не настройка аккаунта. */
-const HIDE_KEY = 'hronika:suggestions-hidden-until';
+const HIDE_KEY = 'duet:suggestions-hidden-until';
 const HIDE_MS = 7 * 24 * 60 * 60_000;
 
 function hiddenNow() {

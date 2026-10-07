@@ -258,7 +258,7 @@ export function seed() {
   event(oleg, 'message', 25, false);
 
   // Каналы. Канал Нины — чужой, на него подписан смотрящий, и последняя
-  // публикация у него не прочитана. «Хроника изнутри» — свой: в нём витрина
+  // публикация у него не прочитана. «Duet изнутри» — свой: в нём витрина
   // даёт опубликовать самому.
   const channel = (owner: DbUser, handle: string, title: string, description: string, minutes: number) => {
     const c: DbChannel = { id: id(), handle, title, description, ownerId: owner.id, createdAt: ago(minutes) };
@@ -299,7 +299,7 @@ export function seed() {
     { id: id(), postId: n1.id, authorId: nina.id, body: 'Родинал, 1+50 — он прощает почти всё.', createdAt: ago(days(19) - 30) },
   );
 
-  const dev = channel(demo, 'chronika_dev', 'Хроника изнутри', 'Как устроен этот сайт: решения, ошибки и то, что пришлось переделывать.', days(10));
+  const dev = channel(demo, 'duet_dev', 'Duet изнутри', 'Как устроен этот сайт: решения, ошибки и то, что пришлось переделывать.', days(10));
   db.pins.push({ kind: 'channel', scope: String(notes.id), messageId: n1.id });
   db.folders.push(
     { id: id(), userId: demo.id, title: 'Личное', types: ['dm'], include: [], exclude: [], excludeMuted: false, excludeRead: false },
@@ -309,7 +309,7 @@ export function seed() {
       exclude: [], excludeMuted: false, excludeRead: false,
     },
   );
-  const d1 = publish(dev, 'Здесь пишу о том, как устроена «Хроника» изнутри. Первое: сообщения ходят опросом раз в три секунды, без WebSocket, — и этого хватает.', days(9));
+  const d1 = publish(dev, 'Здесь пишу о том, как устроен Duet изнутри. Первое: сообщения ходят опросом раз в три секунды, без WebSocket, — и этого хватает.', days(9));
   db.channelSubs.find((s) => s.channelId === dev.id && s.userId === demo.id)!.lastReadId = d1.id;
   sub(dev, marina, d1.id);
   sub(dev, oleg, d1.id);
@@ -332,7 +332,7 @@ export function seed() {
   });
 
   // «Избранное»: заметка себе и пересланная реплика Марины.
-  dm(demo, demo, 'Исходники «Хроники»: https://github.com/erlan4761/Social-site', days(3));
+  dm(demo, demo, 'Исходники Duet: https://github.com/erlan4761/Social-site', days(3));
   dm(demo, demo, 'Список на субботу: две плёнки Kodak Gold 200, фиксаж, забрать сканы с Литейной.', days(2));
   const kept = dm(demo, demo, 'Второй там и был весь смысл. Они его специально спрятали за лестницей.', 85);
   kept.fwdUserId = marina.id;

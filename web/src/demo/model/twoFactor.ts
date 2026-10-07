@@ -123,8 +123,8 @@ export function matchTotp(secret: string, code: string, after = -1): number | nu
 export const newSecret = () => base32Encode(crypto.getRandomValues(new Uint8Array(20)));
 
 export const otpauthUri = (username: string, secret: string) =>
-  `otpauth://totp/${encodeURIComponent('Хроника')}:${encodeURIComponent(username)}` +
-  `?secret=${secret}&issuer=${encodeURIComponent('Хроника')}&algorithm=SHA1&digits=6&period=30`;
+  `otpauth://totp/${encodeURIComponent('Duet')}:${encodeURIComponent(username)}` +
+  `?secret=${secret}&issuer=${encodeURIComponent('Duet')}&algorithm=SHA1&digits=6&period=30`;
 
 /* ─ Резервные коды и второй шаг ─ */
 

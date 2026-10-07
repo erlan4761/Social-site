@@ -1,6 +1,6 @@
 // Иконки приложения: `node scripts/make-icons.mjs` из web/. Рисует без
 // зависимостей — геометрия с субпиксельным сглаживанием и PNG через zlib.
-// Знак: белая «Х» на зелёном, по краям — перфорация плёнки («Хроника»).
+// Знак Duet: два сцепленных белых кольца на зелёном — два голоса, одна пара.
 import { writeFileSync } from 'node:fs';
 import { crc32, deflateSync } from 'node:zlib';
 
@@ -11,31 +11,30 @@ const SS = 4; // субпикселей на сторону
 /** Фигуры в долях стороны; `inset` сжимает знак к центру (маскируемая иконка). */
 function shapes({ inset = 1, background = 'rounded' }) {
   const c = (v) => 0.5 + (v - 0.5) * inset;
-  const segDist = (px, py, ax, ay, bx, by) => {
-    const dx = bx - ax;
-    const dy = by - ay;
-    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
-    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
-  };
   const roundRect = (px, py, x, y, w, h, r) => {
     const qx = Math.abs(px - (x + w / 2)) - (w / 2 - r);
     const qy = Math.abs(py - (y + h / 2)) - (h / 2 - r);
     return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r <= 0;
   };
-  const holes = [];
-  for (const y of [0.1, 0.84]) for (const x of [0.2, 0.37, 0.54, 0.71]) holes.push([c(x), c(y), 0.09 * inset, 0.06 * inset]);
+  // Кольцо — точки, чьё расстояние до центра отличается от радиуса не больше
+  // чем на полтолщины.
+  const ring = (px, py, cx, cy, r, half) => Math.abs(Math.hypot(px - cx, py - cy) - r) <= half;
+  const r = 0.22 * inset;
+  const half = 0.038 * inset;
+  // Зазор вокруг кольца, которое проходит сверху, — чтобы пересечение читалось.
+  const gap = half + 0.02 * inset;
+  const left = (x, y, w) => ring(x, y, c(0.4), c(0.5), r, w);
+  const right = (x, y, w) => ring(x, y, c(0.6), c(0.5), r, w);
+  // Кольца сцеплены, а не наложены: в верхнем пересечении сверху правое, в
+  // нижнем — левое. Каждое «верхнее» рисуется с зелёным зазором вокруг себя.
   return [
     // Фон: скруглённый квадрат или, для маскируемой, весь холст.
     { color: GREEN, alpha: 1, hit: (x, y) => (background === 'full' ? true : roundRect(x, y, 0, 0, 1, 1, 0.22)) },
-    { color: WHITE, alpha: 0.28, hit: (x, y) => holes.some(([hx, hy, w, h]) => roundRect(x, y, hx, hy, w, h, 0.015 * inset)) },
-    {
-      color: WHITE,
-      alpha: 1,
-      hit: (x, y) => {
-        const half = 0.065 * inset;
-        return segDist(x, y, c(0.31), c(0.3), c(0.69), c(0.7)) <= half || segDist(x, y, c(0.69), c(0.3), c(0.31), c(0.7)) <= half;
-      },
-    },
+    { color: WHITE, alpha: 1, hit: (x, y) => left(x, y, half) },
+    { color: GREEN, alpha: 1, hit: (x, y) => y < 0.5 && right(x, y, gap) },
+    { color: WHITE, alpha: 1, hit: (x, y) => right(x, y, half) },
+    { color: GREEN, alpha: 1, hit: (x, y) => y >= 0.5 && left(x, y, gap) },
+    { color: WHITE, alpha: 1, hit: (x, y) => y >= 0.5 && left(x, y, half) },
   ];
 }
 
@@ -91,14 +90,18 @@ function png(size, rgba) {
   ]);
 }
 
-/** Значок для строки состояния Android: только белая «Х» на прозрачном. */
+/**
+ * Значок для строки состояния Android: только белые кольца на прозрачном.
+ * Слои те же, что у иконки, без фона: белый закрашивает, зелёный зазор стирает.
+ */
 function badge(size) {
   const px = Buffer.alloc(size * size * 4);
-  const [, , mark] = shapes({ inset: 1.35 });
+  const [, ...marks] = shapes({ inset: 1.35 });
+  const opaque = (x, y) => marks.reduce((on, layer) => (layer.hit(x, y) ? layer.color === WHITE : on), false);
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
     let cover = 0;
     for (let sy = 0; sy < SS; sy++) for (let sx = 0; sx < SS; sx++) {
-      if (mark.hit((x + (sx + 0.5) / SS) / size, (y + (sy + 0.5) / SS) / size)) cover++;
+      if (opaque((x + (sx + 0.5) / SS) / size, (y + (sy + 0.5) / SS) / size)) cover++;
     }
     const i = (y * size + x) * 4;
     px.fill(255, i, i + 3);

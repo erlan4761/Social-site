@@ -353,7 +353,7 @@ export const chatsApi = {
         ? {
             url: 'https://github.com/erlan4761/Social-site',
             title: 'erlan4761/Social-site',
-            description: '«Хроника» — социальная сеть и мессенджер: React, Express и SQLite без внешних сервисов.',
+            description: 'Duet — социальная сеть и мессенджер: React, Express и SQLite без внешних сервисов.',
             siteName: 'GitHub',
             image: null,
           }

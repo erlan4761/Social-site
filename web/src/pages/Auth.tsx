@@ -49,7 +49,7 @@ export function Auth({ mode }: { mode: 'login' | 'register' }) {
   return (
     <div className="center">
       <div className="auth">
-        <span className="wordmark">хроника</span>
+        <span className="wordmark">duet</span>
         {step.kind === 'phone' && (
           <p className="auth-lede">
             {mode === 'register'
@@ -381,7 +381,7 @@ function QrStep({ onDone }: { onDone: (u: User) => void }) {
   return (
     <div className="qr-login">
       <p className="auth-lede">
-        Откройте камеру на телефоне, где вы уже вошли в Хронику, и наведите на код. Камеры нет — в настройках на
+        Откройте камеру на телефоне, где вы уже вошли в Duet, и наведите на код. Камеры нет — в настройках на
         телефоне: «Где выполнен вход» → «Подключить устройство по коду».
       </p>
       {error && <p className="error">{error}</p>}
@@ -497,7 +497,7 @@ function TwoFactorStep({ ticket, onDone, onRestart }: TwoFactorProps) {
       <p className="auth-lede">
         {backup
           ? 'Введите один из резервных кодов, которые вы сохранили при подключении. Каждый действует один раз.'
-          : 'Включён вход с кодом. Откройте приложение-аутентификатор и введите шесть цифр для «Хроники».'}
+          : 'Включён вход с кодом. Откройте приложение-аутентификатор и введите шесть цифр для Duet.'}
       </p>
       {error && (
         <p className="error">

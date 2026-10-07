@@ -8,7 +8,7 @@
   flex: 1;
   min-height: 0;
   /* Фон переписки — едва заметная точечная сетка, как лист в клетку:
-     «Хроника» остаётся дневником, даже когда в ней разговаривают. */
+     лента остаётся местом для чтения, даже когда в ней разговаривают. */
   background-color: var(--canvas);
   background-image: radial-gradient(color-mix(in oklab, var(--ink) 9%, transparent) 1px, transparent 1.2px);
   background-size: 18px 18px;

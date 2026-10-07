@@ -181,7 +181,7 @@ export function TwoFactorSettings({ account, onChange }: { account: AccountSetti
         <form className="settings-form" onSubmit={enable}>
           <ol className="totp-steps">
             <li>Откройте приложение-аутентификатор и добавьте аккаунт по QR-коду.</li>
-            <li>Введите шесть цифр, которые оно покажет для «Хроники».</li>
+            <li>Введите шесть цифр, которые оно покажет для Duet.</li>
           </ol>
           <div className="totp-qr">
             <QrCode text={stage.uri} label="QR-код для приложения-аутентификатора" />
@@ -273,7 +273,7 @@ export function TwoFactorSettings({ account, onChange }: { account: AccountSetti
 /** Коды — файлом: его кладут туда же, где хранят остальное важное. */
 function saveCodes(codes: string[]) {
   const text = [
-    'Хроника — резервные коды для входа',
+    'Duet — резервные коды для входа',
     'Каждый код действует один раз. Храните их там, где их не найдут посторонние.',
     '',
     ...codes,
@@ -282,7 +282,7 @@ function saveCodes(codes: string[]) {
   const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'hronika-backup-codes.txt';
+  a.download = 'duet-backup-codes.txt';
   document.body.append(a);
   a.click();
   a.remove();

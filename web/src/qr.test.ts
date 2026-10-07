@@ -41,7 +41,7 @@ describe('QR: матрица читается назад', () => {
     return { size, version, fmtA: toNum(fmtA), fmtB: toNum(fmtB), text };
   };
 
-  for (const text of ['https://example.com/Social-site/qr/AbCdEfGhIjKlMnOpQrStUv', 'Хроника: вход по QR-коду, чтобы проверить блоки и поле версии', 'x'.repeat(140), 'y'.repeat(200)]) {
+  for (const text of ['https://example.com/Social-site/qr/AbCdEfGhIjKlMnOpQrStUv', 'Duet: вход по QR-коду, чтобы проверить блоки и поле версии', 'x'.repeat(140), 'y'.repeat(200)]) {
     it(`«${text.slice(0, 30)}…» — служебные поля и данные на месте`, () => {
       const m = qrMatrix(text);
       const { size, version, fmtA, fmtB } = read(m, text);

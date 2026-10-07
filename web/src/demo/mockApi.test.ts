@@ -519,8 +519,8 @@ describe('витрина: альбомы', () => {
 
   it('альбом в канале и пересылка альбома целиком', async () => {
     const album = 'albumchan0001';
-    const first = await api.publish('chronika_dev', { file: photo('1.png'), name: '1.png', body: 'Репортаж', album });
-    const second = await api.publish('chronika_dev', { file: photo('2.png'), name: '2.png', album });
+    const first = await api.publish('duet_dev', { file: photo('1.png'), name: '1.png', body: 'Репортаж', album });
+    const second = await api.publish('duet_dev', { file: photo('2.png'), name: '2.png', album });
     expect([first.post.albumId, second.post.albumId]).toEqual([album, album]);
 
     const copy = 'albumfwd00001';

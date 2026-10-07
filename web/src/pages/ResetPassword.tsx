@@ -40,7 +40,7 @@ export function ResetPassword() {
   return (
     <div className="center">
       <div className="auth">
-        <span className="wordmark">хроника</span>
+        <span className="wordmark">duet</span>
 
         {status === 'checking' && <p className="auth-lede">Проверяю ссылку…</p>}
 

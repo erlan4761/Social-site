@@ -25,7 +25,7 @@ const PHONE_FIND_CHOICES: Choice[] = [
 ];
 
 const PHONE_SHOW_CHOICES: Choice[] = [
-  { value: 'all', title: 'Все', hint: 'Номер виден в профиле всем, кто вошёл в Хронику. Гостям — никогда.' },
+  { value: 'all', title: 'Все', hint: 'Номер виден в профиле всем, кто вошёл в Duet. Гостям — никогда.' },
   { value: 'follows', title: 'Мои подписки', hint: 'Номер в профиле видят только те, на кого подписаны вы.' },
   { value: 'nobody', title: 'Никто', hint: 'Номер не виден никому.' },
 ];
@@ -797,7 +797,7 @@ function MyData() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `hronika-${data.profile.username}-${data.exportedAt.slice(0, 10)}.json`;
+      a.download = `duet-${data.profile.username}-${data.exportedAt.slice(0, 10)}.json`;
       document.body.append(a);
       a.click();
       a.remove();
