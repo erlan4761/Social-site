@@ -1,5 +1,5 @@
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const RESEND_FROM = process.env.RESEND_FROM ?? 'Хроника <onboarding@resend.dev>';
+const RESEND_FROM = process.env.RESEND_FROM ?? 'Duet <onboarding@resend.dev>';
 
 /**
  * Отправляет письмо через Resend (обычный HTTP-запрос, без SDK — незачем

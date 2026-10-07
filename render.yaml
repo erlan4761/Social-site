@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: hronika
+    name: duet
     runtime: node
     # Starter, а не free: на бесплатном тарифе диск не подключается, и база
     # с перепиской обнулялась бы при каждом перезапуске.

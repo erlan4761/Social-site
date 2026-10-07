@@ -36,7 +36,7 @@ export function normalizePhone(raw) {
 const hashCode = (salt, code) => createHash('sha256').update(`${salt}:${code}`).digest();
 
 function smsText(code) {
-  const text = `Хроника: код ${code}. Никому его не сообщайте.`;
+  const text = `Duet: код ${code}. Никому его не сообщайте.`;
   // Последняя строка — для автоподстановки кода браузером (WebOTP): только
   // для настоящего https-адреса сайта, иначе браузер её всё равно не примет.
   const host = PUBLIC_URL.startsWith('https://') ? new URL(PUBLIC_URL).host : null;

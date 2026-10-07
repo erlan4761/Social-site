@@ -110,7 +110,7 @@ router.post('/forgot-password', async (req, res, next) => {
       const link = `${PUBLIC_URL}/reset-password/${token}`;
       await sendMail({
         to: mail,
-        subject: 'Восстановление пароля — Хроника',
+        subject: 'Восстановление пароля — Duet',
         text: `Кто-то запросил сброс пароля для этого email.\n\nСсылка действует 30 минут:\n${link}\n\nЕсли это были не вы — просто игнорируйте письмо.`,
       });
     }

@@ -97,7 +97,7 @@ function describe(n) {
         tag: `mention-${n.message_id ?? n.id}`,
       };
     case 'chat_invite':
-      return { title: 'Хроника', body: `${who} добавил(а) вас в чат «${n.chat_title ?? ''}»`, url: `/messages/c/${n.chat_id}`, tag: `chat-${n.chat_id}` };
+      return { title: 'Duet', body: `${who} добавил(а) вас в чат «${n.chat_title ?? ''}»`, url: `/messages/c/${n.chat_id}`, tag: `chat-${n.chat_id}` };
     case 'comment':
       return { title: `${who} ответил(а) вам`, body: cut(n.comment_body ?? ''), url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
     case 'post_mention':
@@ -105,17 +105,17 @@ function describe(n) {
     case 'comment_reply':
       return { title: `${who} ответил(а) на ваш комментарий`, body: cut(n.comment_body ?? ''), url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
     case 'like':
-      return { title: 'Хроника', body: `${who} отметил(а) вашу запись`, url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
+      return { title: 'Duet', body: `${who} отметил(а) вашу запись`, url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
     case 'repost':
-      return { title: 'Хроника', body: `${who} сделал(а) репост вашей записи`, url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
+      return { title: 'Duet', body: `${who} сделал(а) репост вашей записи`, url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
     case 'quote':
       return { title: `${who} процитировал(а) вашу запись`, body: cut(n.post_body ?? ''), url: `/p/${n.post_id}`, tag: `post-${n.post_id}` };
     case 'follow':
-      return { title: 'Хроника', body: `${who} подписался(ась) на вас`, url: `/u/${n.actor_username}`, tag: `follow-${n.actor_id}` };
+      return { title: 'Duet', body: `${who} подписался(ась) на вас`, url: `/u/${n.actor_username}`, tag: `follow-${n.actor_id}` };
     case 'follow_request':
-      return { title: 'Хроника', body: `${who} просит подписаться на вас`, url: '/requests', tag: `follow-${n.actor_id}` };
+      return { title: 'Duet', body: `${who} просит подписаться на вас`, url: '/requests', tag: `follow-${n.actor_id}` };
     case 'follow_accept':
-      return { title: 'Хроника', body: `${who} принял(а) вашу заявку на подписку`, url: `/u/${n.actor_username}`, tag: `follow-${n.actor_id}` };
+      return { title: 'Duet', body: `${who} принял(а) вашу заявку на подписку`, url: `/u/${n.actor_username}`, tag: `follow-${n.actor_id}` };
     case 'new_login': {
       let device = 'Новое устройство';
       try {

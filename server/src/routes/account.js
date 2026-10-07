@@ -300,7 +300,7 @@ router.post('/2fa/backup-codes', (req, res) => {
 router.get('/export', (req, res) => {
   const date = new Date().toISOString().slice(0, 10);
   res.set({
-    'Content-Disposition': `attachment; filename="hronika-${req.user.username}-${date}.json"`,
+    'Content-Disposition': `attachment; filename="duet-${req.user.username}-${date}.json"`,
     'Cache-Control': 'no-store',
   });
   res.json(exportFor(req.user.id));

@@ -4246,9 +4246,9 @@ check('выгрузка — гостю 401', r.status === 401, `${r.status}`);
 raw = await ex.raw('/api/account/export');
 const exportText = await raw.text();
 const dump = JSON.parse(exportText);
-check('выгрузка — файлом с именем', raw.status === 200 && /attachment; filename="hronika-expa_\w+-\d{4}-\d{2}-\d{2}\.json"/.test(raw.headers.get('content-disposition') ?? '')
+check('выгрузка — файлом с именем', raw.status === 200 && /attachment; filename="duet-expa_\w+-\d{4}-\d{2}-\d{2}\.json"/.test(raw.headers.get('content-disposition') ?? '')
   && /no-store/.test(raw.headers.get('cache-control') ?? ''), raw.headers.get('content-disposition'));
-check('профиль и формат', dump.format === 'hronika-export/1' && dump.profile?.username === userEx && dump.profile.displayName === 'Выгружающий', JSON.stringify(dump.profile));
+check('профиль и формат', dump.format === 'duet-export/1' && dump.profile?.username === userEx && dump.profile.displayName === 'Выгружающий', JSON.stringify(dump.profile));
 check('записи и только свои комментарии', dump.posts?.some((x) => x.body === 'Моя запись для выгрузки')
   && dump.comments?.length === 1 && dump.comments[0].body === 'Мой комментарий', JSON.stringify(dump.comments));
 check('подписки', dump.following?.some((f) => f.username === userEy), JSON.stringify(dump.following));
@@ -4339,7 +4339,7 @@ check('подключение — только с паролем, если он 
 r = await tf('/account/2fa/setup', { method: 'POST', body: JSON.stringify({ password: 'parol12345' }) });
 const tfSecret = r.body.secret;
 check('секрет и адрес для QR', r.status === 200 && /^[A-Z2-7]{32}$/.test(tfSecret ?? '')
-  && r.body.uri === `otpauth://totp/${encodeURIComponent('Хроника')}:${userTf}?secret=${tfSecret}&issuer=${encodeURIComponent('Хроника')}&algorithm=SHA1&digits=6&period=30`,
+  && r.body.uri === `otpauth://totp/${encodeURIComponent('Duet')}:${userTf}?secret=${tfSecret}&issuer=${encodeURIComponent('Duet')}&algorithm=SHA1&digits=6&period=30`,
   JSON.stringify(r.body));
 r = await tf('/account');
 check('пока код не подтверждён — не включено', r.body.twoFactor?.enabled === false, JSON.stringify(r.body.twoFactor));
