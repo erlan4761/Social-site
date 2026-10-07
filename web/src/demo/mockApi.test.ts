@@ -786,3 +786,16 @@ describe('витрина: просмотры записей', () => {
     expect((await api.post(other.id)).post.viewCount).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('витрина: черновик записи', () => {
+  it('сохраняется, пустой убирает, публикация из композера чистит, цитата — нет', async () => {
+    expect((await api.postDraft()).draft).toBeNull();
+    expect((await api.savePostDraft('Начал ')).draft?.body).toBe('Начал ');
+    const other = (await api.posts({ author: 'oleg_k' })).posts[0];
+    await api.createPost('Цитирую', null, other.id);
+    expect((await api.postDraft()).draft?.body).toBe('Начал ');
+    await api.createPost('Опубликовал');
+    expect((await api.postDraft()).draft).toBeNull();
+    await expect(api.savePostDraft('я'.repeat(501))).rejects.toMatchObject({ status: 400 });
+  });
+});

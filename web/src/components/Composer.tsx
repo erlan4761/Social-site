@@ -5,6 +5,7 @@ import { Monogram } from './Monogram';
 import { Icon } from './Icon';
 import { ScheduleDialog } from './Scheduled';
 import { fullDate } from '../time';
+import { usePostDraft } from '../postDraft';
 
 const LIMIT = 500;
 const MAX_BYTES = 40 * 1024 * 1024;
@@ -48,6 +49,7 @@ export function Composer({ onPublished, onScheduled }: { onPublished: (post: Pos
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const draft = usePostDraft(text, setText, Boolean(user));
 
   // The object URL is a live handle to the file; letting it pile up leaks memory.
   useEffect(() => {
@@ -102,6 +104,7 @@ export function Composer({ onPublished, onScheduled }: { onPublished: (post: Pos
 
   async function schedule(at: Date) {
     await api.schedulePost(text.trim(), at);
+    draft.forget();
     setText('');
     setScheduledNote(`Запись выйдет ${fullDate(at.toISOString())}.`);
     onScheduled?.();
@@ -114,6 +117,7 @@ export function Composer({ onPublished, onScheduled }: { onPublished: (post: Pos
     setError(null);
     try {
       const { post } = await api.createPost(text.trim(), files);
+      draft.forget();
       setText('');
       clearFile();
       onPublished(post);
@@ -149,6 +153,15 @@ export function Composer({ onPublished, onScheduled }: { onPublished: (post: Pos
             }
           }}
         />
+
+        {draft.restored && (
+          <p className="composer-draft" role="status">
+            Черновик с прошлого раза.{' '}
+            <button className="btn link" type="button" onClick={draft.discard}>
+              Очистить
+            </button>
+          </p>
+        )}
 
         {files.length === 1 && previews[0] && (
           <div className="attach-preview">

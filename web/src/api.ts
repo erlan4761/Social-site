@@ -1110,6 +1110,12 @@ const realApi = {
       body: body({ body: text }),
     }),
 
+  /** Черновик записи ленты — один на человека. */
+  postDraft: () => request<{ draft: Draft | null }>('/drafts/post'),
+
+  /** Пустой текст — черновика записи больше нет. */
+  savePostDraft: (text: string) => request<{ draft: Draft | null }>('/drafts/post', { method: 'PUT', body: body({ body: text }) }),
+
   /** target — логин собеседника, номер группы или адрес канала. */
   scheduled: (kind: ScheduledKind, target: string | number) =>
     request<{ scheduled: Scheduled[] }>(`/scheduled?kind=${kind}&target=${encodeURIComponent(String(target))}`),

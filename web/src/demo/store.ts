@@ -198,6 +198,8 @@ export const db = {
   comments: [] as DbComment[],
   likes: [] as { userId: number; postId: number }[],
   follows: [] as { followerId: number; followeeId: number }[],
+  /** Черновик записи ленты — как post_drafts: один на человека. */
+  postDrafts: [] as { userId: number; body: string; updatedAt: string }[],
   /** Просмотры записей — как post_views: один на человека. */
   postViews: [] as { postId: number; userId: number }[],
   /** Отложенные записи ленты — как scheduled_posts. */
