@@ -757,6 +757,16 @@ db.exec(`
   );
 `);
 
+// Черновик записи ленты — один на человека (drafts.js). Отдельной таблицей, а не
+// видом в drafts: там CHECK на виды чатов, а у записи нет цели — она «в ленту».
+db.exec(`
+  CREATE TABLE IF NOT EXISTS post_drafts (
+    user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+`);
+
 // Хэштеги записей (hashtags.js): ключ — для поиска, подпись — как написал автор.
 // Записи, опубликованные до хэштегов, размечаются при запуске; запись с «#» без
 // настоящего тега просто перечитывается — это дешевле отдельной отметки.

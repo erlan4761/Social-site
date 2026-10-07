@@ -3,6 +3,7 @@ import { db, nowIso } from '../db.js';
 import { requireAuth } from '../auth.js';
 import { insertPost, postById } from './posts.js';
 import * as v from '../validate.js';
+import { clearPostDraft } from '../drafts.js';
 
 /**
  * Отложенные записи ленты — «опубликовать позже», как отложенные сообщения
@@ -88,6 +89,8 @@ router.post('/', (req, res, next) => {
     if (n >= PENDING_MAX) return res.status(400).json({ error: `Отложенных записей не больше ${PENDING_MAX}` });
     const info = db.prepare('INSERT INTO scheduled_posts (author_id, body, send_at, created_at) VALUES (?, ?, ?, ?)')
       .run(me, body, sendAt, nowIso());
+    // Отложили текст из композера — черновик своё отслужил.
+    clearPostDraft(me);
     res.status(201).json({ scheduled: serialize(db.prepare('SELECT * FROM scheduled_posts WHERE id = ?').get(info.lastInsertRowid)) });
   } catch (err) {
     next(err);
