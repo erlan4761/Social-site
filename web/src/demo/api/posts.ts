@@ -86,10 +86,42 @@ export const postsApi = {
       const p = visiblePosts().find((x) => x.id === postId);
       if (!p || p.repostOf != null || p.authorId === u.id) continue;
       if (db.postViews.some((v) => v.postId === postId && v.userId === u.id)) continue;
-      db.postViews.push({ postId, userId: u.id });
+      db.postViews.push({ postId, userId: u.id, createdAt: new Date().toISOString() });
       counted += 1;
     }
     return tick({ counted });
+  },
+
+  // Статистика — как GET /api/posts/:id/stats: только автору, по дням с публикации, не больше двух недель.
+  postStats: (postId: number) => {
+    const u = requireMe()!;
+    const p = db.posts.find((x) => x.id === postId);
+    if (!p) fail(404, 'Пост не найден');
+    if (p!.authorId !== u.id) fail(403, 'Статистика видна только автору');
+    if (p!.repostOf != null) fail(400, 'У репоста нет своей статистики — она у оригинала');
+    const views = db.postViews.filter((v) => v.postId === postId);
+    const followers = new Set(db.follows.filter((f) => f.followeeId === u.id).map((f) => f.followerId));
+    const likes = db.likes.filter((l) => l.postId === postId).length;
+    const comments = db.comments.filter((c) => c.postId === postId).length;
+    const reposts = db.posts.filter((x) => x.repostOf === postId).length;
+    const quotes = db.posts.filter((x) => x.quoteOf === postId).length;
+    const bookmarks = db.bookmarks.filter((b) => b.postId === postId).length;
+    const today = Date.parse(new Date().toISOString().slice(0, 10));
+    const start = Math.max(Date.parse(p!.createdAt.slice(0, 10)), today - 13 * 864e5);
+    const byDay = [];
+    for (let d = start; d <= today; d += 864e5) {
+      const day = new Date(d).toISOString().slice(0, 10);
+      byDay.push({ day, views: views.filter((v) => v.createdAt?.slice(0, 10) === day).length });
+    }
+    return tick({
+      stats: {
+        views: views.length,
+        fromFollowers: views.filter((v) => followers.has(v.userId)).length,
+        likes, comments, reposts, quotes, bookmarks,
+        engagement: views.length > 0 ? Math.min(1, (likes + comments + reposts + quotes) / views.length) : null,
+        byDay,
+      },
+    });
   },
 
   scheduledPosts: () => {

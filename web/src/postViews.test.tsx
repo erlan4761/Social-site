@@ -82,6 +82,38 @@ describe('просмотры записей', () => {
   it('своя запись не наблюдается; число просмотров видно', () => {
     mount(post({ author: { id: 1, username: 'demo', displayName: 'Ерлан', avatarUrl: null }, viewCount: 12 }));
     expect(observed).toHaveLength(0);
-    expect(screen.getByTitle('Запись видели 12 человек')).toHaveTextContent('12');
+    expect(screen.getByRole('button', { name: /12 просмотров, статистика/ })).toHaveTextContent('12');
+  });
+});
+
+describe('статистика записи', () => {
+  beforeEach(() => {
+    observed = [];
+    vi.stubGlobal('IntersectionObserver', FakeObserver);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('чужая — тихое число без кнопки; своя — окно с числами и днями', async () => {
+    mount(post({ viewCount: 3 }));
+    expect(screen.getByTitle('Запись видели 3 человека')).toHaveTextContent('3');
+    expect(screen.queryByRole('button', { name: /статистика/ })).toBeNull();
+  });
+
+  it('окно статистики: видели и подписчики, отклик, столбики по дням', async () => {
+    vi.spyOn(api, 'postStats').mockResolvedValue({
+      stats: {
+        views: 4, fromFollowers: 1, likes: 2, comments: 1, reposts: 0, quotes: 1, bookmarks: 3, engagement: 1,
+        byDay: [{ day: '2026-10-06', views: 1 }, { day: '2026-10-07', views: 3 }],
+      },
+    });
+    mount(post({ author: { id: 1, username: 'demo', displayName: 'Ерлан', avatarUrl: null }, viewCount: 4 }));
+    await act(async () => {
+      screen.getByRole('button', { name: /статистика/ }).click();
+    });
+    const dialog = await screen.findByRole('dialog', { name: 'Статистика записи' });
+    expect(dialog).toHaveTextContent('4 человека');
+    expect(dialog).toHaveTextContent('из них подписчики — 1 (25%)');
+    expect(dialog).toHaveTextContent('Отозвались100%');
+    expect(screen.getByLabelText(/7 окт.*: 3 просмотра/)).toBeInTheDocument();
   });
 });

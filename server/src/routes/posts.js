@@ -507,16 +507,71 @@ router.post('/views', requireAuth, (req, res) => {
     SELECT p.author_id FROM posts p
     WHERE p.id = :id AND p.repost_of_id IS NULL AND ${POST_VISIBLE_SQL}
   `);
-  const insert = db.prepare('INSERT OR IGNORE INTO post_views (post_id, user_id) VALUES (?, ?)');
+  const insert = db.prepare('INSERT OR IGNORE INTO post_views (post_id, user_id, created_at) VALUES (?, ?, ?)');
   let counted = 0;
   for (const raw of new Set(ids)) {
     const id = intParam(String(raw));
     if (!id) continue;
     const post = visible.get({ id, viewerId });
     if (!post || post.author_id === viewerId) continue;
-    counted += Number(insert.run(id, viewerId).changes);
+    counted += Number(insert.run(id, viewerId, nowIso()).changes);
   }
   res.json({ counted });
+});
+
+/* ─ Статистика ────────────────────────────────────────────────────────── */
+
+/**
+ * Статистика записи — только автору: сколько человек видели, сколько из них
+ * подписчики, отметки, ответы, репосты, цитаты, закладки и просмотры по дням
+ * (с публикации, не больше двух недель). Имена не раскрываются: закладки и
+ * просмотры остаются обезличенными числами, как и везде.
+ */
+const STATS_DAYS = 14;
+
+router.get('/:id/stats', requireAuth, (req, res) => {
+  const id = intParam(req.params.id);
+  if (!id) return res.status(404).json({ error: 'Пост не найден' });
+  const post = db.prepare('SELECT author_id, created_at, repost_of_id FROM posts WHERE id = ?').get(id);
+  if (!post) return res.status(404).json({ error: 'Пост не найден' });
+  if (post.author_id !== req.user.id) return res.status(403).json({ error: 'Статистика видна только автору' });
+  if (post.repost_of_id) return res.status(400).json({ error: 'У репоста нет своей статистики — она у оригинала' });
+
+  const one = (sql, ...args) => db.prepare(sql).get(...args).n;
+  const views = one('SELECT COUNT(*) AS n FROM post_views WHERE post_id = ?', id);
+  const fromFollowers = one(`
+    SELECT COUNT(*) AS n FROM post_views pv
+    JOIN follows f ON f.follower_id = pv.user_id AND f.followee_id = ?
+    WHERE pv.post_id = ?
+  `, post.author_id, id);
+  const likes = one('SELECT COUNT(*) AS n FROM likes WHERE post_id = ?', id);
+  const comments = one('SELECT COUNT(*) AS n FROM comments WHERE post_id = ?', id);
+  const reposts = one('SELECT COUNT(*) AS n FROM posts WHERE repost_of_id = ?', id);
+  const quotes = one('SELECT COUNT(*) AS n FROM posts WHERE quote_of_id = ?', id);
+  const bookmarks = one('SELECT COUNT(*) AS n FROM bookmarks WHERE post_id = ?', id);
+
+  // По дням (UTC, как и архив): от дня публикации, но не больше двух недель назад.
+  const today = new Date(nowIso().slice(0, 10));
+  const start = new Date(Math.max(Date.parse(post.created_at.slice(0, 10)), today.getTime() - (STATS_DAYS - 1) * 864e5));
+  const counted = new Map(db.prepare(`
+    SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM post_views
+    WHERE post_id = ? AND created_at IS NOT NULL AND created_at >= ?
+    GROUP BY day
+  `).all(id, start.toISOString()).map((r) => [r.day, r.n]));
+  const byDay = [];
+  for (let d = start.getTime(); d <= today.getTime(); d += 864e5) {
+    const day = new Date(d).toISOString().slice(0, 10);
+    byDay.push({ day, views: counted.get(day) ?? 0 });
+  }
+
+  res.json({
+    stats: {
+      views, fromFollowers, likes, comments, reposts, quotes, bookmarks,
+      // Вовлечённость — доля смотревших, кто отозвался; без просмотров — null.
+      engagement: views > 0 ? Math.min(1, (likes + comments + reposts + quotes) / views) : null,
+      byDay,
+    },
+  });
 });
 
 /* ─ Закреплённая запись ────────────────────────────────────────────────── */

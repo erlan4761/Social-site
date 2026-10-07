@@ -828,3 +828,17 @@ describe('витрина: подписка на теги', () => {
     expect((await api.posts({ feed: 'following' })).posts.some((p) => p.id === post.id)).toBe(false);
   });
 });
+
+describe('витрина: статистика записи', () => {
+  it('только автору; просмотры и отклик', async () => {
+    const { post } = await api.createPost('Сколько вас?');
+    await loginAs('nina');
+    await api.recordViews([post.id]);
+    await api.setLike(post.id, true);
+    await expect(api.postStats(post.id)).rejects.toMatchObject({ status: 403 });
+    await loginAs('demo');
+    const { stats } = await api.postStats(post.id);
+    expect(stats).toMatchObject({ views: 1, likes: 1, engagement: 1 });
+    expect(stats.byDay.at(-1)).toEqual({ day: new Date().toISOString().slice(0, 10), views: 1 });
+  });
+});
