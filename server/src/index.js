@@ -19,6 +19,7 @@ import { router as reportRoutes } from './routes/reports.js';
 import { router as searchRoutes } from './routes/search.js';
 import { router as bookmarkRoutes } from './routes/bookmarks.js';
 import { router as tagRoutes } from './routes/tags.js';
+import { router as scheduledPostRoutes } from './routes/scheduledPosts.js';
 import { router as attachmentRoutes } from './routes/attachments.js';
 import { router as channelRoutes } from './routes/channels.js';
 import { router as prefRoutes } from './routes/prefs.js';
@@ -194,6 +195,8 @@ app.use('/api/auth/phone', phoneRoutes);
 app.use('/api/auth/qr', qrLoginRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+// Раньше /api/posts: «scheduled» — не id записи.
+app.use('/api/posts/scheduled', scheduledPostRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/messages', messageRoutes);

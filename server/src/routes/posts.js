@@ -291,34 +291,46 @@ router.post('/', requireAuth, mediaUpload.array('media', GALLERY_MAX), async (re
     for (const f of files) {
       stored.push(await storeUpload(f.buffer, { allowedKinds: files.length > 1 ? ['image', 'video'] : ['image', 'video', 'audio'], into: 'media' }));
     }
-    const first = stored[0] ?? null;
-
-    const info = db.prepare(`
-      INSERT INTO posts (author_id, body, media_path, media_type, media_mime, media_name, quote_of_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(req.user.id, body, first?.filename ?? null, first?.kind ?? null, first?.mime ?? null, names[0] ?? null, quoted?.id ?? null, nowIso());
-    const insertMedia = db.prepare('INSERT INTO post_media (post_id, position, path, type, mime, name) VALUES (?, ?, ?, ?, ?, ?)');
-    stored.forEach((s, i) => insertMedia.run(Number(info.lastInsertRowid), i, s.filename, s.kind, s.mime, names[i]));
-    const postId = Number(info.lastInsertRowid);
-    setPostTags(postId, body);
-    // Процитированному — «процитировал вашу запись»; упоминание его же в тексте
-    // цитаты второго события не даёт.
-    if (quoted) notify({ userId: quoted.author_id, actorId: req.user.id, kind: 'quote', postId });
-    notifyPostMentions({ authorId: req.user.id, postId, body, skip: quoted ? [quoted.author_id] : [] });
-
-    const row = db.prepare(`
-      SELECT ${POST_COLUMNS}
-      FROM posts p JOIN users u ON u.id = p.author_id
-      WHERE p.id = :id
-    `).get({ id: info.lastInsertRowid, viewerId: req.user.id });
-
-    res.status(201).json({ post: serialize(row) });
+    const postId = insertPost({ authorId: req.user.id, body, stored, names, quoted });
+    res.status(201).json({ post: postById(postId, req.user.id) });
   } catch (err) {
     // Файлы уже на диске, а записи нет — сирот не оставляем.
     for (const s of stored) deleteUpload('media', s.filename);
     next(err);
   }
 });
+
+/**
+ * Новая запись — одна дорога и для обычной, и для отложенной (scheduledPosts.js):
+ * строка, снимки, теги, событие процитированному и упоминания.
+ * Возвращает id записи.
+ */
+export function insertPost({ authorId, body, stored = [], names = [], quoted = null }) {
+  const first = stored[0] ?? null;
+  const info = db.prepare(`
+    INSERT INTO posts (author_id, body, media_path, media_type, media_mime, media_name, quote_of_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(authorId, body, first?.filename ?? null, first?.kind ?? null, first?.mime ?? null, names[0] ?? null, quoted?.id ?? null, nowIso());
+  const postId = Number(info.lastInsertRowid);
+  const insertMedia = db.prepare('INSERT INTO post_media (post_id, position, path, type, mime, name) VALUES (?, ?, ?, ?, ?, ?)');
+  stored.forEach((s, i) => insertMedia.run(postId, i, s.filename, s.kind, s.mime, names[i]));
+  setPostTags(postId, body);
+  // Процитированному — «процитировал вашу запись»; упоминание его же в тексте
+  // цитаты второго события не даёт.
+  if (quoted) notify({ userId: quoted.author_id, actorId: authorId, kind: 'quote', postId });
+  notifyPostMentions({ authorId, postId, body, skip: quoted ? [quoted.author_id] : [] });
+  return postId;
+}
+
+/** Запись глазами смотрящего — та же форма, что в ленте. */
+export function postById(id, viewerId) {
+  const row = db.prepare(`
+    SELECT ${POST_COLUMNS}
+    FROM posts p JOIN users u ON u.id = p.author_id
+    WHERE p.id = :id
+  `).get({ id, viewerId });
+  return row ? serialize(row) : null;
+}
 
 /**
  * Правка записи — только текста и только своей, двое суток, как у сообщений:
