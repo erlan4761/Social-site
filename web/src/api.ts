@@ -82,12 +82,17 @@ export type Post = {
   pinned?: boolean;
   /** Сколько человек видели запись — без самого автора. */
   viewCount?: number;
+  /** Место в ветке своих записей; у одиночной — null. */
+  thread?: PostThread | null;
   /** Чистый репост — оригинал целиком; цитата — то, что цитируют. `post: null` — оригинал удалён или скрыт. */
   shared?: SharedPost | null;
   author: Author;
 };
 
 export type SharedPost = { kind: 'repost' | 'quote'; post: Post | null };
+
+/** Ветка: первая запись, номер этой, сколько всего, соседи. */
+export type PostThread = { rootId: number; position: number; length: number; prevId: number | null; nextId: number | null };
 
 export type Comment = {
   id: number;
@@ -647,14 +652,18 @@ const realApi = {
 
   /** Text-only posts stay JSON; a file forces multipart. */
   /** Запись: текст и до десяти фото и видео (или одно аудио); `quoteOf` — цитата чужой записи. */
-  createPost: (text: string, media?: File | File[] | null, quoteOf?: number | null) => {
+  createPost: (text: string, media?: File | File[] | null, quoteOf?: number | null, continues?: number | null) => {
     const files = media == null ? [] : Array.isArray(media) ? media : [media];
     if (files.length === 0) {
-      return request<{ post: Post }>('/posts', { method: 'POST', body: body(quoteOf ? { body: text, quoteOf } : { body: text }) });
+      return request<{ post: Post }>('/posts', {
+        method: 'POST',
+        body: body({ body: text, ...(quoteOf ? { quoteOf } : {}), ...(continues ? { continues } : {}) }),
+      });
     }
     const form = new FormData();
     form.set('body', text);
     if (quoteOf) form.set('quoteOf', String(quoteOf));
+    if (continues) form.set('continues', String(continues));
     for (const file of files) form.append('media', file);
     return request<{ post: Post }>('/posts', { method: 'POST', body: form });
   },
@@ -664,6 +673,9 @@ const realApi = {
   /** Править текст своей записи — двое суток после публикации. */
   updatePost: (id: number, text: string) =>
     request<{ post: Post }>(`/posts/${id}`, { method: 'PATCH', body: body({ body: text }) }),
+
+  /** Вся ветка, в которую входит запись, — от первой до последней. */
+  postThread: (id: number) => request<{ posts: Post[] }>(`/posts/${id}/thread`),
 
   /** Записи, которые человек действительно видел на экране, — пачкой до пятидесяти. */
   recordViews: (ids: number[]) => request<{ counted: number }>('/posts/views', { method: 'POST', body: body({ ids }) }),

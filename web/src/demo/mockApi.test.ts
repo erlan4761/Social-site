@@ -799,3 +799,16 @@ describe('витрина: черновик записи', () => {
     await expect(api.savePostDraft('я'.repeat(501))).rejects.toMatchObject({ status: 400 });
   });
 });
+
+describe('витрина: ветки записей', () => {
+  it('продолжение, вся ветка, сшивание при удалении середины', async () => {
+    const { post: a } = await api.createPost('Первая');
+    const { post: b } = await api.createPost('Вторая', null, null, a.id);
+    const { post: c } = await api.createPost('Третья', null, null, b.id);
+    expect(c.thread).toMatchObject({ rootId: a.id, position: 3, length: 3 });
+    await expect(api.createPost('Развилка', null, null, a.id)).rejects.toMatchObject({ status: 409 });
+    expect((await api.postThread(b.id)).posts.map((p) => p.id)).toEqual([a.id, b.id, c.id]);
+    await api.deletePost(b.id);
+    expect((await api.post(c.id)).post.thread).toMatchObject({ position: 2, length: 2, prevId: a.id });
+  });
+});

@@ -767,6 +767,11 @@ db.exec(`
   );
 `);
 
+// Ветки записей (routes/posts.js): запись продолжает свою предыдущую. Цепочка
+// линейна — у записи не больше одного продолжения (уникальный индекс).
+ensureColumn('posts', 'continues_id', 'INTEGER REFERENCES posts(id) ON DELETE SET NULL');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_continues ON posts(continues_id) WHERE continues_id IS NOT NULL');
+
 // Хэштеги записей (hashtags.js): ключ — для поиска, подпись — как написал автор.
 // Записи, опубликованные до хэштегов, размечаются при запуске; запись с «#» без
 // настоящего тега просто перечитывается — это дешевле отдельной отметки.

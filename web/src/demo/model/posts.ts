@@ -56,6 +56,21 @@ export const repostCountOf = (postId: number) => db.posts.filter((x) => x.repost
 
 export const toPost = (p: DbPost): Post => postAt(p, 0);
 
+/** Ветка записи — как threadOf() на сервере: корень, номер, длина, соседи. */
+export function threadOfPost(p: DbPost): Post['thread'] {
+  const next = db.posts.find((x) => x.continuesId === p.id);
+  if (p.continuesId == null && !next) return null;
+  let position = 1;
+  let root = p;
+  for (let prev = db.posts.find((x) => x.id === root.continuesId); prev; prev = db.posts.find((x) => x.id === root.continuesId)) {
+    root = prev;
+    position += 1;
+  }
+  let length = position;
+  for (let n = next; n; n = db.posts.find((x) => x.continuesId === n!.id)) length += 1;
+  return { rootId: root.id, position, length, prevId: p.continuesId ?? null, nextId: next?.id ?? null };
+}
+
 /** Оригинал репоста или цитаты; глубже второго уровня не идём — как sharedOf() на сервере. */
 function sharedOf(p: DbPost, depth: number): Post['shared'] {
   const target = p.repostOf ?? p.quoteOf;
@@ -84,6 +99,7 @@ const postAt = (p: DbPost, depth: number): Post => ({
   repostedByMe: db.posts.some((x) => x.repostOf === p.id && x.authorId === db.meId),
   pinned: byId(p.authorId)?.pinnedPostId === p.id,
   viewCount: db.postViews.filter((v) => v.postId === p.id).length,
+  thread: threadOfPost(p),
   shared: sharedOf(p, depth),
   author: { ...author(byId(p.authorId)!), ...(byId(p.authorId)?.private ? { private: true } : {}) },
 });
